@@ -53,6 +53,7 @@ from domains.investigations.schemas import (
     RunStatus,
 )
 from domains.investigations.services.run_events import append_event, publish_delta
+from domains.llm_providers.schemas import default_cli_template
 from domains.llm_providers.services.credentials import provider_secret
 from domains.llm_providers.services.llm_executor import with_model_flag
 from domains.run_policies.services.ceilings import UsageSnapshot
@@ -114,7 +115,11 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         if not mcp_config_path:
             logger.warning("claude_code: MCP bridge config could not be written", extra={"tag": "claude_code"})
 
-        template = (provider.cli_command_template or "").strip()
+        # The template is platform-owned — rows created before the service
+        # defaulted it (or cleared by hand) fall back to the catalog default.
+        template = (provider.cli_command_template or "").strip() or default_cli_template(
+            provider.kind
+        )
         if not template:
             return DispatchResult(
                 status=RunStatus.FAILED,

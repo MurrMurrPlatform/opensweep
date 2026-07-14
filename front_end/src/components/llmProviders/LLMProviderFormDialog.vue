@@ -83,16 +83,21 @@ watch(() => props.open, (val) => {
     form.clear_credential = false
   } else {
     reset()
+    // Prefill for the default kind too — the kind watcher below only fires
+    // on a *change*, and most users keep the preselected claude_subscription.
+    prefillFromKind()
   }
 })
 
-watch(() => form.kind, (val) => {
-  // When the user picks a kind, prefill the fields the kind expects.
-  const meta = props.catalog.find(c => c.kind === val)
+/** Prefill the kind-expected fields the user hasn't touched. */
+function prefillFromKind() {
+  const meta = props.catalog.find(c => c.kind === form.kind)
   if (!meta) return
   if (!form.cli_command_template && meta.default_cli) form.cli_command_template = meta.default_cli
   if (!form.model && meta.default_model) form.model = meta.default_model
-})
+}
+
+watch(() => form.kind, prefillFromKind)
 
 const kindOptions = computed(() =>
   props.catalog.map(c => ({ value: c.kind, label: `${c.display_name}` })),

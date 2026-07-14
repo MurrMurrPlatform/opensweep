@@ -23,6 +23,7 @@ from domains.llm_providers.schemas import (
     LLMProviderHealth,
     LLMProviderKind,
     UpdateLLMProviderRequest,
+    default_cli_template,
 )
 from domains.users.schemas import UserDTO
 from infrastructure.audit import write_audit
@@ -113,7 +114,10 @@ class LLMProviderService:
             base_url=req.base_url,
             model=req.model,
             api_key_env=req.api_key_env,
-            cli_command_template=req.cli_command_template,
+            # The CLI template is platform-owned knowledge — never require the
+            # user to supply it. Empty means "use the default for this kind".
+            cli_command_template=req.cli_command_template.strip()
+            or default_cli_template(req.kind),
             extra_args=req.extra_args,
             enabled=True if active else req.enabled,
             active=active,
@@ -145,6 +149,10 @@ class LLMProviderService:
                 # Credentials are sealed at rest (infrastructure/secretbox.py).
                 value = sealed_secret(value or "")
             setattr(n, field, value)
+        if not (n.cli_command_template or "").strip():
+            # Clearing the template (or switching kind without one) means
+            # "reset to the platform default for this kind".
+            n.cli_command_template = default_cli_template(n.kind)
         if make_active:
             n.enabled = True
             await _deactivate_others(n.uid, scope)

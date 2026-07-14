@@ -268,3 +268,16 @@ KIND_CATALOG: dict[LLMProviderKind, dict] = {
         "default_model": "",
     },
 }
+
+
+def default_cli_template(kind: str | LLMProviderKind) -> str:
+    """The platform-owned CLI template for a kind ("" for HTTP/custom kinds).
+
+    The template encodes how OpenSweep drives each CLI (flag order, MCP
+    wiring), so it must never be required user input: executors and the
+    provider service fall back to this whenever a row's template is empty."""
+    try:
+        entry = KIND_CATALOG[LLMProviderKind(kind)]
+    except ValueError:
+        return ""
+    return str(entry.get("default_cli") or "")

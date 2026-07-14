@@ -30,6 +30,7 @@ from typing import Optional
 import httpx
 
 from domains.llm_providers.models import LLMProvider
+from domains.llm_providers.schemas import default_cli_template
 from domains.llm_providers.services.credentials import provider_secret
 from logging_config import logger
 
@@ -156,7 +157,11 @@ async def _run_cli(
     on_chunk=None,
     run_uid: str = "",
 ) -> None:
-    template = (provider.cli_command_template or "").strip()
+    # Platform-owned fallback: rows saved without a template (pre-defaulting
+    # UI, or cleared by hand) still run with the catalog default for the kind.
+    template = (provider.cli_command_template or "").strip() or default_cli_template(
+        provider.kind or ""
+    )
     if not template:
         inv.error = "cli_command_template is empty"
         return
