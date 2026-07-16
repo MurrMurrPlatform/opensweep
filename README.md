@@ -88,6 +88,16 @@ cd front_end && npm install && npm run type-check && npm run build
 A managed OpenSweep Cloud is in the works — same product, zero ops.
 Self-hosting stays free. Watch the repo or https://opensweep.ai for updates.
 
+## Development workflow
+
+This is the canonical repo: **all product development happens here.**
+OpenSweep Cloud is maintained as a private, purely additive overlay — a fork
+that regularly merges this repo's `main` and only adds files (deployment
+infrastructure, cloud-only modules such as billing). It never modifies files
+that exist here, so changes merged into this repo land in both the
+self-hosted and the managed product. Agent/dev environment notes live in
+[`CLAUDE.md`](CLAUDE.md).
+
 ## License
 
 OpenSweep is source-available under the [Elastic License 2.0](LICENSE):
