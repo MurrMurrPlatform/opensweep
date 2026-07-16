@@ -29,3 +29,6 @@ celerybeat.pid
 back_end/var/
 .gstack/
 .playwright-mcp/
+
+# Claude Code local state (worktrees, settings)
+.claude/

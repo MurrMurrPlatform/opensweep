@@ -14,7 +14,7 @@
     "@vueuse/core": "^12.8.2",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
-    "diff": "^7.0.0",
+    "diff": "^8.0.3",
     "lucide-vue-next": "^0.469.0",
     "md-editor-v3": "^6.5.1",
     "oidc-client-ts": "^3.5.0",
@@ -36,7 +36,7 @@
     "sass": "^1.83.4",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
-    "vite": "^6.0.7",
+    "vite": "^6.4.3",
     "vue-tsc": "^2.2.0"
   }
 }
