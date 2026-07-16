@@ -30,6 +30,11 @@ class RepositoryDTO(BaseModel):
     github_repo: str | None = None
     github_repo_id: int | None = None
     github_installation_id: int | None = None
+    # PAT-connection the repo was registered through — credential resolution
+    # (infrastructure/github_app.get_repo_git_token) reads it off whatever
+    # object it is handed, so the DTO must carry it or every DTO call site
+    # (sandbox clones, docs export) silently loses the PAT-connection tier.
+    git_connection_uid: str | None = None
     github_connection_status: str | None = None
     last_synced_at: datetime | None = None
 

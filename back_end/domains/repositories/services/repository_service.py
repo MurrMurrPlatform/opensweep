@@ -132,6 +132,7 @@ def _to_dto(r: Repository) -> RepositoryDTO:
         github_repo=r.github_repo,
         github_repo_id=r.github_repo_id,
         github_installation_id=r.github_installation_id,
+        git_connection_uid=getattr(r, "git_connection_uid", None),
         github_connection_status=r.github_connection_status,
         last_synced_at=r.last_synced_at,
         metadata=dict(r.metadata or {}),
