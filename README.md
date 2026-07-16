@@ -1,22 +1,42 @@
 # OpenSweep
 
-**A dashboard for your coding agents. Repo intelligence + AI dev-workflow platform.**
+**Your coding agent on steroids — in a dashboard.**
 
-OpenSweep keeps a living Doc tree per repository, runs Investigations, records
-Findings, and stamps what was Checked when (the discovery loop). It also runs
-the delivery loop: Tickets with a human approval gate, implement/fix runs that
-open draft PRs, SHA-bound review verdicts, and a per-PR convergence predicate
-published as the `opensweep/converged` commit status. Interactive agent
-Sessions (chat) are built in.
+OpenSweep runs AI agents that keep your codebase healthy. Point it at your
+repos: agents sweep the code, write docs that stay fresh, find bugs before you
+do, pick up tickets, open PRs, review their own work, and push every PR to
+green. You do exactly two things — approve tickets and merge PRs. Everything
+in between is agents.
 
-> **Discovery:** Sweep → doc-generation / audit runs → Docs + Memories + Findings → Checked stamps → re-check on push
-> **Delivery:** Ticket → [approve] → Implement-run → PR → Review-run → Fix-run(s) → CONVERGED → [merge]
+![OpenSweep Tickets](front_end/src/public/OpenSweep/OpenSweepTicketsDark.png)
 
-Exactly two human gates: approving a ticket, and merging the PR.
+![OpenSweep Findings](front_end/src/public/OpenSweep/OpenSweepFindingsDark.png)
+
+## How it works
+
+Two loops, running side by side:
+
+- **Discovery** — agents sweep your repos, build a living doc tree, and file
+  Findings: bugs, gaps, risks, missing tests, stale docs. Everything gets a
+  freshness stamp, and new pushes trigger re-checks. Your codebase knowledge
+  never rots.
+- **Delivery** — triage a Finding into a Ticket and approve it. An agent
+  implements it and opens a draft PR. A review agent judges the PR, fix runs
+  respond, and the loop repeats until the PR converges — published as the
+  `opensweep/converged` commit status, so you can see it right on GitHub.
+
+> **Discovery:** Sweep → docs + memories + findings → checked stamps → re-check on push
+> **Delivery:** Ticket → [you approve] → implement → PR → review → fix → CONVERGED → [you merge]
+
+There's also **Ask** — a live chat session with an agent inside a sandboxed
+clone of any repo, streamed straight to your browser.
+
+Bring your own agent: Claude Code, OpenAI Codex, any OpenAI/Anthropic-compatible
+API, or fully local models (MLX, LM Studio, Ollama, OpenCode).
 
 ## Quickstart
 
-Requirements: Docker (with Compose), ~4 GB free RAM, `git`.
+You need Docker (with Compose), ~4 GB free RAM, and `git`.
 
 ```bash
 git clone https://github.com/MurrMurrPlatform/opensweep.git
@@ -24,7 +44,7 @@ cd opensweep
 ./start.sh
 ```
 
-That's it. First run builds images and bootstraps the bundled Zitadel auth
+That's it. The first run builds images and bootstraps the bundled Zitadel auth
 (a few minutes); re-runs are fast and idempotent. Then:
 
 - **App:** http://127.0.0.1:5174 — log in as `qa@opensweep.localhost` / `OpenSweepQA-Password1!`
@@ -32,49 +52,45 @@ That's it. First run builds images and bootstraps the bundled Zitadel auth
 - **API:** http://127.0.0.1:8001 (`/health`, `/docs`)
 - **Neo4j Browser:** http://127.0.0.1:7475 (`neo4j` / `koalapassword`)
 
-All ports bind to `127.0.0.1`.
+All ports bind to `127.0.0.1` — nothing is exposed to your network.
 
-### First workflow
+### Your first sweep
 
-1. **Add an LLM provider** (Admin → LLM Providers); mark exactly one **Active**.
-   Supported: Claude Code subscription CLI, OpenAI Codex CLI,
-   OpenAI/Anthropic-compatible APIs, and local setups (MLX, LMStudio, Ollama, OpenCode).
+1. **Add an LLM provider** (Admin → LLM Providers) and mark one **Active**.
 2. **Connect GitHub**: paste a [fine-grained access token](https://github.com/settings/personal-access-tokens/new)
    (Contents + Pull requests read/write on the repos OpenSweep should see) in
-   the welcome wizard or under Settings → GitHub — that's it. Even simpler:
-   set `GITHUB_TOKEN` in `.env` before first login and it auto-connects.
-   (Upgrade path: `scripts/github-app-setup.sh dev` provisions a GitHub App
-   — one browser click — for auto-registering webhooks and short-lived
+   the welcome wizard — or set `GITHUB_TOKEN` in `.env` before first login and
+   it auto-connects. (Upgrade path: `scripts/github-app-setup.sh dev`
+   provisions a GitHub App for auto-registered webhooks and short-lived
    per-repo credentials.)
-3. Hit **Sweep this repo** — doc-generation and audit runs build the Doc tree and file Findings.
-4. Triage Findings (fix now / ticket / waive), approve a Ticket, hit **Implement** —
-   OpenSweep opens a draft PR and review-runs drive it to convergence.
+3. Hit **Sweep this repo** — agents build the doc tree and start filing Findings.
+4. Triage a Finding into a Ticket, approve it, hit **Implement** — and watch
+   the draft PR drive itself to convergence.
 
-## Core Concepts
+## The building blocks
 
 | Concept | What it is |
 |---|---|
-| **Repository** | A GitHub repository. Agents work in disposable sandbox clones fetched from GitHub — nothing is mounted from the host. |
-| **Doc** | Agent-written documentation node (path-slugged tree with `watch_paths`). The Doc tree is OpenSweep's concept layer; freshness is webhook-driven, and the tree exports to `AGENTS.md` via PR. |
-| **Memory** | A small durable note an agent wrote for its future self (conventions, gotchas, decisions). |
-| **Checked** | A freshness stamp: what was checked, when, at which revision, with what outcome. |
-| **Investigation** | A question OpenSweep asks about a repository. Review/implement/fix runs reuse the same run machinery. |
-| **Finding** | A bug, gap, improvement, risk, stale-doc note, missing-test note, or structural proposal. |
-| **Ticket** | A unit of plannable work. Backlog → Todo is the human approval gate. |
-| **PullRequest / Verdict / FindingResolution** | The convergence ledger: a webhook-synced PR mirror, SHA-bound review judgments, and the per-PR finding lifecycle. |
-| **Session** | An interactive, turn-based chat with an agent CLI in a sandbox (WebSocket streaming, interrupt, transcripts). |
-| **RunPolicy / MergePolicy** | Per-run cost ceilings; per-repo blocking thresholds and the fix-round bound. |
+| **Doc** | Agent-written documentation that knows which files it covers and refreshes when they change. Exports to `AGENTS.md` via PR. |
+| **Finding** | Something an agent noticed: a bug, gap, risk, missing test, or stale doc. Triage it: fix now, ticket it, or waive it. |
+| **Ticket** | A unit of plannable work. Backlog → Todo is your approval gate. |
+| **Memory** | A durable note an agent wrote for its future self — conventions, gotchas, decisions. |
+| **Checked** | A freshness stamp: what was verified, when, at which commit, with what outcome. |
+| **PR / Verdict** | The convergence ledger: a webhook-synced PR mirror plus SHA-bound review judgments. |
+| **Session** | Live chat with an agent in a sandboxed repo clone — streaming, interruptible, transcribed. |
+| **Policies** | Per-run cost ceilings, per-repo blocking thresholds, and a bound on fix rounds. Agents on a leash. |
 
 ## Security model
 
 - **Zitadel OIDC** is the only user auth, in every environment — the bundled
-  dev stack ships it, and `./start.sh` configures it.
-- **Webhooks** are HMAC-verified (`X-Hub-Signature-256`), idempotent per
-  delivery id, and fail closed when no secret is configured.
-- **Credentials never enter sandboxes**: agent environments are built from an
-  explicit allowlist; agents call back with scoped per-run `osrt_` tokens; git
-  pushes happen platform-side after the write gate. Stored credentials are
-  encrypted at rest when `OPENSWEEP_SECRETS_KEY` is set.
+  dev stack ships it and `./start.sh` configures it.
+- **Webhooks** are HMAC-verified, idempotent per delivery, and fail closed
+  when no secret is configured.
+- **Credentials never enter sandboxes**: agents work in disposable clones
+  fetched from GitHub (nothing mounted from your host), get an explicit
+  env allowlist, and call back with scoped per-run tokens. Git pushes happen
+  platform-side after a write gate. Stored credentials are encrypted at rest
+  when `OPENSWEEP_SECRETS_KEY` is set.
 
 ## Verification
 
