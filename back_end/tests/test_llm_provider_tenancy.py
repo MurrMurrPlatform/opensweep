@@ -8,9 +8,11 @@ from fastapi import HTTPException
 
 import domains.llm_providers.services.llm_provider_service as svc_mod
 from domains.llm_providers.schemas import (
+    KIND_CATALOG,
     CreateLLMProviderRequest,
     LLMProviderKind,
     UpdateLLMProviderRequest,
+    default_cli_template,
 )
 from domains.llm_providers.services.llm_provider_service import (
     LLMProviderService,
@@ -193,6 +195,78 @@ async def test_activation_is_per_scope():
     assert theirs.active is True
     mine = await FakeLLMProvider.nodes.get_or_none(uid="mine-1")
     assert mine.active is True
+
+
+# ── CLI template defaulting (platform-owned) ─────────────────────────────────
+
+
+def test_default_cli_template_lookup():
+    assert "claude -p" in default_cli_template(LLMProviderKind.CLAUDE_SUBSCRIPTION)
+    assert default_cli_template("claude_api") == ""       # HTTP kind — no CLI
+    assert default_cli_template("no-such-kind") == ""
+
+
+async def test_create_defaults_the_cli_template_for_cli_kinds():
+    # The UI can submit an empty template (prefill only fires on kind change);
+    # the row must still be dispatchable by the claude_code adapter.
+    req = CreateLLMProviderRequest(label="Claude", kind=LLMProviderKind.CLAUDE_SUBSCRIPTION)
+    dto = await LLMProviderService().create(req, user=_user("org-a"))
+    assert dto.cli_command_template == default_cli_template(LLMProviderKind.CLAUDE_SUBSCRIPTION)
+    assert "{{instruction_q}}" in dto.cli_command_template
+
+
+async def test_create_keeps_an_explicit_cli_template():
+    req = CreateLLMProviderRequest(
+        label="Claude", kind=LLMProviderKind.CLAUDE_SUBSCRIPTION,
+        cli_command_template="claude -p {{instruction_q}}",
+    )
+    dto = await LLMProviderService().create(req, user=_user("org-a"))
+    assert dto.cli_command_template == "claude -p {{instruction_q}}"
+
+
+async def test_update_refills_a_cleared_cli_template():
+    _seed(
+        uid="mine-1", org_uid="org-a", kind="claude_subscription",
+        cli_command_template="claude -p {{instruction_q}}",
+    )
+    dto = await LLMProviderService().update(
+        "mine-1", UpdateLLMProviderRequest(cli_command_template=""), user=_user("org-a")
+    )
+    assert dto.cli_command_template == default_cli_template(LLMProviderKind.CLAUDE_SUBSCRIPTION)
+
+
+async def test_create_with_bare_kind_fills_catalog_defaults():
+    # The connect dialog sends as little as {kind}; the row must come out
+    # labelled, addressed, and dispatchable.
+    dto = await LLMProviderService().create(
+        CreateLLMProviderRequest(kind=LLMProviderKind.LMSTUDIO), user=_user("org-a")
+    )
+    assert dto.label == "LM Studio"
+    assert dto.base_url == "http://host.docker.internal:1234/v1"
+    assert dto.model == KIND_CATALOG[LLMProviderKind.LMSTUDIO]["default_model"]
+
+    api = await LLMProviderService().create(
+        CreateLLMProviderRequest(kind=LLMProviderKind.OPENAI_API), user=_user("org-a")
+    )
+    assert api.api_key_env == "OPENAI_API_KEY"
+
+
+async def test_create_explicit_values_beat_catalog_defaults():
+    dto = await LLMProviderService().create(
+        CreateLLMProviderRequest(
+            kind=LLMProviderKind.OLLAMA, label="My box",
+            base_url="http://box:1234/v1", model="m1",
+        ),
+        user=_user("org-a"),
+    )
+    assert (dto.label, dto.base_url, dto.model) == ("My box", "http://box:1234/v1", "m1")
+
+
+def test_picker_features_exactly_the_user_facing_kinds():
+    hidden = {k for k, m in KIND_CATALOG.items() if not m["featured"]}
+    assert hidden == {LLMProviderKind.AIDER, LLMProviderKind.CUSTOM}
+    order = [m["featured"] for m in KIND_CATALOG.values() if m["featured"]]
+    assert sorted(order) == list(range(1, 9))  # unique, contiguous picker order
 
 
 # ── Status probe (onboarding) ────────────────────────────────────────────────
