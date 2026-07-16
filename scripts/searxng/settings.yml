@@ -1,0 +1,36 @@
+# SearXNG settings for the opensweep_searxng service — the backend for the
+# `web_search` platform tool (mode="web").
+#
+# use_default_settings keeps everything at SearXNG's defaults; we only
+# override what OpenSweep needs:
+#   - secret_key from the SEARXNG_SECRET env var (compose provides a dev
+#     default; set a real one in production).
+#   - json output format, so the backend can consume /search?format=json
+#     (html stays enabled for humans poking at the instance).
+use_default_settings: true
+
+server:
+  secret_key: ${SEARXNG_SECRET}
+
+search:
+  formats:
+    - html
+    - json
+
+# Engine overrides for server-side use. Startpage and DuckDuckGo CAPTCHA-block
+# or garble responses for datacenter IPs, and Wikipedia 429s under repeated
+# queries, so every web_search call spams errors and returns thin results.
+# Disable those and lean on engines that tolerate automated server traffic.
+engines:
+  - name: startpage
+    disabled: true
+  - name: duckduckgo
+    disabled: true
+  - name: wikipedia
+    disabled: true
+  - name: brave
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false

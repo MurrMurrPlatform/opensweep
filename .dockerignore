@@ -1,0 +1,12 @@
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/venv
+**/dist
+**/.DS_Store
+.git
+.env
+# Keeps the repo-root build context lean.
+back_end/var
+**/.claude_worktrees

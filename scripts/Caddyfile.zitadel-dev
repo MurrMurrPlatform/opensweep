@@ -1,0 +1,8 @@
+# Local-dev router for the profile-gated Zitadel stack (docker-compose.yml,
+# `--profile auth`). Published on 127.0.0.1:8300 — same path split as prod:
+# the hosted login UI on /ui/v2/login, the API (h2c) for everything else.
+
+:80 {
+	reverse_proxy /ui/v2/login/* opensweep_zitadel_login:3000
+	reverse_proxy h2c://opensweep_zitadel:8080
+}

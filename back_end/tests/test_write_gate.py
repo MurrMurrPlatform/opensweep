@@ -1,0 +1,149 @@
+"""Write-gate safety rules — pure parts, no git required (§6 Phase 3)."""
+
+from types import SimpleNamespace
+
+from domains.delivery.models import DEFAULT_PATH_DENYLIST
+from domains.delivery.services.write_gate import (
+    WriteGateResult,
+    denylist_violations,
+    effective_denylist,
+    evaluate_changes,
+    fix_rounds_exhausted,
+    is_protected_branch,
+)
+
+# ── Denylist matching ────────────────────────────────────────────────────────
+
+
+def test_default_denylist_blocks_the_sensitive_classes():
+    changed = [
+        "src/auth/session.py",
+        "payments/stripe.py",
+        "back_end/migrations/0007_add.py",
+        "app/.env.production",
+        "config/secrets.yaml",
+        "deployment/Caddyfile",
+    ]
+    violations = denylist_violations(changed, DEFAULT_PATH_DENYLIST)
+    assert len(violations) == len(changed), violations
+
+
+def test_denylist_allows_ordinary_source_paths():
+    changed = [
+        "src/utils/format.py",
+        "front_end/components/Button.vue",
+        "README.md",
+        "tests/test_format.py",
+        "src/author_profile.py",  # "auth" only matches as a directory segment
+    ]
+    assert denylist_violations(changed, DEFAULT_PATH_DENYLIST) == []
+
+
+def test_denylist_matches_nested_and_root_segments():
+    assert denylist_violations(["auth/login.py"], DEFAULT_PATH_DENYLIST)
+    assert denylist_violations(["a/b/auth/login.py"], DEFAULT_PATH_DENYLIST)
+    assert denylist_violations(["payment/checkout.py"], DEFAULT_PATH_DENYLIST)
+    assert denylist_violations(["migration/0001.sql"], DEFAULT_PATH_DENYLIST)
+
+
+def test_invalid_denylist_pattern_fails_closed():
+    violations = denylist_violations(["anything.py"], ["([unclosed"])
+    assert violations and "invalid denylist pattern" in violations[0]
+
+
+def test_effective_denylist_none_means_defaults_empty_means_opt_out():
+    assert effective_denylist(SimpleNamespace(path_denylist=None)) == list(DEFAULT_PATH_DENYLIST)
+    assert effective_denylist(SimpleNamespace(path_denylist=[])) == []
+    assert effective_denylist(SimpleNamespace(path_denylist=["foo"])) == ["foo"]
+
+
+# ── Protected branches ───────────────────────────────────────────────────────
+
+
+def test_protected_branch_names_and_default_branch():
+    assert is_protected_branch("main")
+    assert is_protected_branch("master")
+    assert is_protected_branch("develop")
+    assert is_protected_branch("trunk", default_branch="trunk")
+    assert not is_protected_branch("opensweep/ab12cd34-fix-the-thing")
+    assert not is_protected_branch("trunk", default_branch="main")
+
+
+def test_empty_or_detached_branch_is_treated_as_protected():
+    assert is_protected_branch("")
+    assert is_protected_branch("  ")
+
+
+# ── Gate decision core ───────────────────────────────────────────────────────
+
+
+def test_evaluate_changes_ok_path():
+    result = evaluate_changes(
+        work_branch="opensweep/ab12cd34-add-endpoint",
+        changed_paths=["src/api/routes.py", "tests/test_routes.py"],
+        commits=2,
+        denylist=DEFAULT_PATH_DENYLIST,
+    )
+    assert isinstance(result, WriteGateResult)
+    assert result.ok
+    assert result.violations == []
+    assert result.commits == 2
+
+
+def test_evaluate_changes_zero_commits_is_a_violation():
+    result = evaluate_changes(
+        work_branch="opensweep/ab12cd34-x", changed_paths=[], commits=0, denylist=[]
+    )
+    assert not result.ok
+    assert any("no commits" in v for v in result.violations)
+
+
+def test_evaluate_changes_protected_branch_is_a_violation():
+    result = evaluate_changes(
+        work_branch="main", changed_paths=["src/x.py"], commits=1, denylist=[]
+    )
+    assert not result.ok
+    assert any("protected branch" in v for v in result.violations)
+
+
+def test_evaluate_changes_denylisted_path_is_a_violation():
+    result = evaluate_changes(
+        work_branch="opensweep/ab12cd34-x",
+        changed_paths=["src/x.py", "auth/tokens.py"],
+        commits=1,
+        denylist=DEFAULT_PATH_DENYLIST,
+    )
+    assert not result.ok
+    assert any("auth/tokens.py" in v for v in result.violations)
+    # violations accumulate — they never mask each other
+    result2 = evaluate_changes(
+        work_branch="main", changed_paths=["auth/tokens.py"], commits=0,
+        denylist=DEFAULT_PATH_DENYLIST,
+    )
+    assert len(result2.violations) == 3
+
+
+# ── Fix-round bound (§6: bounded auto-fix loop) ──────────────────────────────
+
+
+def test_fix_rounds_exhausted_boundary():
+    assert not fix_rounds_exhausted(0, 2)
+    assert not fix_rounds_exhausted(1, 2)
+    assert fix_rounds_exhausted(2, 2)
+    assert fix_rounds_exhausted(3, 2)
+    # max 0 = auto-fix disabled entirely
+    assert fix_rounds_exhausted(0, 0)
+
+
+def test_git_auth_header_is_basic_x_access_token():
+    """GitHub git endpoints 401 on `bearer` for installation tokens; the
+    documented scheme is basic with the x-access-token username."""
+    import base64
+
+    from infrastructure.git_auth import git_auth_extraheader
+
+    header = git_auth_extraheader("ghs_sekret")
+    assert header.startswith("http.extraHeader=AUTHORIZATION: basic ")
+    b64 = header.rsplit(" ", 1)[1]
+    assert base64.b64decode(b64).decode() == "x-access-token:ghs_sekret"
+    assert "bearer" not in header

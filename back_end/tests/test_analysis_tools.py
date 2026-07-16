@@ -1,0 +1,96 @@
+"""Analysis authoring tools — wiring + DB-free validation.
+
+The happy path touches Neo4j (get_or_create + save); here we assert the tools
+are registered on every surface an agent reaches (dispatcher, MCP ops,
+internal_llm prompt) and that input validation rejects bad args BEFORE any DB
+write.
+"""
+
+import inspect
+
+import pytest
+from fastapi import HTTPException
+
+from domains.platform_tools.add_analysis_note import add_analysis_note
+from domains.platform_tools.ask_question import ask_question
+from domains.platform_tools.dispatcher import tool_names
+from domains.platform_tools.set_analysis_section import (
+    _slugify_section,
+    set_analysis_section,
+)
+from domains.platform_tools.upsert_analysis import upsert_analysis
+
+ANALYSIS_TOOLS = {"upsert_analysis", "set_analysis_section", "add_analysis_note", "ask_question"}
+
+
+def test_tools_registered_in_dispatcher():
+    assert ANALYSIS_TOOLS <= set(tool_names())
+
+
+def test_tools_registered_as_mcp_operations():
+    from mcp_app import OPENSWEEP_PLATFORM_TOOL_OPERATIONS
+
+    for t in ANALYSIS_TOOLS:
+        assert f"opensweep_platform_{t}" in OPENSWEEP_PLATFORM_TOOL_OPERATIONS
+
+
+def test_internal_llm_prompt_lists_the_tools():
+    from domains.executors.internal_llm import _SYSTEM_PROMPT
+
+    for t in ANALYSIS_TOOLS:
+        assert t in _SYSTEM_PROMPT
+
+
+def test_http_routes_exist_for_each_tool():
+    import api.v1.platform_tools as pt
+
+    paths = {r.path for r in pt.router.routes}
+    assert "/api/v1/platform-tools/upsert-analysis" in paths
+    assert "/api/v1/platform-tools/set-analysis-section" in paths
+    assert "/api/v1/platform-tools/add-analysis-note" in paths
+    assert "/api/v1/platform-tools/ask-question" in paths
+
+
+async def _expect_422(coro):
+    with pytest.raises(HTTPException) as exc:
+        await coro
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_upsert_rejects_bad_enums_before_db():
+    await _expect_422(upsert_analysis(repository_uid="r", source_run_uid="s", status="nope"))
+    await _expect_422(upsert_analysis(repository_uid="r", source_run_uid="s", health_grade="Z"))
+    await _expect_422(upsert_analysis(repository_uid="r", source_run_uid="s", confidence="vibes"))
+
+
+@pytest.mark.asyncio
+async def test_note_rejects_bad_type_and_coverage_status():
+    await _expect_422(add_analysis_note(repository_uid="r", source_run_uid="s", note_type="bogus"))
+    await _expect_422(
+        add_analysis_note(
+            repository_uid="r", source_run_uid="s", note_type="coverage", status="halfway"
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_question_and_section_reject_empty_before_db():
+    await _expect_422(ask_question(repository_uid="r", source_run_uid="s", question="   "))
+    await _expect_422(
+        set_analysis_section(repository_uid="r", source_run_uid="s", section="  ", content="x")
+    )
+
+
+def test_section_slugify():
+    assert _slugify_section("Executive Summary") == "executive_summary"
+    assert _slugify_section("top-changes") == "top_changes"
+    assert _slugify_section("  Weird!! Key ") == "weird_key"
+
+
+def test_tool_signatures_key_off_source_run_uid():
+    # Every authoring tool must accept repository_uid + source_run_uid (the
+    # Analysis key injected from the run header).
+    for fn in (upsert_analysis, set_analysis_section, add_analysis_note, ask_question):
+        params = set(inspect.signature(fn).parameters)
+        assert {"repository_uid", "source_run_uid"} <= params

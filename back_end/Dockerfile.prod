@@ -1,0 +1,61 @@
+# Production image — same toolchain as Dockerfile.dev (the worker runs the
+# coding-agent CLIs), but code is baked in (no bind mounts) and uvicorn runs
+# without --reload. Used by docker-compose.prod.yml for backend/worker/beat.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+# curl stays: the compose healthcheck curls /health.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl git ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 20 + headless coding-agent CLIs (see Dockerfile.dev for the rundown):
+# claude / codex / opencode executors + the mcp-remote stdio bridge that
+# connects them to OpenSweep's /mcp/platform mount.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g \
+        @anthropic-ai/claude-code \
+        @openai/codex \
+        opencode-ai \
+        mcp-remote \
+    && npm cache clean --force
+
+# aider (Python-based coding agent).
+RUN pip install --no-cache-dir aider-chat
+
+# codebase-memory-mcp — per-workspace code-graph MCP server for coding agents
+# (KNOWLEDGE_V3_CODE_GRAPH.md). Pinned release; single static binary, verified
+# against the release checksums. Optional at runtime: a missing binary just
+# means runs proceed without code-graph tools.
+ARG CBM_VERSION=v0.9.0
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in amd64) cbm_arch=amd64 ;; arm64) cbm_arch=arm64 ;; *) echo "unsupported arch $arch" && exit 1 ;; esac \
+    && curl -fsSL -o /tmp/cbm.tar.gz \
+        "https://github.com/DeusData/codebase-memory-mcp/releases/download/${CBM_VERSION}/codebase-memory-mcp-linux-${cbm_arch}.tar.gz" \
+    && curl -fsSL -o /tmp/cbm-checksums.txt \
+        "https://github.com/DeusData/codebase-memory-mcp/releases/download/${CBM_VERSION}/checksums.txt" \
+    && cd /tmp \
+    && grep "codebase-memory-mcp-linux-${cbm_arch}.tar.gz$" cbm-checksums.txt | sed "s|codebase-memory-mcp-linux-${cbm_arch}.tar.gz|cbm.tar.gz|" | sha256sum -c - \
+    && tar -xzf cbm.tar.gz \
+    && install -m 0755 "$(find /tmp -maxdepth 2 -name codebase-memory-mcp -type f | head -1)" /usr/local/bin/codebase-memory-mcp \
+    && rm -rf /tmp/cbm.tar.gz /tmp/cbm-checksums.txt
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . /app
+
+EXPOSE 8000
+
+# Single worker on purpose: Sessions (Phase 4) supervise their executor
+# subprocess in an in-process registry (session_service._RUNNING), so
+# interrupt/end must land on the process that spawned the turn. Scale via
+# Celery workers, not uvicorn workers, until that registry moves to Redis.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*"]

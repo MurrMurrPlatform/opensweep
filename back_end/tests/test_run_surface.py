@@ -1,0 +1,344 @@
+"""Run.surface — hidden agent surfaces (comment replies, chat-bubble
+sessions) stay off the Runs page and out of the org-wide active poll.
+
+DB-free: route functions are called directly with faked collaborators,
+matching test_run_create_tenancy.py.
+"""
+
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+from domains.comments.schemas import CommentSubjectType
+from domains.investigations.models import RUN_SURFACES, Run
+from domains.investigations.schemas import CreateRunRequest, Playbook, RunDTO
+from domains.investigations.services.turn_service import run_to_dto
+from domains.users.schemas import UserDTO
+
+pytestmark = pytest.mark.asyncio
+
+
+# ── model / DTO contract ─────────────────────────────────────────────────────
+
+
+def test_surfaces_are_runs_comment_chat_slack():
+    assert RUN_SURFACES == {"runs", "comment", "chat", "slack"}
+
+
+def test_dto_defaults_surface_to_runs():
+    assert RunDTO(uid="r", repository_uid="repo", executor="internal_llm").surface == "runs"
+
+
+def test_run_to_dto_maps_missing_surface_to_runs():
+    run = Run(uid="r1", repository_uid="repo1", executor="internal_llm")
+    run.surface = None  # node predating the field
+    assert run_to_dto(run).surface == "runs"
+    run.surface = "comment"
+    assert run_to_dto(run).surface == "comment"
+
+
+# ── trigger_run guard ────────────────────────────────────────────────────────
+
+
+async def test_trigger_run_rejects_unknown_surface():
+    from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+
+    with pytest.raises(LifecycleError, match="unknown surface"):
+        await trigger_run(
+            repository_uid="repo1", intent="do it", playbook="ask", surface="bogus"
+        )
+
+
+# ── @opensweep dispatch carries the surface + generic subject keys ───────────────
+
+
+async def test_opensweep_reply_dispatch_sets_comment_surface(monkeypatch):
+    from domains.comments import opensweep_mention
+    from domains.comments.models import Comment
+    from domains.investigations.services import lifecycle
+    from domains.tickets.models import Ticket
+
+    captured: dict = {}
+
+    async def fake_trigger_run(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(uid="run-1")
+
+    async def fake_thread(*a, **k):
+        return ""
+
+    async def fake_mentioned(*a, **k):
+        return ""
+
+    async def fake_policy(*a, **k):
+        return SimpleNamespace(uid="policy-1")
+
+    monkeypatch.setattr(lifecycle, "trigger_run", fake_trigger_run)
+    monkeypatch.setattr(opensweep_mention, "render_thread", fake_thread)
+    monkeypatch.setattr(opensweep_mention, "render_mentioned_items", fake_mentioned)
+    monkeypatch.setattr(opensweep_mention, "ensure_policy_for_effort", fake_policy)
+
+    ticket = Ticket(
+        uid="t1", repository_uid="repo1", title="Fix login", description="d",
+        status="backlog", priority="high",
+    )
+    comment = Comment(
+        uid="c1", subject_type="ticket", subject_uid="t1",
+        author_uid="u1", body="@opensweep refine this",
+    )
+    run_uid = await opensweep_mention.trigger_opensweep_reply(
+        comment, CommentSubjectType.TICKET, ticket
+    )
+    assert run_uid == "run-1"
+    assert captured["surface"] == "comment"
+    assert captured["target"]["subject_type"] == "ticket"
+    assert captured["target"]["subject_uid"] == "t1"
+    assert captured["target"]["comment_uid"] == "c1"
+    assert captured["target"]["ticket_uid"] == "t1"
+
+
+def test_pending_filter_matches_only_this_subject():
+    from domains.comments.opensweep_mention import filter_pending_for_subject
+
+    def run(uid, subject_type="ticket", subject_uid="t1"):
+        return SimpleNamespace(
+            uid=uid, target={"subject_type": subject_type, "subject_uid": subject_uid}
+        )
+
+    runs = [run("r1"), run("r2", subject_uid="t2"), run("r3", subject_type="finding")]
+    matched = filter_pending_for_subject(runs, CommentSubjectType.TICKET, "t1")
+    assert [r.uid for r in matched] == ["r1"]
+
+    legacy = SimpleNamespace(uid="r4", target=None)  # pre-surface node
+    assert filter_pending_for_subject([legacy], CommentSubjectType.TICKET, "t1") == []
+
+
+# ── GET /runs surface gate ───────────────────────────────────────────────────
+
+
+def _user(role="maintainer", platform_admin=False, uid="u1"):
+    return UserDTO(
+        uid=uid, email="e@x.y", display_name="U", role=role,
+        org_uid="org-a", is_platform_admin=platform_admin,
+    )
+
+
+def _node(uid, surface="runs", triggered_by="u1", repository_uid="repo1"):
+    now = datetime.now(UTC)
+    return Run(
+        uid=uid, repository_uid=repository_uid, executor="internal_llm",
+        surface=surface, triggered_by=triggered_by, status="ended",
+        last_activity_at=now, started_at=now, created_at=now,
+    )
+
+
+@pytest.fixture
+def runs_api(monkeypatch):
+    import api.v1.runs as runs_module
+
+    legacy = _node("legacy")
+    legacy.surface = None  # node predating the surface field
+    nodes = [
+        _node("visible"),
+        legacy,
+        _node("reply", surface="comment"),
+        _node("mine", surface="chat", triggered_by="u1"),
+        _node("theirs", surface="chat", triggered_by="u2"),
+    ]
+
+    async def fake_all():
+        return nodes
+
+    async def fake_reconcile():
+        return None
+
+    async def fake_org_repos(org_uid):
+        return {"repo1"}
+
+    monkeypatch.setattr(runs_module, "Run", SimpleNamespace(nodes=SimpleNamespace(all=fake_all)))
+    monkeypatch.setattr(runs_module, "reconcile_stale_runs", fake_reconcile)
+    monkeypatch.setattr(runs_module, "org_repo_uids", fake_org_repos)
+    return runs_module
+
+
+async def _uids(runs_module, **kwargs):
+    defaults = dict(
+        repository_uid=None, executor=None, status=None, playbook=None,
+        linked_pr_uid=None, linked_ticket_uid=None, linked_finding_uid=None,
+        surface=None, limit=100,
+    )
+    defaults.update(kwargs)
+    return [r.uid for r in await runs_module.list_runs(**defaults)]
+
+
+async def test_default_list_hides_agent_surfaces(runs_api):
+    # Legacy nodes (surface=None) must stay visible — they're normal runs.
+    assert await _uids(runs_api, user=_user()) == ["visible", "legacy"]
+
+
+async def test_comment_surface_needs_platform_admin(runs_api):
+    with pytest.raises(HTTPException) as exc:
+        await _uids(runs_api, surface="comment", user=_user())
+    assert exc.value.status_code == 403
+    assert await _uids(runs_api, surface="comment", user=_user(platform_admin=True)) == ["reply"]
+
+
+async def test_all_surface_needs_platform_admin(runs_api):
+    with pytest.raises(HTTPException) as exc:
+        await _uids(runs_api, surface="all", user=_user())
+    assert exc.value.status_code == 403
+    assert set(await _uids(runs_api, surface="all", user=_user(platform_admin=True))) == {
+        "visible", "legacy", "reply", "mine", "theirs",
+    }
+
+
+async def test_chat_surface_returns_only_own_sessions(runs_api):
+    # "chat" is the widget's personal history — own sessions for EVERYONE,
+    # platform admins included (oversight goes through surface=all).
+    assert await _uids(runs_api, surface="chat", user=_user()) == ["mine"]
+    assert await _uids(runs_api, surface="chat", user=_user(platform_admin=True)) == ["mine"]
+
+
+async def test_unknown_surface_is_422(runs_api):
+    with pytest.raises(HTTPException) as exc:
+        await _uids(runs_api, surface="bogus", user=_user())
+    assert exc.value.status_code == 422
+
+
+async def test_active_runs_exclude_agent_surfaces(runs_api, monkeypatch):
+    async def fake_active(**kwargs):
+        return [
+            _node("visible", surface="runs"),
+            _node("reply", surface="comment"),
+            _node("mine", surface="chat"),
+        ]
+
+    monkeypatch.setattr(runs_api, "active_runs_for", fake_active)
+    out = await runs_api.list_active_runs(
+        repository_uid=None, pull_request_uid=None, ticket_uid=None,
+        finding_uid=None, playbook=None, user=_user(),
+    )
+    assert [r.run_uid for r in out] == ["visible"]
+
+
+# ── POST /runs surface validation ────────────────────────────────────────────
+
+
+async def test_create_run_rejects_bad_surface_combos(monkeypatch):
+    import api.v1.runs as runs_module
+
+    async def fake_require(repo, org):
+        return None
+
+    monkeypatch.setattr(runs_module, "require_repo_in_org", fake_require)
+
+    with pytest.raises(HTTPException) as exc:
+        await runs_module.create_run(
+            CreateRunRequest(repository_uid="repo1", playbook=Playbook.ASK, surface="chat"),
+            user=_user(),
+        )
+    assert exc.value.status_code == 422
+
+    with pytest.raises(HTTPException) as exc:
+        await runs_module.create_run(
+            CreateRunRequest(repository_uid="repo1", playbook=Playbook.CHAT, surface="comment"),
+            user=_user(),
+        )
+    assert exc.value.status_code == 422
+
+
+async def test_create_chat_without_repo_or_context_is_422(monkeypatch):
+    import api.v1.runs as runs_module
+
+    with pytest.raises(HTTPException) as exc:
+        await runs_module.create_run(
+            CreateRunRequest(playbook=Playbook.CHAT, surface="chat"), user=_user()
+        )
+    assert exc.value.status_code == 422
+    assert "repository_uid" in exc.value.detail
+
+
+async def test_create_chat_resolves_repo_from_context_subject(monkeypatch):
+    import api.v1.runs as runs_module
+    from domains.comments import subjects
+
+    seen: dict = {}
+
+    async def fake_get_subject(subject_type, uid):
+        return SimpleNamespace(uid=uid, repository_uid="repo-from-subject")
+
+    async def fake_require(repo, org):
+        seen["repo"] = repo
+
+    async def fake_chat(req, *, actor_uid, org_uid):
+        seen["req_repo"] = req.repository_uid
+        return Run(uid="r1", repository_uid=req.repository_uid, executor="internal_llm")
+
+    monkeypatch.setattr(subjects, "get_subject", fake_get_subject)
+    monkeypatch.setattr(runs_module, "require_repo_in_org", fake_require)
+    monkeypatch.setattr(runs_module, "_create_chat_run", fake_chat)
+
+    await runs_module.create_run(
+        CreateRunRequest(
+            playbook=Playbook.CHAT,
+            surface="chat",
+            context={"subject_type": "ticket", "subject_uid": "t1"},
+        ),
+        user=_user(),
+    )
+    assert seen["repo"] == "repo-from-subject"
+    assert seen["req_repo"] == "repo-from-subject"
+
+
+# ── chat preamble ────────────────────────────────────────────────────────────
+
+
+async def test_chat_preamble_without_context_is_just_the_contract():
+    from domains.investigations.services.chat_context import build_chat_preamble
+
+    text = await build_chat_preamble({})
+    assert "opensweep_platform_" in text
+    assert "read-only" in text
+    assert "viewing the following" not in text
+
+
+async def test_chat_preamble_snapshots_the_subject(monkeypatch):
+    from domains.comments import subjects
+    from domains.investigations.services.chat_context import build_chat_preamble
+
+    async def fake_get_subject(subject_type, uid):
+        return SimpleNamespace(uid=uid)
+
+    monkeypatch.setattr(subjects, "get_subject", fake_get_subject)
+    monkeypatch.setattr(
+        subjects, "subject_snapshot", lambda st, s: f"SNAPSHOT {st.value} {s.uid}"
+    )
+    text = await build_chat_preamble({"subject_type": "ticket", "subject_uid": "t9"})
+    assert "SNAPSHOT ticket t9" in text
+
+
+async def test_chat_preamble_survives_a_missing_subject(monkeypatch):
+    from domains.comments import subjects
+    from domains.investigations.services.chat_context import build_chat_preamble
+
+    async def fake_get_subject(subject_type, uid):
+        return None
+
+    monkeypatch.setattr(subjects, "get_subject", fake_get_subject)
+    text = await build_chat_preamble({"subject_type": "ticket", "subject_uid": "gone"})
+    assert "opensweep_platform_" in text
+    assert "viewing the following" not in text
+
+
+# ── route surface ────────────────────────────────────────────────────────────
+
+
+def test_pending_opensweep_runs_route_is_mounted():
+    from app import app
+
+    paths = app.openapi()["paths"]
+    assert "/api/v1/comments/pending-opensweep-runs" in paths
+    op = paths["/api/v1/comments/pending-opensweep-runs"]["get"]
+    assert op["operationId"] == "opensweep_comment_pending_runs"

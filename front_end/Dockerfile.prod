@@ -1,0 +1,39 @@
+# Production frontend — multi-stage: vite build, then a static Caddy
+# file-server (SPA fallback to index.html). The public Caddy reverse proxy
+# (docker-compose.prod.yml `opensweep_caddy`) fronts this on / and routes
+# /api|/mcp|/health to the backend.
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --no-audit --no-fund
+
+COPY . /app
+
+# Baked in at build time by Vite. Same-origin deploys pass the public origin
+# (https://<OPENSWEEP_DOMAIN>) via the compose build arg.
+ARG VITE_BACKEND_URL
+ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
+
+# Zitadel OIDC login (empty = auth UI disabled — shared-token fallback).
+ARG VITE_ZITADEL_AUTHORITY
+ARG VITE_ZITADEL_CLIENT_ID
+ENV VITE_ZITADEL_AUTHORITY=$VITE_ZITADEL_AUTHORITY
+ENV VITE_ZITADEL_CLIENT_ID=$VITE_ZITADEL_CLIENT_ID
+
+RUN npm run build
+
+FROM caddy:2-alpine
+
+COPY --from=build /app/dist /srv
+
+RUN printf '%s\n' \
+    ':80 {' \
+    '    root * /srv' \
+    '    encode gzip' \
+    '    try_files {path} /index.html' \
+    '    file_server' \
+    '}' > /etc/caddy/Caddyfile
+
+EXPOSE 80

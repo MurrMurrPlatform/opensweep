@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="104 104 592 592"
+     role="img" aria-labelledby="title desc">
+  <title id="title">OpenSweep mark</title>
+  <desc id="desc">Three open concentric arcs with a three-by-three dot grid.</desc>
+  <path d="M 140.557 382.995 A 260 260 0 1 1 400.000 660.000" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="butt"/>
+  <circle cx="140.557" cy="382.995" r="18" fill="currentColor"/>
+  <path d="M 212.774 382.961 A 188 188 0 1 1 400.000 588.000" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="butt"/>
+  <circle cx="212.774" cy="382.961" r="18" fill="currentColor"/>
+  <path d="M 285.244 383.054 A 116 116 0 1 1 400.000 516.000" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="butt"/>
+  <circle cx="285.244" cy="383.054" r="18" fill="currentColor"/>
+  <circle cx="140" cy="516" r="18" fill="currentColor"/>
+  <circle cx="140" cy="588" r="18" fill="currentColor"/>
+  <circle cx="140" cy="660" r="18" fill="currentColor"/>
+  <circle cx="212" cy="516" r="18" fill="currentColor"/>
+  <circle cx="212" cy="588" r="18" fill="currentColor"/>
+  <circle cx="212" cy="660" r="18" fill="currentColor"/>
+  <circle cx="284" cy="516" r="18" fill="currentColor"/>
+  <circle cx="284" cy="588" r="18" fill="currentColor"/>
+  <circle cx="284" cy="660" r="18" fill="currentColor"/>
+</svg>

@@ -1,0 +1,126 @@
+@use 'mixins' as *;
+
+/* State accents — read by .kanban-col--<state> via CSS variable */
+$state-tones: (
+  draft: hsl(var(--muted-foreground)),
+  ready: hsl(var(--primary)),
+  assigned: hsl(var(--primary)),
+  in_progress: var(--n-warn),
+  review_pending: hsl(var(--primary)),
+  changes_requested: var(--n-warn),
+  approved: var(--n-good),
+  merged: var(--n-good),
+  blocked: var(--n-bad),
+);
+
+.kanban-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(300px, 1fr);
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  min-height: 0;
+  scroll-snap-type: x proximity;
+}
+
+.kanban-col {
+  --kanban-accent: hsl(var(--muted-foreground));
+
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-top: 3px solid var(--kanban-accent);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 200px;
+  max-height: calc(100vh - 260px);
+  scroll-snap-align: start;
+  @include kanban-column-scroll;
+
+  @each $state, $tone in $state-tones {
+    &--#{$state} {
+      --kanban-accent: #{$tone};
+    }
+  }
+
+  &__head {
+    position: sticky;
+    top: -12px;
+    margin: -12px -12px 0;
+    padding: 12px;
+    background: linear-gradient(to bottom, hsl(var(--muted)) 75%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    z-index: 1;
+  }
+
+  &__title {
+    color: hsl(var(--foreground));
+    font-size: 13px;
+    letter-spacing: 0.01em;
+  }
+
+  &__count {
+    background: hsl(var(--accent));
+    color: hsl(var(--muted-foreground));
+    border-radius: 9999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    border: 1px solid hsl(var(--border));
+
+    &--hot {
+      background: color-mix(in srgb, var(--n-warn) 18%, transparent);
+      color: var(--n-warn);
+      border-color: color-mix(in srgb, var(--n-warn) 35%, transparent);
+    }
+  }
+
+  &__empty {
+    color: hsl(var(--muted-foreground));
+    font-size: 12px;
+    font-style: italic;
+    padding: 18px 8px;
+    text-align: center;
+    border: 1px dashed hsl(var(--border));
+    border-radius: calc(var(--radius) - 4px);
+  }
+}
+
+.kanban-card {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 4px);
+  padding: 12px;
+  transition: transform 150ms, box-shadow 150ms, border-color 150ms;
+  cursor: pointer;
+  display: block;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+    border-color: color-mix(in srgb, var(--kanban-accent, hsl(var(--primary))) 35%, hsl(var(--border)));
+  }
+
+  &__title {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    margin-bottom: 6px;
+    font-size: 13.5px;
+    line-height: 1.3;
+  }
+
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    color: hsl(var(--muted-foreground));
+    font-size: 12px;
+  }
+}

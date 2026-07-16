@@ -1,0 +1,20 @@
+[project]
+name = "opensweep-backend"
+version = "0.1.0"
+description = "OpenSweep — AI Engineering Control Plane (backend)"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+# var/ holds vendored artifacts (ecc-source) with their own configs — not ours to lint.
+extend-exclude = ["var"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

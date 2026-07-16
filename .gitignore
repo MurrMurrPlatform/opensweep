@@ -1,0 +1,31 @@
+.env
+.env.local
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Logs
+*.log
+celerybeat-schedule
+celerybeat.pid
+
+# IDE
+.idea/
+.vscode/
+back_end/var/
+.gstack/
+.playwright-mcp/

@@ -1,0 +1,26 @@
+@mixin glass {
+  background: var(--n-glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--n-border);
+  box-shadow: var(--n-glass-shadow);
+}
+
+@mixin focus-ring {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+@mixin kanban-column-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--n-border-strong) transparent;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--n-border-strong);
+    border-radius: var(--n-radius-pill);
+  }
+}

@@ -1,0 +1,260 @@
+
+services:
+  opensweep_neo4j:
+    image: neo4j:5-community
+    container_name: opensweep_neo4j
+    ports:
+      # Host ports shifted off the defaults to coexist with other Neo4j stacks on this machine.
+      - "127.0.0.1:7475:7474"
+      - "127.0.0.1:7688:7687"
+    environment:
+      NEO4J_AUTH: neo4j/koalapassword
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    volumes:
+      - koala_neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p koalapassword 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  opensweep_redis:
+    image: redis:7-alpine
+    container_name: opensweep_redis
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - koala_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── SearXNG (backend for the web_search platform tool) ─────────────────────
+  # Internal-only metasearch: backend + worker reach it at
+  # SEARXNG_URL=http://opensweep_searxng:8080; no host port published.
+  opensweep_searxng:
+    image: searxng/searxng:latest
+    container_name: opensweep_searxng
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-opensweep-dev-searxng-secret}
+    volumes:
+      - ./scripts/searxng/settings.yml:/etc/searxng/settings.yml:ro
+
+  opensweep_backend:
+    build:
+      context: ./back_end
+      dockerfile: Dockerfile.dev
+    container_name: opensweep_backend
+    ports:
+      - "127.0.0.1:8001:8000"
+    env_file: [.env]
+    environment:
+      - SEARXNG_URL=http://opensweep_searxng:8080
+    volumes:
+      - ./back_end:/app:cached
+      # Writable workspace for sandbox clones (fresh GitHub clones for agent execution).
+      - ${HOME}/.opensweep/sandboxes:/host/sandboxes:rw
+      # Codex reuses the host's logged-in session via the bind-mounted auth dir.
+      # Claude Code stores its OAuth in the macOS Keychain (not in a file), so we
+      # use a long-lived headless token instead — pass CLAUDE_CODE_OAUTH_TOKEN via
+      # the .env file (generate it once with `claude setup-token` on the host).
+      - ${HOME}/.codex:/root/.codex:rw
+    depends_on:
+      opensweep_redis:
+        condition: service_healthy
+      opensweep_neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  opensweep_worker:
+    build:
+      context: ./back_end
+      dockerfile: Dockerfile.dev
+    container_name: opensweep_worker
+    command: >
+      watchmedo auto-restart --directory=/app --pattern=*.py --recursive
+      -- celery -A celery_app worker --loglevel=info --concurrency=10 --pool=prefork
+    volumes:
+      - ./back_end:/app:cached
+      - ${HOME}/.opensweep/sandboxes:/host/sandboxes:rw
+      - ${HOME}/.claude:/root/.claude:rw
+      - ${HOME}/.codex:/root/.codex:rw
+      # (No host opencode bind-mount: the worker generates opencode's provider
+      # config from the LLMProvider row at invocation time. See
+      # llm_executor._prepare_opencode_config — base_url, model, and credential
+      # all come from the row, no host setup required.)
+    env_file: [.env]
+    environment:
+      - PYTHONPATH=/app
+      - LOG_SERVICE_NAME=opensweep_worker
+      - SEARXNG_URL=http://opensweep_searxng:8080
+    depends_on:
+      opensweep_redis:
+        condition: service_healthy
+      opensweep_neo4j:
+        condition: service_healthy
+
+  opensweep_beat:
+    build:
+      context: ./back_end
+      dockerfile: Dockerfile.dev
+    container_name: opensweep_beat
+    command: >
+      celery -A celery_app beat --loglevel=info
+      --scheduler=celery.beat.PersistentScheduler
+      --schedule=/tmp/opensweep-celerybeat-schedule
+    volumes:
+      - ./back_end:/app:cached
+    env_file: [.env]
+    environment:
+      - PYTHONPATH=/app
+      - LOG_SERVICE_NAME=opensweep_beat
+    depends_on:
+      opensweep_redis:
+        condition: service_healthy
+
+  opensweep_frontend:
+    build:
+      context: ./front_end
+      dockerfile: Dockerfile.dev
+    container_name: opensweep_frontend
+    ports:
+      - "127.0.0.1:5174:5173"
+    volumes:
+      - ./front_end:/app:cached
+      - /app/node_modules
+    env_file: [.env]
+    depends_on:
+      opensweep_backend:
+        condition: service_healthy
+
+  # ── Zitadel (default stack — Zitadel login is the only supported auth) ─────
+  # Local auth stack on http://localhost:8300.
+  # After the FIRST `docker compose up -d`, run scripts/zitadel-dev-setup.sh
+  # once: it creates the opensweep project/app, seeds the QA user, and writes
+  # ZITADEL_*/VITE_ZITADEL_* into .env (the backend refuses to boot without
+  # ZITADEL_ISSUER).
+  # Backend .env: ZITADEL_ISSUER=http://localhost:8300,
+  #               ZITADEL_INTERNAL_URL=http://opensweep_zitadel:8080
+  # First login: zitadel-admin@zitadel.localhost / Password1!
+
+  opensweep_zitadel_db:
+    image: postgres:17-alpine
+    container_name: opensweep_zitadel_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: zitadel
+      POSTGRES_DB: zitadel
+    volumes:
+      - koala_zitadel_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d zitadel"]
+      interval: 10s
+      timeout: 30s
+      retries: 10
+      start_period: 20s
+
+  opensweep_zitadel:
+    image: ghcr.io/zitadel/zitadel:v4.16.0
+    container_name: opensweep_zitadel
+    user: "0"
+    # Dev-only masterkey (must be exactly 32 chars). Fine locally; never
+    # reuse in prod — it encrypts data at rest and can't be rotated.
+    command: start-from-init --masterkey "MasterkeyNeedsToHave32Characters"
+    environment:
+      ZITADEL_PORT: 8080
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: 8300
+      ZITADEL_EXTERNALSECURE: "false"
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_DATABASE_POSTGRES_DSN: postgresql://postgres:zitadel@opensweep_zitadel_db:5432/zitadel?sslmode=disable
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /zitadel/bootstrap/login-client.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Login Client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: "2099-01-01T00:00:00Z"
+      # Admin service-account PAT — lets scripts/zitadel-dev-setup.sh
+      # bootstrap the opensweep project/app via the API (dev only).
+      ZITADEL_FIRSTINSTANCE_PATPATH: /zitadel/bootstrap/admin.pat
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: admin-bootstrap
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Admin Bootstrap
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2099-01-01T00:00:00Z"
+      # Multi-tenancy: anyone may register a USER; each new user gets their own
+      # OpenSweep organization on first login (applies on FIRST init only — the
+      # setup script enables it via API for existing instances).
+      ZITADEL_DEFAULTINSTANCE_LOGINPOLICY_ALLOWREGISTER: "true"
+      # But NOT a Zitadel ORG: anonymous org self-registration (login v1) is
+      # closed so only the operator creates Zitadel orgs. FIRST init only —
+      # the setup script also sets it via API for existing instances.
+      ZITADEL_DEFAULTINSTANCE_RESTRICTIONS_DISALLOWPUBLICORGREGISTRATION: "true"
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: "true"
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: http://localhost:8300/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: http://localhost:8300/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: http://localhost:8300/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: http://localhost:8300/ui/v2/login/login?samlRequest=
+    volumes:
+      - opensweep_zitadel_bootstrap:/zitadel/bootstrap:rw
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      opensweep_zitadel_db:
+        condition: service_healthy
+
+  opensweep_zitadel_login:
+    image: ghcr.io/zitadel/zitadel-login:v4.16.0
+    container_name: opensweep_zitadel_login
+    user: "0"
+    environment:
+      ZITADEL_API_URL: http://opensweep_zitadel:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /zitadel/bootstrap/login-client.pat
+      CUSTOM_REQUEST_HEADERS: Host:localhost,X-Forwarded-Proto:http
+    volumes:
+      - opensweep_zitadel_bootstrap:/zitadel/bootstrap:ro
+    healthcheck:
+      test:
+        - CMD
+        - /bin/sh
+        - -c
+        - node /app/healthcheck.mjs http://localhost:3000/ui/v2/login/healthy
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      opensweep_zitadel:
+        condition: service_healthy
+
+  opensweep_zitadel_proxy:
+    image: caddy:2-alpine
+    container_name: opensweep_zitadel_proxy
+    ports:
+      - "127.0.0.1:8300:80"
+    volumes:
+      - ./scripts/Caddyfile.zitadel-dev:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - opensweep_zitadel
+      - opensweep_zitadel_login
+
+# Volume names deliberately keep the koala_ prefix: renaming a named volume
+# orphans existing Neo4j/Redis/Postgres data on deployed hosts. Retire via
+# an explicit ops runbook (stop stack, copy volume, rename), never a deploy.
+volumes:
+  koala_neo4j_data:
+  koala_redis_data:
+  koala_zitadel_db_data:
+  opensweep_zitadel_bootstrap:

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OpenSweep wordmark for dark backgrounds (mark from
+     front_end/src/assets/sweep_logo.svg, teal #4DB6CB; ink #f2f2f3).
+     Uploaded to the Zitadel label policy by deployment/zitadel-*-setup.sh. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2210 620" role="img" aria-label="OpenSweep">
+  <g transform="translate(-104,-90)" fill="none">
+    <path d="M 140.557 382.995 A 260 260 0 1 1 400.000 660.000" stroke="#4DB6CB" stroke-width="36" stroke-linecap="butt"/>
+    <circle cx="140.557" cy="382.995" r="18" fill="#4DB6CB"/>
+    <path d="M 212.774 382.961 A 188 188 0 1 1 400.000 588.000" stroke="#4DB6CB" stroke-width="36" stroke-linecap="butt"/>
+    <circle cx="212.774" cy="382.961" r="18" fill="#4DB6CB"/>
+    <path d="M 285.244 383.054 A 116 116 0 1 1 400.000 516.000" stroke="#4DB6CB" stroke-width="36" stroke-linecap="butt"/>
+    <circle cx="285.244" cy="383.054" r="18" fill="#4DB6CB"/>
+    <circle cx="140" cy="516" r="18" fill="#4DB6CB"/><circle cx="140" cy="588" r="18" fill="#4DB6CB"/><circle cx="140" cy="660" r="18" fill="#4DB6CB"/>
+    <circle cx="212" cy="516" r="18" fill="#4DB6CB"/><circle cx="212" cy="588" r="18" fill="#4DB6CB"/><circle cx="212" cy="660" r="18" fill="#4DB6CB"/>
+    <circle cx="284" cy="516" r="18" fill="#4DB6CB"/><circle cx="284" cy="588" r="18" fill="#4DB6CB"/><circle cx="284" cy="660" r="18" fill="#4DB6CB"/>
+  </g>
+  <text x="690" y="400" font-family="Manrope, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="270" font-weight="600" letter-spacing="-8" fill="#f2f2f3">OpenSweep</text>
+</svg>
