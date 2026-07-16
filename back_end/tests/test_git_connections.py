@@ -322,6 +322,33 @@ async def test_repo_token_mint_failure_falls_back_to_connection_pat(monkeypatch)
     )
 
 
+async def test_repository_dto_carries_connection_uid_to_token_resolution(monkeypatch):
+    """Regression: sandbox clones resolve credentials off a RepositoryDTO, not
+    the node. The DTO dropping git_connection_uid made PAT-connection repos
+    fail with "no GitHub credential" on deployments without an env PAT."""
+    from domains.repositories.services.repository_service import repository_to_dto
+
+    node = SimpleNamespace(
+        uid="r1", org_uid="org-1", slug="repo", mode="github", provider="github",
+        name="repo", description="", default_branch="main", color_scheme="indigo",
+        is_active=True, github_owner="acme", github_repo="repo", github_repo_id=1,
+        github_installation_id=None, git_connection_uid="c1",
+        github_connection_status="connected", last_synced_at=None, metadata={},
+        kill_switch_active=False, created_at=None, updated_at=None,
+    )
+    dto = repository_to_dto(node)
+    assert dto.git_connection_uid == "c1"
+
+    monkeypatch.setattr(github_app, "get_github_app", lambda: None)
+    monkeypatch.setattr(settings, "GITHUB_TOKEN", "")
+
+    async def fake_conn_pat(uid):
+        return "ghp_conn" if uid == "c1" else ""
+
+    monkeypatch.setattr(github_app, "get_connection_pat", fake_conn_pat)
+    assert await github_app.get_repo_git_token(dto) == "ghp_conn"
+
+
 # ── Repo webhook (best-effort) ───────────────────────────────────────────────
 
 
