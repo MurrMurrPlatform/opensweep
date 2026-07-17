@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Pencil, Plus, Save, Trash2, Download } from 'lucide-vue-next'
-import { useAgentPromptStore, type AgentPromptDTO } from '@/stores/agentPromptStore'
+import {
+  useAgentPromptStore,
+  isAgentBasePrompt,
+  isStageDefaultPrompt,
+  type AgentPromptDTO,
+} from '@/stores/agentPromptStore'
 import { useToast } from '@/composables/useToast'
 import { PageHeader } from '@/components/ui/page-header'
 import { Card, CardContent } from '@/components/ui/card'
@@ -196,6 +201,14 @@ function sourceBadge(p: AgentPromptDTO) {
   if (p.source === 'user') return 'bg-good/15 text-good'
   return 'bg-muted text-muted-foreground'
 }
+
+/** Which composition role a seeded platform row plays, so admins can tell
+ * the always-applied layers apart from selectable strategies. */
+function layerLabel(p: AgentPromptDTO): string {
+  if (isAgentBasePrompt(p)) return 'agent base'
+  if (isStageDefaultPrompt(p)) return 'stage default'
+  return ''
+}
 </script>
 
 <template>
@@ -275,7 +288,16 @@ function sourceBadge(p: AgentPromptDTO) {
             <TableBody>
               <TableRow v-for="p in filtered" :key="p.uid">
                 <TableCell class="max-w-[320px]">
-                  <div class="truncate font-medium">{{ p.title }}</div>
+                  <div class="flex items-center gap-2">
+                    <span class="truncate font-medium">{{ p.title }}</span>
+                    <span
+                      v-if="layerLabel(p)"
+                      class="flex-shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] uppercase text-primary"
+                      title="Applied automatically by run composition — not shown in run-launch pickers"
+                    >
+                      {{ layerLabel(p) }}
+                    </span>
+                  </div>
                   <div class="truncate text-xs text-muted-foreground">{{ p.description }}</div>
                 </TableCell>
                 <TableCell>

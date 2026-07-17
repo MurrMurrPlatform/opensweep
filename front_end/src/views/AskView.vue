@@ -2,7 +2,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
 import { Sparkles, FileText, ChevronRight, Pencil, Save } from 'lucide-vue-next'
-import { useAgentPromptStore, type AgentPromptDTO } from '@/stores/agentPromptStore'
+import {
+  useAgentPromptStore,
+  isAgentBasePrompt,
+  isStageDefaultPrompt,
+  type AgentPromptDTO,
+} from '@/stores/agentPromptStore'
 import { useDocStore } from '@/stores/docStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
@@ -44,8 +49,21 @@ const body = ref('')
 const effort = ref<'small' | 'normal' | 'large'>('normal')
 const submitting = ref(false)
 
+// The Ask page dispatches audit runs. Hide internal composition layers:
+// agent bases (opensweep://agent/*) are already every run's instructions
+// layer, and stage defaults for other stages (review/fix/document/…) belong
+// to flows that apply them automatically — only the ask stage default is a
+// meaningful card here.
+function launchable(all: AgentPromptDTO[]): AgentPromptDTO[] {
+  return all.filter(
+    (p) =>
+      !isAgentBasePrompt(p) &&
+      (!isStageDefaultPrompt(p) || p.source_url === 'opensweep://workflow/ask'),
+  )
+}
+
 onMounted(async () => {
-  prompts.value = await agentPrompts.fetchAll({ enabled_only: true })
+  prompts.value = launchable(await agentPrompts.fetchAll({ enabled_only: true }))
 })
 
 const allTags = computed(() => {
@@ -107,7 +125,7 @@ async function submitSaveAsNewPrompt() {
       tags: selectedPrompt.value?.tags || [],
       enabled: true,
     })
-    prompts.value = await agentPrompts.fetchAll({ enabled_only: true })
+    prompts.value = launchable(await agentPrompts.fetchAll({ enabled_only: true }))
     const found = prompts.value.find((p) => p.uid === created.uid)
     if (found) pickPrompt(found)
     toast.info('Prompt saved', `"${title}" added to library.`)

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Workflow } from 'lucide-vue-next'
 import { useWorkflowStore } from '@/stores/workflowStore'
-import { useAgentPromptStore } from '@/stores/agentPromptStore'
+import { useAgentPromptStore, isAgentBasePrompt } from '@/stores/agentPromptStore'
 import { useLLMProviderStore } from '@/stores/llmProviderStore'
 import { useRunPolicyStore } from '@/stores/runPolicyStore'
 import { useToast } from '@/composables/useToast'
@@ -113,8 +113,10 @@ watch(() => props.repositoryUid, () => void load())
 
 const promptOptions = computed(() => [
   { label: 'No guidance (structural intent only)', value: NONE },
+  // Agent bases (opensweep://agent/<playbook>) are the instructions layer of
+  // every run already — assigning one as stage guidance would duplicate it.
   ...agentPrompts.prompts
-    .filter((p) => p.enabled)
+    .filter((p) => p.enabled && !isAgentBasePrompt(p))
     .map((p) => ({ label: p.title, value: p.uid })),
 ])
 

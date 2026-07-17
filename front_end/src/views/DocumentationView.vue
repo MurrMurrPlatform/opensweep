@@ -21,7 +21,12 @@ import {
   Wand2,
   X,
 } from 'lucide-vue-next'
-import { useAgentPromptStore, type AgentPromptDTO } from '@/stores/agentPromptStore'
+import {
+  useAgentPromptStore,
+  isAgentBasePrompt,
+  isStageDefaultPrompt,
+  type AgentPromptDTO,
+} from '@/stores/agentPromptStore'
 import { useDocStore } from '@/stores/docStore'
 import { useInvestigationStore } from '@/stores/investigationStore'
 import { useMemoryStore } from '@/stores/memoryStore'
@@ -410,7 +415,13 @@ async function openUpdateDocs() {
   selectedDocPromptUid.value = ''
   try {
     const all = await agentPrompts.fetchAll({ enabled_only: true })
-    docPrompts.value = all.filter((p) => p.default_job_type === 'document')
+    // Alternative strategies only. The seeded internal layers (agent base,
+    // document stage default) are what the default option already runs —
+    // listing them here showed the same run under three different names.
+    docPrompts.value = all.filter(
+      (p) =>
+        p.default_job_type === 'document' && !isAgentBasePrompt(p) && !isStageDefaultPrompt(p),
+    )
   } catch {
     docPrompts.value = []
   }
@@ -1105,7 +1116,8 @@ async function confirmDeleteMemory() {
               </SelectContent>
             </Select>
             <p class="text-xs text-muted-foreground">
-              Library prompts with job type <code class="font-mono">document</code> appear here — manage them under
+              The default runs this repository's configured document-stage guidance (Workflow card).
+              Alternative strategies with job type <code class="font-mono">document</code> appear here — manage them under
               <RouterLink :to="{ name: 'admin-agent-prompts' }" class="text-primary hover:underline">Admin › Agent prompts</RouterLink>.
             </p>
           </div>

@@ -32,6 +32,26 @@ export interface CreateAgentPromptRequest {
 
 export type UpdateAgentPromptRequest = Partial<CreateAgentPromptRequest>
 
+/**
+ * Seeded per-playbook base instructions (opensweep://agent/<playbook>) — an
+ * internal composition layer that is already part of every run of that
+ * playbook. Never a meaningful choice in a run-launch or stage-guidance
+ * picker: selecting it would only duplicate what composition already adds.
+ */
+export function isAgentBasePrompt(p: AgentPromptDTO): boolean {
+  return p.source === 'platform' && p.source_url.startsWith('opensweep://agent/')
+}
+
+/**
+ * Seeded per-stage workflow default (opensweep://workflow/<stage>) — what an
+ * unconfigured workflow stage already resolves to. In run-launch pickers the
+ * "default" option covers it, so listing it as a separate entry just shows
+ * the same run twice under two names.
+ */
+export function isStageDefaultPrompt(p: AgentPromptDTO): boolean {
+  return p.source === 'platform' && p.source_url.startsWith('opensweep://workflow/')
+}
+
 export interface ImportEccResult {
   imported: number
   skipped_user_edited: number
