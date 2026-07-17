@@ -35,6 +35,11 @@ export function installGuards(router: Router) {
 
   router.beforeEach(async (to) => {
     if (to.meta.public) return true // marketing pages skip app bootstrapping
+    // The OIDC callback must exchange the code before ANY API call: a /me
+    // fetch here would run tokenless, 401, and api.ts's interactive-sign-in
+    // fallback would rip the tab back to Zitadel mid-exchange — an authorize
+    // loop that corrupts the state store ("No matching state found").
+    if (to.name === 'auth-callback') return true
 
     const ui = useUiStore()
     const repos = useRepositoryStore()
