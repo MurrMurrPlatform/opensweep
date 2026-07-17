@@ -88,7 +88,11 @@ async function authFetch(path: string, init: Omit<RequestInit, 'headers'>): Prom
   let res = await attempt()
   if (res.status === 401 && authEnabled) {
     if (await renewToken()) res = await attempt()
-    if (res.status === 401 && !redirectingToSignIn) {
+    // Never start an interactive redirect while /auth/callback is mid-code-
+    // exchange: navigating away corrupts the OIDC state store and loops the
+    // authorize round-trip. The callback view surfaces its own errors.
+    const onCallback = window.location.pathname === '/auth/callback'
+    if (res.status === 401 && !redirectingToSignIn && !onCallback) {
       redirectingToSignIn = true
       // If the redirect can't even start (Zitadel unreachable), free the
       // flag so a later 401 can retry instead of being silently swallowed.
