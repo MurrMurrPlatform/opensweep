@@ -225,6 +225,16 @@ set_env VITE_ZITADEL_AUTHORITY "http://localhost:8300"
 set_env VITE_ZITADEL_CLIENT_ID "$CLIENT_ID"
 echo "wrote ZITADEL_*/VITE_ZITADEL_* to .env"
 
+# Setting ZITADEL_ISSUER turns auth enforcement ON, but executor MCP callbacks
+# authenticate with osrt_ run tokens minted from OPENSWEEP_RUN_TOKEN_SECRET /
+# OPENSWEEP_AUTH_TOKEN (infrastructure/run_tokens.py) — without one, every
+# executor dispatch fails with "executor MCP auth misconfigured". Generate the
+# service token once; an existing non-empty value is kept.
+if ! grep -q '^OPENSWEEP_AUTH_TOKEN=..*' .env; then
+  set_env OPENSWEEP_AUTH_TOKEN "$(openssl rand -hex 32)"
+  echo "generated OPENSWEEP_AUTH_TOKEN (service credential for API access + executor run tokens)"
+fi
+
 # ── stamp PRE-TENANCY repos into the admin's org (only if any exist) ─────────
 # Repos created before Zitadel setup carry no org (or the local-org default)
 # and would be invisible under multi-tenancy. Stamp them into the admin's
@@ -247,7 +257,10 @@ fi
 
 # ── restart app containers with the new env ─────────────────────────────────
 # (the login container caches branding/translations — restart applies them)
-docker compose up -d opensweep_backend opensweep_frontend >/dev/null 2>&1
+# Worker + beat included: executor dispatch runs in the WORKER, which mints
+# run tokens from the same OPENSWEEP_AUTH_TOKEN — leaving it on stale env
+# breaks every agent run while the backend looks healthy.
+docker compose up -d opensweep_backend opensweep_worker opensweep_beat opensweep_frontend >/dev/null 2>&1
 docker compose restart opensweep_zitadel_login >/dev/null 2>&1
 echo
 echo "Done. Open http://localhost:5174 — you'll be redirected to Zitadel."
