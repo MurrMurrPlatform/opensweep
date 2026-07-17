@@ -32,6 +32,7 @@ from neomodel import adb
 from config import settings
 from domains.delivery.models import PullRequest, WebhookDelivery, pr_key
 from domains.delivery.services.pull_request_service import PullRequestService
+from domains.organizations.models import GitConnection
 from domains.repositories.models import Repository
 from infrastructure.audit import write_audit
 from infrastructure.github_app_store import get_github_app
@@ -120,20 +121,34 @@ async def _claim_delivery(*, delivery_id: str, event: str, action: str, now: dat
     return bool(rows and rows[0][0])
 
 
-async def _repo_for_payload(payload: dict) -> Repository | None:
-    gh_repo = payload.get("repository") or {}
-    repo_id = gh_repo.get("id")
+async def _registered_repos(*, repo_id, owner: str, name: str) -> list[Repository]:
+    """ALL Repository nodes for one GitHub repo — the same repo may be
+    registered by multiple orgs (one node per org). Matched by
+    github_repo_id first, then (owner, name); deduped by uid."""
+    nodes: list[Repository] = []
     if repo_id is not None:
-        node = await Repository.nodes.get_or_none(github_repo_id=int(repo_id))
-        if node is not None:
-            return node
-    owner = (gh_repo.get("owner") or {}).get("login") or ""
-    name = gh_repo.get("name") or ""
+        nodes = list(await Repository.nodes.filter(github_repo_id=int(repo_id)))
     if owner and name:
-        nodes = await Repository.nodes.filter(github_owner=owner, github_repo=name)
-        if nodes:
-            return nodes[0]
-    return None
+        seen = {n.uid for n in nodes}
+        # Name fallback covers nodes registered without a repo id — a node
+        # carrying a DIFFERENT id is another repo that happens to share the
+        # name (e.g. after a rename) and is skipped.
+        nodes.extend(
+            n
+            for n in await Repository.nodes.filter(github_owner=owner, github_repo=name)
+            if n.uid not in seen
+            and (repo_id is None or n.github_repo_id in (None, int(repo_id)))
+        )
+    return nodes
+
+
+async def _repos_for_payload(payload: dict) -> list[Repository]:
+    gh_repo = payload.get("repository") or {}
+    return await _registered_repos(
+        repo_id=gh_repo.get("id"),
+        owner=(gh_repo.get("owner") or {}).get("login") or "",
+        name=gh_repo.get("name") or "",
+    )
 
 
 async def _pr_numbers_to_sync(event: str, payload: dict, repo: Repository) -> list[int]:
@@ -306,18 +321,20 @@ def _split_full_name(gh_repo: dict) -> tuple[str, str]:
     return owner, name or str(gh_repo.get("name") or "")
 
 
-async def _find_registered_repo(gh_repo: dict) -> Repository | None:
-    repo_id = gh_repo.get("id")
-    if repo_id is not None:
-        node = await Repository.nodes.get_or_none(github_repo_id=int(repo_id))
-        if node is not None:
-            return node
+async def _find_registered_repos(gh_repo: dict) -> list[Repository]:
     owner, name = _split_full_name(gh_repo)
-    if owner and name:
-        nodes = await Repository.nodes.filter(github_owner=owner, github_repo=name)
-        if nodes:
-            return nodes[0]
-    return None
+    return await _registered_repos(repo_id=gh_repo.get("id"), owner=owner, name=name)
+
+
+async def _installation_org_uid(installation_id: int) -> str:
+    """The org an installation is linked to ('' when not yet linked). Repos
+    registered by multiple orgs share (owner, name, repo id) — installation
+    LINK events must only touch the installation-org's nodes, never another
+    tenant's."""
+    link = await GitConnection.nodes.get_or_none(
+        provider="github", external_id=str(installation_id)
+    )
+    return str(getattr(link, "org_uid", "") or "") if link is not None else ""
 
 
 async def _handle_installation_event(*, event: str, action: str, payload: dict) -> dict:
@@ -346,16 +363,26 @@ async def _handle_installation_event(*, event: str, action: str, payload: dict) 
             await node.save()
             unlinked.append(node.slug)
 
+    install_org = ""
+    if disposition.connect:
+        install_org = await _installation_org_uid(disposition.installation_id)
+
     for gh_repo in disposition.connect:
         owner, name = _split_full_name(gh_repo)
         if not name:
             continue
-        node = await _find_registered_repo(gh_repo)
-        if node is None:
+        nodes = await _find_registered_repos(gh_repo)
+        # Cross-tenant guard: the same GitHub repo may be registered by several
+        # orgs — link only the installation-org's node(s). An installation not
+        # yet linked to an org keeps the legacy behavior (link every match).
+        if install_org:
+            nodes = [n for n in nodes if n.org_uid == install_org]
+        if not nodes:
             # Available through the installation but not registered in OpenSweep —
             # surfaced via /api/v1/github/app/available-repos, never created here.
             available.append(f"{owner}/{name}" if owner else name)
-        else:
+            continue
+        for node in nodes:
             node.github_installation_id = disposition.installation_id
             if gh_repo.get("id") is not None:
                 node.github_repo_id = int(gh_repo["id"])
@@ -389,21 +416,26 @@ async def _handle_installation_event(*, event: str, action: str, payload: dict) 
         )
 
     for gh_repo in disposition.disconnect:
-        node = await _find_registered_repo(gh_repo)
-        if node is None:
-            continue
-        node.github_installation_id = None
-        node.github_connection_status = "disconnected"
-        node.updated_at = now
-        await node.save()
-        unlinked.append(node.slug)
-        await write_audit(
-            kind="repository.installation_unlinked",
-            subject_uid=node.uid,
-            subject_type="Repository",
-            actor_uid="github-app",
-            payload={"installation_id": disposition.installation_id, "event": event},
-        )
+        # Only nodes actually linked to THIS installation unlink — another
+        # org's node for the same repo (own installation or PAT) is untouched.
+        nodes = [
+            n
+            for n in await _find_registered_repos(gh_repo)
+            if n.github_installation_id == disposition.installation_id
+        ]
+        for node in nodes:
+            node.github_installation_id = None
+            node.github_connection_status = "disconnected"
+            node.updated_at = now
+            await node.save()
+            unlinked.append(node.slug)
+            await write_audit(
+                kind="repository.installation_unlinked",
+                subject_uid=node.uid,
+                subject_type="Repository",
+                actor_uid="github-app",
+                payload={"installation_id": disposition.installation_id, "event": event},
+            )
 
     logger.info(
         f"installation webhook {event}/{action}: "
@@ -424,36 +456,61 @@ async def _process_delivery(*, event: str, action: str, payload: dict) -> dict:
     if event in {"installation", "installation_repositories"}:
         return await _handle_installation_event(event=event, action=action, payload=payload)
 
-    repo = await _repo_for_payload(payload)
-    if repo is None:
+    # Fan-out: the same GitHub repo may be registered by several orgs — the
+    # event is processed against EVERY matching Repository node, each sync
+    # scoped to its own repository_uid (no cross-tenant writes).
+    repos = await _repos_for_payload(payload)
+    if not repos:
         logger.info(
             f"webhook {event}/{action}: repository not registered in OpenSweep — ignored",
             extra={"tag": "delivery"},
         )
         return {"ok": True, "event": event, "registered": False}
 
-    numbers = await _pr_numbers_to_sync(event, payload, repo)
     service = PullRequestService()
-    synced: list[int] = []
+    synced_by_repo: list[tuple[Repository, list[int]]] = []
     failed: list[str] = []
-    for number in dict.fromkeys(numbers):
-        try:
-            await service.sync_from_github(repo.uid, number)
-            synced.append(number)
-        except Exception as exc:
-            failed.append(f"#{number}: {exc}")
-            logger.warning(
-                f"webhook sync failed for {repo.slug}#{number}: {exc}", extra={"tag": "delivery"}
-            )
+    for repo in repos:
+        numbers = await _pr_numbers_to_sync(event, payload, repo)
+        synced: list[int] = []
+        for number in dict.fromkeys(numbers):
+            try:
+                await service.sync_from_github(repo.uid, number)
+                synced.append(number)
+            except Exception as exc:
+                failed.append(f"{repo.slug}#{number}: {exc}")
+                logger.warning(
+                    f"webhook sync failed for {repo.slug}#{number}: {exc}",
+                    extra={"tag": "delivery"},
+                )
+        synced_by_repo.append((repo, synced))
 
     # A failed PR sync means state may be permanently missed (e.g. a merged
     # PR never marked merged) — fail the delivery BEFORE any follow-through
     # side effects (auto-review dispatch is not idempotent) so GitHub
-    # redelivers and the whole handler reruns. Reprocessing the syncs is
-    # safe: sync is head-driven and idempotent.
+    # redelivers and the whole handler reruns (for every org's node).
+    # Reprocessing the syncs is safe: sync is head-driven and idempotent.
     if failed:
-        raise RuntimeError(f"pr sync failed for {repo.slug}: " + "; ".join(failed))
+        raise RuntimeError("pr sync failed: " + "; ".join(failed))
 
+    for repo, synced in synced_by_repo:
+        await _delivery_follow_through(
+            event=event, action=action, payload=payload, repo=repo, synced=synced
+        )
+    return {
+        "ok": True,
+        "event": event,
+        "action": action,
+        "synced": [n for _, synced in synced_by_repo for n in synced],
+    }
+
+
+async def _delivery_follow_through(
+    *, event: str, action: str, payload: dict, repo: Repository, synced: list[int]
+) -> None:
+    """Post-sync side effects for ONE Repository node (best-effort tickets +
+    doc freshness, auto-review dispatch) — runs only after every node's sync
+    succeeded."""
     # Ticket Gate-2 follow-through: a merged PR completes its linked ticket
     # (audit "ticket.done_via_merge"). Best-effort — ticket bookkeeping must
     # never fail the webhook, mirroring the freshness bump below.
@@ -520,4 +577,3 @@ async def _process_delivery(*, event: str, action: str, payload: dict) -> dict:
                         f"auto review dispatch failed for {repo.slug}#{number}: {exc}",
                         extra={"tag": "delivery"},
                     )
-    return {"ok": True, "event": event, "action": action, "synced": synced}

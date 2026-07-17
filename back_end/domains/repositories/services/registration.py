@@ -50,7 +50,8 @@ async def register_github_repo(
 
     Registered into the caller's org — the tenancy root. Slugs are deduped
     within the org only. Callers verify eligibility first (repo belongs to
-    the installation/connection, not already registered anywhere) — this
+    the installation/connection, not already registered in the caller's org —
+    other orgs may hold their own node for the same GitHub repo) — this
     primitive just materialises the node.
     """
     taken_slugs = {r.slug for r in await Repository.nodes.filter(org_uid=org_uid)}
