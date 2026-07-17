@@ -13,6 +13,7 @@
 // (viewer/maintainer/admin) onto the User node.
 
 import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts'
+import { clearPersistedUserState } from '@/lib/userStorage'
 
 const authority = import.meta.env.VITE_ZITADEL_AUTHORITY || ''
 const clientId = import.meta.env.VITE_ZITADEL_CLIENT_ID || ''
@@ -65,6 +66,31 @@ export function accessToken(): string {
   return cachedToken
 }
 
+// Single-flight silent renew backing api.ts's 401 retry: concurrent 401s
+// share one signinSilent round-trip. Resolves to the fresh access token, or
+// '' when renewal fails (signed out, refresh token revoked, Zitadel down).
+let renewInFlight: Promise<string> | null = null
+
+export function renewToken(): Promise<string> {
+  if (!authEnabled) return Promise.resolve('')
+  if (!renewInFlight) {
+    renewInFlight = getManager()
+      .signinSilent()
+      .then((user) => {
+        cachedToken = user?.access_token || ''
+        return cachedToken
+      })
+      .catch(() => {
+        cachedToken = ''
+        return ''
+      })
+      .finally(() => {
+        renewInFlight = null
+      })
+  }
+  return renewInFlight
+}
+
 export async function signIn(returnTo?: string): Promise<void> {
   await getManager().signinRedirect({
     state: { returnTo: returnTo || window.location.pathname + window.location.search },
@@ -90,5 +116,8 @@ export async function completeSignIn(): Promise<string> {
 export async function signOut(): Promise<void> {
   if (!authEnabled) return
   cachedToken = ''
+  // Drop workspace/session residue before the redirect so the next account
+  // on this browser doesn't inherit the previous user's state.
+  clearPersistedUserState()
   await getManager().signoutRedirect()
 }

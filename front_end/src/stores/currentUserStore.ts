@@ -6,23 +6,25 @@ import type { MeDTO, MeProfileDTO } from '@/types/api'
 /**
  * Current-user store.
  *
- * Defaults to the hardcoded local user (uid 'local-user', matches back_end's
- * LOCAL_USER_UID) so "mine only" filters work before /me answers — and
- * indefinitely when auth is disabled. With Zitadel configured, load()
- * (called from the router guard) replaces it with the real user + role.
- * Org defaults (owner + platform admin + onboarded) match local mode so
- * nothing flashes hidden before /me answers.
+ * Defaults are FAIL-CLOSED: least-privileged role until /me answers. The
+ * router guard awaits load() before the first app navigation, so real users
+ * never see the defaults — they only render when /me itself fails, and a
+ * broken backend must not present anyone as admin/owner/platform-admin.
+ * uid keeps the 'local-user' placeholder (back_end's LOCAL_USER_UID) so
+ * "mine only" filters stay inert rather than matching a real user.
  */
 export const useCurrentUserStore = defineStore('currentUser', () => {
   const uid = ref<string>('local-user')
   const email = ref<string>('')
-  const displayName = ref<string>('Local User')
-  const role = ref<'viewer' | 'maintainer' | 'admin'>('admin')
+  const displayName = ref<string>('')
+  const role = ref<'viewer' | 'maintainer' | 'admin'>('viewer')
   const orgUid = ref<string>('')
-  const orgRole = ref<'owner' | 'member'>('owner')
-  const platformAdmin = ref(true)
+  const orgRole = ref<'owner' | 'member'>('member')
+  const platformAdmin = ref(false)
   const onboarded = ref(true)
+  const loading = ref(false) // in-flight guard; `loaded` means success only
   const loaded = ref(false)
+  const loadFailed = ref(false)
   const profile = ref<MeProfileDTO | null>(null)
 
   function applyMe(me: MeDTO) {
@@ -37,12 +39,17 @@ export const useCurrentUserStore = defineStore('currentUser', () => {
   }
 
   async function load() {
-    if (loaded.value) return
-    loaded.value = true // one in-flight attempt; reset on failure below
+    if (loaded.value || loading.value) return
+    loading.value = true
     try {
       applyMe(await apiGet<MeDTO>('/me'))
+      loaded.value = true
+      loadFailed.value = false
     } catch {
-      loaded.value = false // backend unreachable — retry on next navigation
+      // backend unreachable — retried on next navigation / banner Retry
+      loadFailed.value = true // shell shows the backend-unavailable banner
+    } finally {
+      loading.value = false
     }
   }
 
@@ -79,7 +86,7 @@ export const useCurrentUserStore = defineStore('currentUser', () => {
   const isPlatformAdmin = computed(() => platformAdmin.value)
 
   return {
-    uid, email, displayName, role, orgUid, orgRole, onboarded, loaded, profile,
+    uid, email, displayName, role, orgUid, orgRole, onboarded, loaded, loadFailed, profile,
     load, loadProfile, updateProfile, setOnboarded, acceptInvitation,
     mineOnlyFilter, isMaintainer, isAdmin, isOrgOwner, isPlatformAdmin,
   }

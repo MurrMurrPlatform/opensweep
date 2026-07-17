@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useRunStore } from '@/stores/runStore'
 import type { CreateRunRequest, RunDTO } from '@/types/api'
-
-const ACTIVE_KEY = 'opensweep-chat-active-run'
+import { CHAT_ACTIVE_RUN_KEY as ACTIVE_KEY } from '@/lib/userStorage'
 
 /**
  * OpenSweep chat-bubble sessions. A session IS a run (playbook=chat,

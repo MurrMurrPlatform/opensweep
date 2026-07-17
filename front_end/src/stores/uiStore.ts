@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-
-const REPO_SLUG_KEY = 'opensweep.currentRepoSlug'
+import { REPO_SLUG_KEY } from '@/lib/userStorage'
 
 function readPersistedSlug(): string | null {
   try {
