@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import { reactive, watch } from 'vue'
 import type { TicketStatus } from '@/types/api'
+import { BOARD_PREFS_PREFIX } from '@/lib/userStorage'
 
 export interface BoardPrefs {
   hidden: TicketStatus[]
@@ -10,7 +11,7 @@ export interface BoardPrefs {
 const ACTIVE_LANES: TicketStatus[] = ['todo', 'in-progress', 'in-review']
 
 function storageKey(repoUid: string) {
-  return `opensweep:board:${repoUid}`
+  return `${BOARD_PREFS_PREFIX}${repoUid}`
 }
 
 function load(repoUid: string): BoardPrefs {

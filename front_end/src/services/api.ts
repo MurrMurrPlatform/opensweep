@@ -8,8 +8,12 @@
 //      X-OpenSweep-Auth.
 // SSE/WS URLs append ?auth_token= because EventSource/WebSocket cannot set
 // headers. No token → no header, local dev unchanged.
+//
+// 401 handling: silent-renew the OIDC token once and retry; a second 401
+// means the session is gone, so redirect to interactive sign-in instead of
+// leaving a dead app rendering stale data.
 
-import { accessToken } from './auth'
+import { accessToken, authEnabled, renewToken, signIn } from './auth'
 
 const API_BASE = `${import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000'}/api/v1`
 
@@ -74,45 +78,54 @@ function authHeaders(): Record<string, string> {
   return headers
 }
 
-export async function apiGet<T = unknown>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+// One interactive-sign-in redirect per page: concurrent 401s must not stack
+// signinRedirect calls while the browser is already navigating away.
+let redirectingToSignIn = false
+
+async function authFetch(path: string, init: Omit<RequestInit, 'headers'>): Promise<Response> {
+  // Headers are rebuilt per attempt so the retry carries the renewed token.
+  const attempt = () => fetch(`${API_BASE}${path}`, { ...init, headers: authHeaders() })
+  let res = await attempt()
+  if (res.status === 401 && authEnabled) {
+    if (await renewToken()) res = await attempt()
+    if (res.status === 401 && !redirectingToSignIn) {
+      redirectingToSignIn = true
+      // If the redirect can't even start (Zitadel unreachable), free the
+      // flag so a later 401 can retry instead of being silently swallowed.
+      signIn(window.location.pathname + window.location.search).catch(() => {
+        redirectingToSignIn = false
+      })
+    }
+  }
   if (!res.ok) await handleError(res, path)
+  return res
+}
+
+export async function apiGet<T = unknown>(path: string): Promise<T> {
+  const res = await authFetch(path, {})
   return res.json() as Promise<T>
 }
 
 export async function apiPost<T = unknown>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await authFetch(path, {
     method: 'POST',
-    headers: authHeaders(),
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (!res.ok) await handleError(res, path)
   return res.json() as Promise<T>
 }
 
 export async function apiPatch<T = unknown>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'PATCH',
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) await handleError(res, path)
+  const res = await authFetch(path, { method: 'PATCH', body: JSON.stringify(body) })
   return res.json() as Promise<T>
 }
 
 export async function apiPut<T = unknown>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'PUT',
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) await handleError(res, path)
+  const res = await authFetch(path, { method: 'PUT', body: JSON.stringify(body) })
   return res.json() as Promise<T>
 }
 
 export async function apiDelete<T = unknown>(path: string): Promise<T | void> {
-  const res = await fetch(`${API_BASE}${path}`, { method: 'DELETE', headers: authHeaders() })
-  if (!res.ok) await handleError(res, path)
+  const res = await authFetch(path, { method: 'DELETE' })
   const text = await res.text()
   return text ? (JSON.parse(text) as T) : undefined
 }

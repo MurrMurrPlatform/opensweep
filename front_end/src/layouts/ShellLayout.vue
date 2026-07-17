@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import AppSidebar from '@/components/shell/AppSidebar.vue'
 import Topbar from '@/components/shell/Topbar.vue'
 import ProviderSetupBanner from '@/components/shell/ProviderSetupBanner.vue'
+import BackendUnavailableBanner from '@/components/shell/BackendUnavailableBanner.vue'
 import RouteProgress from '@/components/shell/RouteProgress.vue'
 import CommandPalette from '@/components/shell/CommandPalette.vue'
 import OpenSweepChatWidget from '@/components/opensweep/OpenSweepChatWidget.vue'
@@ -37,6 +38,7 @@ const repoErrorMessage = computed(() => {
     >
       <RouteProgress />
       <Topbar />
+      <BackendUnavailableBanner />
       <ProviderSetupBanner />
       <section class="min-h-0 flex-1 overflow-auto">
         <router-view v-slot="{ Component }">
