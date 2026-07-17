@@ -2,7 +2,11 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
-neomodel>=5.4.0
+# neomodel 6.x stores adb.driver in a ContextVar, so every ASGI request task
+# sees driver=None and opens a new AsyncDriver + bolt socket that is never
+# closed — fd leak → EMFILE. Stay on 5.x (process-wide driver) until the app
+# is migrated to neomodel 6's per-context connection model.
+neomodel>=5.4.0,<6
 redis>=5.0.0
 celery>=5.4.0
 watchdog>=4.0.0
