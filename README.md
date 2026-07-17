@@ -2,15 +2,25 @@
 
 **Your coding agent on steroids — in a dashboard.**
 
-OpenSweep runs AI agents that keep your codebase healthy. Point it at your
-repos: agents sweep the code, write docs that stay fresh, find bugs before you
-do, pick up tickets, open PRs, review their own work, and push every PR to
-green. You do exactly two things — approve tickets and merge PRs. Everything
-in between is agents.
+[![Website](https://img.shields.io/badge/website-opensweep.ai-0b7285)](https://opensweep.ai)
+[![License: Elastic 2.0](https://img.shields.io/badge/license-ELv2-2f9e44)](LICENSE)
+[![Self-host](https://img.shields.io/badge/self--host-free-informational)](#quickstart)
 
-![OpenSweep Tickets](front_end/src/public/OpenSweep/OpenSweepTicketsDark.png)
+OpenSweep — [opensweep.ai](https://opensweep.ai) — runs AI agents that keep
+your codebase healthy. Point it at your repos: agents sweep the code, write
+docs that stay fresh, find bugs before you do, pick up tickets, open PRs,
+review their own work, and push every PR to green. You do exactly two things —
+approve tickets and merge PRs. Everything in between is agents.
 
-![OpenSweep Findings](front_end/src/public/OpenSweep/OpenSweepFindingsDark.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="front_end/src/public/OpenSweep/OpenSweepTicketsDark.png">
+  <img alt="OpenSweep Tickets board" src="front_end/src/public/OpenSweep/OpenSweepTicketsLight.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="front_end/src/public/OpenSweep/OpenSweepFindingsDark.png">
+  <img alt="OpenSweep Findings" src="front_end/src/public/OpenSweep/OpenSweepFindingsLight.png">
+</picture>
 
 ## How it works
 
@@ -30,6 +40,11 @@ Two loops, running side by side:
 
 There's also **Ask** — a live chat session with an agent inside a sandboxed
 clone of any repo, streamed straight to your browser.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="front_end/src/public/OpenSweep/OpenSweepAskDark.png">
+  <img alt="OpenSweep Ask — live agent chat in a sandboxed repo clone" src="front_end/src/public/OpenSweep/OpenSweepAskLight.png">
+</picture>
 
 Bring your own agent: Claude Code, OpenAI Codex, any OpenAI/Anthropic-compatible
 API, or fully local models (MLX, LM Studio, Ollama, OpenCode).
@@ -101,8 +116,10 @@ cd front_end && npm install && npm run type-check && npm run build
 
 ## OpenSweep Cloud
 
-A managed OpenSweep Cloud is in the works — same product, zero ops.
-Self-hosting stays free. Watch the repo or https://opensweep.ai for updates.
+Want the same product with zero ops? [**OpenSweep Cloud**](https://opensweep.ai)
+is the managed edition — we run the infrastructure, you keep the workflow.
+Self-hosting stays free, always. Details and pricing at
+[opensweep.ai](https://opensweep.ai).
 
 ## Development workflow
 
@@ -119,3 +136,7 @@ self-hosted and the managed product. Agent/dev environment notes live in
 OpenSweep is source-available under the [Elastic License 2.0](LICENSE):
 free to use, modify, and self-host; you may not provide it to others as a
 managed service. See `LICENSE` for the exact terms.
+
+---
+
+If OpenSweep is useful to you, a ⭐ helps other developers find it.
