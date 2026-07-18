@@ -93,6 +93,17 @@ class TokenAuthMiddleware:
             # (SLACK_SIGNING_SECRET) verified by the handlers.
             "/api/v1/slack/events",
             "/api/v1/slack/commands",
+            # OAuth gateway for `opensweep connect` (api/oauth_mcp.py) — the
+            # front door for MCP clients that don't hold credentials yet.
+            # /oauth/token mints nothing without a PKCE-verified code from an
+            # authenticated consent; /oauth/authorize only redirects.
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/oauth-authorization-server/mcp",
+            "/oauth/register",
+            "/oauth/authorize",
+            "/oauth/token",
         }
     )
 
@@ -126,6 +137,57 @@ class TokenAuthMiddleware:
         # the opensweep_platform_read_* (look-before-write) tools.
         mount = getattr(settings, "MCP_PLATFORM_TOOL_MOUNT_PATH", "/mcp/platform") or "/mcp/platform"
         return (mount, "/api/v1/platform-tools", "/api/v1/platform-read")
+
+    # Paths an `osmcp_` OAuth access token may reach: the external MCP mount
+    # plus the REST endpoints backing its mounted operations. Everything else
+    # (admin, settings, LLM providers, …) stays closed to connect tokens.
+    MCP_TOKEN_PATH_PREFIXES = (
+        "/api/v1/repositories",
+        "/api/v1/findings",
+        "/api/v1/freshness",
+        "/api/v1/investigations",
+        "/api/v1/docs",
+        "/api/v1/memories",
+        "/api/v1/run-policies",
+        "/api/v1/audit",
+        "/api/v1/tickets",
+        "/api/v1/threads",
+        "/api/v1/delivery",
+        "/api/v1/comments",
+    )
+
+    @classmethod
+    async def _mcp_token_state(cls, scope: Scope, presented: str) -> dict | None:
+        """OAuth connect token (`osmcp_`): resolve to a user, enforce the path
+        allowlist and the read/write scope split. Returns the state additions
+        or None when the token doesn't authorize this request."""
+        from domains.oauth_mcp.services.oauth_service import (
+            ACCESS_TOKEN_PREFIX,
+            resolve_access_token,
+            scope_allows_write,
+        )
+
+        if not presented.startswith(ACCESS_TOKEN_PREFIX):
+            return None
+        path = scope.get("path", "")
+        mount = (getattr(settings, "MCP_MOUNT_PATH", "/mcp") or "/mcp").rstrip("/")
+        on_mount = path == mount or path.startswith(mount + "/")
+        on_api = any(
+            path == p or path.startswith(p + "/") for p in cls.MCP_TOKEN_PATH_PREFIXES
+        )
+        if not on_mount and not on_api:
+            return None
+        token = await resolve_access_token(presented)
+        if token is None:
+            return None
+        method = (scope.get("method") or "GET").upper()
+        if on_api and method not in {"GET", "HEAD", "OPTIONS"}:
+            # mcp:read still allows discussion (comment_create); every other
+            # write needs the mcp:write consent.
+            comment_write = path.rstrip("/") == "/api/v1/comments" and method == "POST"
+            if not comment_write and not scope_allows_write(token.scope):
+                return None
+        return {"mcp_token_user_uid": token.user_uid, "mcp_token_scope": token.scope}
 
     @classmethod
     def _run_token_allowed(cls, scope: Scope, presented: str) -> bool:
@@ -167,6 +229,12 @@ class TokenAuthMiddleware:
         ):
             await self.app(scope, receive, send)
             return
+        if presented:
+            mcp_state = await self._mcp_token_state(scope, presented)
+            if mcp_state is not None:
+                scope.setdefault("state", {}).update(mcp_state)
+                await self.app(scope, receive, send)
+                return
         if presented and self._run_token_allowed(scope, presented):
             # Record the run identity: platform-tool routes pin run-token
             # callers to their own run's repository (api/platform_scope.py).
@@ -196,6 +264,17 @@ class TokenAuthMiddleware:
             return
 
         body = json.dumps({"detail": "unauthorized"}).encode()
+        # MCP authorization discovery: a 401 from the external mount points
+        # clients at the protected-resource metadata (api/oauth_mcp.py), which
+        # kicks off the OAuth flow for `opensweep connect`.
+        challenge = b"Bearer"
+        mount = (getattr(settings, "MCP_MOUNT_PATH", "/mcp") or "/mcp").rstrip("/")
+        if path == mount or path.startswith(mount + "/"):
+            resource_md = (
+                f"{(settings.OPENSWEEP_WEBHOOK_PUBLIC_BASE_URL or '').rstrip('/')}"
+                "/.well-known/oauth-protected-resource"
+            )
+            challenge = f'Bearer resource_metadata="{resource_md}"'.encode()
         await send(
             {
                 "type": "http.response.start",
@@ -203,7 +282,7 @@ class TokenAuthMiddleware:
                 "headers": [
                     (b"content-type", b"application/json"),
                     (b"content-length", str(len(body)).encode()),
-                    (b"www-authenticate", b"Bearer"),
+                    (b"www-authenticate", challenge),
                 ],
             }
         )
@@ -410,6 +489,9 @@ def _include_routers(application: FastAPI):
         "api.v1.platform_tools_tickets",
         # Threads — unified dev flow: one conversation per ticket
         "api.v1.threads",
+        # `opensweep connect` OAuth gateway: public front door + consent
+        "api.oauth_mcp",
+        "api.v1.oauth_mcp",
         # Comments — discussion threads on any data item (@opensweep summons a run)
         "api.v1.comments",
         "api.v1.mentions",

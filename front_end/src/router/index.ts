@@ -71,6 +71,10 @@ const router = createRouter({
           meta: { title: 'Ticket', eyebrow: 'Deliver', section: 'main' } },
         { path: 'threads/:uid', name: 'thread-detail', component: () => import('@/views/ThreadView.vue'),
           meta: { title: 'Thread', eyebrow: 'Deliver', section: 'main' } },
+        // OAuth consent for `opensweep connect` — the backend gateway
+        // redirects MCP clients' browsers here (login enforced by the guard).
+        { path: 'connect/authorize', name: 'connect-authorize', component: () => import('@/views/ConnectAuthorizeView.vue'),
+          meta: { title: 'Connect agent', eyebrow: 'Connect', section: 'main' } },
         { path: 'findings/:uid', name: 'finding-detail', component: () => import('@/views/FindingDetailView.vue'),
           meta: { title: 'Finding', eyebrow: 'Inbox', section: 'main' } },
         { path: 'analyses/:uid', name: 'analysis-detail', component: () => import('@/views/AnalysisDetailView.vue'),

@@ -34,6 +34,25 @@ async def get_current_user(connection: HTTPConnection) -> UserDTO:
         from domains.users.services.oidc_user import resolve_oidc_user
 
         return await resolve_oidc_user(claims, state.get("oidc_access_token", ""))
+    mcp_user_uid = state.get("mcp_token_user_uid")
+    if mcp_user_uid:
+        # `opensweep connect` OAuth access token (osmcp_) — the middleware
+        # resolved and validated it; act as the owning user, never as a
+        # platform admin (connect tokens hold tenant scope only).
+        from domains.users.models import User
+
+        user = await User.nodes.get_or_none(uid=mcp_user_uid)
+        if user is None:
+            raise HTTPException(status_code=401, detail="unknown token user")
+        return UserDTO(
+            uid=user.uid,
+            email=user.email,
+            display_name=user.display_name,
+            role=user.role,
+            org_uid=user.org_uid or "",
+            org_role=user.org_role or "member",
+            is_platform_admin=False,
+        )
     return get_local_user()
 
 
