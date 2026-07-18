@@ -42,6 +42,7 @@ import {
 import TicketCard from '@/components/tickets/TicketCard.vue'
 import TicketDialog from '@/components/tickets/TicketDialog.vue'
 import TicketOriginBadge from '@/components/tickets/TicketOriginBadge.vue'
+import TicketRefineButton from '@/components/tickets/TicketRefineButton.vue'
 import TicketStatusPipeline from '@/components/tickets/TicketStatusPipeline.vue'
 import TicketTransitionButtons from '@/components/tickets/TicketTransitionButtons.vue'
 import CommentThread from '@/components/comments/CommentThread.vue'
@@ -270,11 +271,13 @@ async function startThread() {
 
         <div class="flex flex-wrap items-center gap-2">
           <DiscussionChip v-for="chat in discussions" :key="chat.uid" :run="chat" />
-          <!-- The thread IS the refine→plan→implement flow; the old one-shot
-               Refine/Implement buttons were removed to keep one path. -->
+          <!-- The thread carries refine→plan→implement as ONE conversation;
+               Refine stays as a lighter one-shot: a read-only run that
+               sharpens the ticket without starting the dev flow. -->
           <Button size="sm" :loading="startingThread" @click="startThread">
             <MessagesSquare /> {{ activeThreadUid ? 'Open thread' : 'Start thread' }}
           </Button>
+          <TicketRefineButton :ticket="ticket" />
           <Badge v-if="activeThreadPhase" variant="info" class="px-1.5 text-[10px]">
             {{ THREAD_PHASE_LABELS[activeThreadPhase] ?? activeThreadPhase }}
           </Badge>

@@ -1,39 +1,83 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { MENTION_ROUTES, parseMentionSegments } from '@/lib/mentions'
+import MarkdownView from '@/components/ui/markdown/MarkdownView.vue'
 
-/** Comment body renderer: plain text with @opensweep highlights and data-item
- *  mention chips (linked to the item's detail view when one exists). */
+/** Comment body renderer: markdown with @opensweep highlights and data-item
+ *  mention chips (linked to the item's detail view when one exists).
+ *
+ *  Mention tokens are rewritten to internal markdown links BEFORE rendering
+ *  so they survive the markdown pass; clicks on internal links are routed
+ *  through vue-router instead of a full page load. */
 const props = defineProps<{ body: string }>()
 
-const segments = computed(() => parseMentionSegments(props.body))
+const router = useRouter()
 
-function routeFor(segment: { type?: string; uid?: string }) {
-  const name = segment.type ? MENTION_ROUTES[segment.type as keyof typeof MENTION_ROUTES] : undefined
-  return name && segment.uid ? { name, params: { uid: segment.uid } } : null
+/** App path per mentionable type — mirrors MENTION_ROUTES route params. */
+const MENTION_PATHS: Record<string, string> = {
+  ticket: '/tickets',
+  finding: '/findings',
+  pull_request: '/pull-requests',
+  run: '/runs',
+  investigation: '/investigations',
+}
+
+const markdown = computed(() =>
+  parseMentionSegments(props.body)
+    .map((segment) => {
+      if (segment.kind === 'opensweep') return `**${segment.text}**`
+      if (segment.kind === 'item') {
+        const path = segment.type ? MENTION_PATHS[segment.type] : undefined
+        const label = `@${segment.text}`.replace(/([[\]])/g, '\\$1')
+        return path && segment.uid && MENTION_ROUTES[segment.type!]
+          ? `[${label}](${path}/${segment.uid})`
+          : `**${label}**`
+      }
+      return segment.text
+    })
+    .join(''),
+)
+
+function onClick(event: MouseEvent) {
+  const anchor = (event.target as HTMLElement).closest('a')
+  if (!anchor) return
+  const href = anchor.getAttribute('href') || ''
+  if (href.startsWith('/')) {
+    event.preventDefault()
+    void router.push(href)
+  }
 }
 </script>
 
 <template>
-  <p class="text-sm whitespace-pre-wrap break-words leading-relaxed">
-    <template v-for="(segment, i) in segments" :key="i">
-      <span
-        v-if="segment.kind === 'opensweep'"
-        class="inline-flex items-center rounded bg-primary/15 px-1 font-medium text-primary"
-        >{{ segment.text }}</span
-      >
-      <RouterLink
-        v-else-if="segment.kind === 'item' && routeFor(segment)"
-        :to="routeFor(segment)!"
-        class="inline-flex items-center rounded bg-muted px-1 font-medium text-foreground hover:underline"
-        >@{{ segment.text }}</RouterLink
-      >
-      <span
-        v-else-if="segment.kind === 'item'"
-        class="inline-flex items-center rounded bg-muted px-1 font-medium text-foreground"
-        >@{{ segment.text }}</span
-      >
-      <template v-else>{{ segment.text }}</template>
-    </template>
-  </p>
+  <div class="comment-markdown" @click="onClick">
+    <MarkdownView :model-value="markdown" preview-only min-height="0" />
+  </div>
 </template>
+
+<style>
+.comment-markdown .md-editor-preview {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.comment-markdown .md-editor-preview p {
+  margin-block: 0.25em;
+}
+
+/* Internal mention links read as chips, matching the old renderer. */
+.comment-markdown .md-editor-preview a[href^='/'] {
+  display: inline-block;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  padding: 0 0.3em;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+  text-decoration: none;
+}
+
+.comment-markdown .md-editor-preview a[href^='/']:hover {
+  text-decoration: underline;
+}
+</style>

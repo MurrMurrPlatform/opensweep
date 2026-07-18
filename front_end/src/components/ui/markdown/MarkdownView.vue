@@ -103,6 +103,35 @@ const containerStyle = computed(() => ({ '--md-min-height': props.minHeight }))
   color: hsl(var(--primary));
 }
 
+/* Tailwind preflight strips list markers/indent; md-editor's themes assume
+   browser defaults, so restore them for rendered markdown. */
+.markdown-view .md-editor-preview ul,
+.markdown-view .md-editor-preview ol {
+  padding-left: 1.6em;
+  margin-block: 0.5em;
+}
+
+.markdown-view .md-editor-preview ul {
+  list-style: disc outside;
+}
+
+.markdown-view .md-editor-preview ol {
+  list-style: decimal outside;
+}
+
+.markdown-view .md-editor-preview ul ul {
+  list-style-type: circle;
+}
+
+.markdown-view .md-editor-preview li > ul,
+.markdown-view .md-editor-preview li > ol {
+  margin-block: 0.25em;
+}
+
+.markdown-view .md-editor-preview li.task-list-item {
+  list-style: none;
+}
+
 .markdown-view .md-editor-preview code {
   background: hsl(var(--muted));
   color: hsl(var(--foreground));
