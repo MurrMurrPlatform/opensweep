@@ -14,9 +14,12 @@ _CONSTRAINTS = [
     "CREATE CONSTRAINT repo_uid IF NOT EXISTS FOR (n:Repository) REQUIRE n.uid IS UNIQUE",
     # Tenancy: slug is unique per org (application-enforced — composite
     # uniqueness needs Enterprise); the old global slug constraint is dropped
-    # below. A GitHub repo belongs to exactly ONE org — repo id stays unique.
+    # below. Likewise github_repo_id is unique per org only (also
+    # application-enforced, in register-repo) — multiple orgs may each
+    # register the same GitHub repo, so the old global constraint is dropped
+    # and replaced by a plain lookup index (webhook fan-out queries it).
     "DROP CONSTRAINT repo_slug IF EXISTS",
-    "CREATE CONSTRAINT repo_github_id IF NOT EXISTS FOR (n:Repository) REQUIRE n.github_repo_id IS UNIQUE",
+    "DROP CONSTRAINT repo_github_id IF EXISTS",
     "CREATE CONSTRAINT event_uid IF NOT EXISTS FOR (n:Event) REQUIRE n.uid IS UNIQUE",
     # Workspace (sandbox) machinery
     "CREATE CONSTRAINT llm_provider_uid IF NOT EXISTS FOR (n:LLMProvider) REQUIRE n.uid IS UNIQUE",
@@ -62,6 +65,7 @@ _CONSTRAINTS = [
 
 _INDEXES = [
     "CREATE INDEX repo_mode IF NOT EXISTS FOR (n:Repository) ON (n.mode)",
+    "CREATE INDEX repo_github_id_idx IF NOT EXISTS FOR (n:Repository) ON (n.github_repo_id)",
     "CREATE INDEX repo_org IF NOT EXISTS FOR (n:Repository) ON (n.org_uid)",
     "CREATE INDEX user_org IF NOT EXISTS FOR (n:User) ON (n.org_uid)",
     "CREATE INDEX org_invitation_email IF NOT EXISTS FOR (n:OrgInvitation) ON (n.email)",

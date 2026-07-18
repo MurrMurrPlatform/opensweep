@@ -468,8 +468,8 @@ async def available_repos(
         return AvailableReposResponse(connected=False)
 
     # Registered-markers come from the caller's org only — repos registered by
-    # OTHER orgs show as unregistered here (register-repo still 409s on the
-    # global github_repo_id conflict, without leaking whose it is).
+    # OTHER orgs show as unregistered here, and register-repo accepts them
+    # (each org gets its own Repository node for the same GitHub repo).
     existing = await Repository.nodes.filter(org_uid=user.org_uid)
     installations: list[AvailableInstallation] = []
 
@@ -611,20 +611,19 @@ async def register_repo(
             detail=f"{req.owner}/{req.name} is not available through this connection",
         )
 
-    # Global conflict check (github_repo_id is unique across orgs) — but the
-    # other org's repository_uid is only surfaced to members of that org.
-    existing = await Repository.nodes.all()
+    # Same-org conflict check — the same GitHub repo may be registered by
+    # multiple orgs (each gets its own Repository node); only a duplicate
+    # within the caller's org is a conflict.
+    existing = await Repository.nodes.filter(org_uid=user.org_uid)
     marked = mark_registered([gh], existing)[0]
     if marked["registered"]:
-        own = await Repository.nodes.get_or_none(uid=marked["repository_uid"])
-        if own is not None and own.org_uid == user.org_uid:
-            detail = (
+        raise HTTPException(
+            status_code=409,
+            detail=(
                 f"{marked['full_name']} is already registered "
                 f"(repository_uid={marked['repository_uid']})"
-            )
-        else:
-            detail = f"{marked['full_name']} is already registered on this OpenSweep instance"
-        raise HTTPException(status_code=409, detail=detail)
+            ),
+        )
 
     node = await register_github_repo(
         org_uid=user.org_uid,

@@ -141,6 +141,7 @@ def fake_installation_links(monkeypatch):
             return self
 
     monkeypatch.setattr(app_module, "GitConnection", FakeGitConnection)
+    monkeypatch.setattr(webhooks_module, "GitConnection", FakeGitConnection)
     return store
 
 
@@ -383,6 +384,143 @@ async def test_installation_repositories_removed_keeps_unlink_behavior(
     assert "repository.auto_registered" not in kinds
 
 
+# ── Webhook fan-out: one GitHub repo, N tenants ──────────────────────────────
+
+
+def _two_tenant_nodes():
+    """The same GitHub repo (id=1, acme/api) registered by two orgs."""
+    node_a = _repo_node(uid="ra", slug="api", org_uid="tenant-a", github_repo_id=1,
+                        github_owner="acme", github_repo="api",
+                        github_installation_id=55, github_connection_status="connected")
+    node_b = _repo_node(uid="rb", slug="api", org_uid="tenant-b", github_repo_id=1,
+                        github_owner="acme", github_repo="api",
+                        github_installation_id=None, github_connection_status="connected")
+    return node_a, node_b
+
+
+async def test_pull_request_event_fans_out_to_all_tenant_repos(monkeypatch):
+    """A PR delivery for a repo connected by two orgs syncs BOTH Repository
+    nodes, each against its own repository_uid — no cross-tenant writes."""
+    node_a, node_b = _two_tenant_nodes()
+    monkeypatch.setattr(webhooks_module, "Repository", _fake_repository([node_a, node_b]))
+
+    synced: list[tuple[str, int]] = []
+
+    class FakeService:
+        async def sync_from_github(self, repository_uid, number):
+            synced.append((repository_uid, number))
+
+    class FakePullRequest:
+        nodes = _Nodes([])
+
+    monkeypatch.setattr(webhooks_module, "PullRequestService", FakeService)
+    monkeypatch.setattr(webhooks_module, "PullRequest", FakePullRequest)
+
+    result = await webhooks_module._process_delivery(
+        event="pull_request",
+        action="closed",
+        payload={
+            "repository": {"id": 1, "name": "api", "owner": {"login": "acme"}},
+            "pull_request": {"number": 7},
+        },
+    )
+    assert result["ok"] is True
+    assert result["synced"] == [7, 7]
+    assert synced == [("ra", 7), ("rb", 7)]  # each org's node, its own uid
+
+
+async def test_push_event_fans_out_per_tenant_open_prs(monkeypatch):
+    """Push deliveries derive PR numbers PER Repository node — each tenant's
+    open PRs on the pushed branch sync under that tenant's uid only."""
+    node_a, node_b = _two_tenant_nodes()
+    monkeypatch.setattr(webhooks_module, "Repository", _fake_repository([node_a, node_b]))
+
+    synced: list[tuple[str, int]] = []
+
+    class FakeService:
+        async def sync_from_github(self, repository_uid, number):
+            synced.append((repository_uid, number))
+
+    class FakePullRequest:
+        # Only tenant-a tracks an open PR on the pushed branch.
+        nodes = _Nodes([SimpleNamespace(repository_uid="ra", head_ref="feat",
+                                        state="open", github_number=3, pr_key="ra:3")])
+
+    monkeypatch.setattr(webhooks_module, "PullRequestService", FakeService)
+    monkeypatch.setattr(webhooks_module, "PullRequest", FakePullRequest)
+
+    refreshed: list[str] = []
+
+    async def fake_refresh(*, repository_uid, changed_paths, source):
+        refreshed.append(repository_uid)
+
+    from domains.investigations.services import event_triggers
+
+    monkeypatch.setattr(event_triggers, "refresh_docs_for_change", fake_refresh)
+
+    result = await webhooks_module._process_delivery(
+        event="push",
+        action="",
+        payload={
+            "repository": {"id": 1, "name": "api", "owner": {"login": "acme"}},
+            "ref": "refs/heads/feat",
+            "commits": [{"added": ["a.py"], "modified": [], "removed": []}],
+        },
+    )
+    assert result["synced"] == [3]
+    assert synced == [("ra", 3)]  # tenant-b has no open PR on that branch
+    assert refreshed == ["ra", "rb"]  # doc freshness bumps for BOTH tenants
+
+
+async def test_installation_connect_links_only_installation_orgs_node(
+    monkeypatch, fake_installation_links, _captured_audits
+):
+    """Installation LINK events touch only the installation-org's node — the
+    other tenant's node for the same repo (PAT-connected) is untouched."""
+    node_a, node_b = _two_tenant_nodes()
+    node_a.github_installation_id = None  # not yet linked
+    monkeypatch.setattr(webhooks_module, "Repository", _fake_repository([node_a, node_b]))
+    fake_installation_links._nodes.append(
+        SimpleNamespace(provider="github", external_id="55", org_uid="tenant-a")
+    )
+
+    result = await webhooks_module._handle_installation_event(
+        event="installation_repositories",
+        action="added",
+        payload={
+            "installation": {"id": 55},
+            "repositories_added": [{"id": 1, "full_name": "acme/api", "name": "api"}],
+        },
+    )
+    assert result["linked"] == ["api"]
+    assert node_a.github_installation_id == 55
+    assert node_b.github_installation_id is None  # other tenant untouched
+    assert node_b.github_connection_status == "connected"
+
+
+async def test_installation_removed_does_not_unlink_other_tenants_node(
+    monkeypatch, _captured_audits
+):
+    """UNLINK only clears nodes actually carrying this installation id — a
+    PAT-connected node of another org for the same repo stays connected."""
+    node_a, node_b = _two_tenant_nodes()  # a: installation 55, b: PAT
+    monkeypatch.setattr(webhooks_module, "Repository", _fake_repository([node_a, node_b]))
+
+    result = await webhooks_module._handle_installation_event(
+        event="installation_repositories",
+        action="removed",
+        payload={
+            "installation": {"id": 55},
+            "repositories_removed": [{"id": 1, "full_name": "acme/api", "name": "api"}],
+        },
+    )
+    assert result["unlinked"] == ["api"]
+    assert node_a.github_installation_id is None
+    assert node_a.github_connection_status == "disconnected"
+    assert node_b.github_installation_id is None  # untouched, still PAT-connected
+    assert node_b.github_connection_status == "connected"
+
+
 # ── GET /api/v1/github/app/available-repos ───────────────────────────────────
 
 
@@ -511,7 +649,7 @@ def test_register_repo_502_when_installation_listing_fails(monkeypatch):
     assert res.status_code == 502
 
 
-def test_register_repo_409_when_already_registered(monkeypatch):
+def test_register_repo_409_when_already_registered_in_same_org(monkeypatch):
     configure_github_app(monkeypatch)
 
     async def fake_repos(installation_id):
@@ -539,6 +677,61 @@ def test_register_repo_409_when_already_registered(monkeypatch):
     )
     assert res.status_code == 409
     assert "repository_uid=u-dup" in res.json()["detail"]
+
+
+def test_register_repo_succeeds_when_other_org_registered_same_repo(monkeypatch):
+    """Cross-tenant duplicates are legal: another org's registration of the
+    same GitHub repo no longer blocks — the caller's org gets its own
+    Repository node, and the other tenant's uid never leaks back."""
+    from domains.repositories.services import registration
+
+    configure_github_app(monkeypatch)
+
+    async def fake_repos(installation_id):
+        return [_gh_repo(1, "acme", "api")]
+
+    monkeypatch.setattr(github_app, "list_installation_repositories", fake_repos)
+    monkeypatch.setattr(
+        app_module,
+        "Repository",
+        _fake_repository(
+            [
+                _repo_node(
+                    uid="theirs",
+                    github_repo_id=1,
+                    github_owner="acme",
+                    github_repo="api",
+                    org_uid="tenant-a",  # a DIFFERENT org already registered it
+                )
+            ]
+        ),
+    )
+
+    created: list[_Node] = []
+
+    class CreatableRepository:
+        nodes = _Nodes([])
+
+        def __new__(cls, **kw):
+            node = _repo_node(**kw)
+            created.append(node)
+            return node
+
+    async def fake_audit(**kw):
+        pass
+
+    monkeypatch.setattr(registration, "Repository", CreatableRepository)
+    monkeypatch.setattr(registration, "write_audit", fake_audit)
+
+    res = TestClient(real_app).post(
+        "/api/v1/github/app/register-repo",
+        json={"installation_id": 55, "owner": "acme", "name": "api"},
+    )
+    assert res.status_code == 201
+    body = res.json()
+    assert body["github_repo_id"] == 1
+    assert "theirs" not in res.text  # the other tenant's repository_uid never leaks
+    assert len(created) == 1 and created[0].org_uid == "local-org"
 
 
 def test_register_repo_creates_from_live_github_data(monkeypatch):
