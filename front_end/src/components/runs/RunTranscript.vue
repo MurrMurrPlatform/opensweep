@@ -7,9 +7,17 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Bot } from 'lucide-vue-next'
 import { MarkdownView } from '@/components/ui/markdown'
+import SubagentCard from '@/components/runs/SubagentCard.vue'
 import ToolCallCard from '@/components/runs/ToolCallCard.vue'
 import WorkingIndicator from '@/components/runs/WorkingIndicator.vue'
 import type { RunTranscriptEvent } from '@/types/api'
+
+/** Task/Agent tool calls ARE subagents — they get their own card with
+ *  progress and a drill-in modal instead of a generic tool card. */
+function isSubagentTool(name: string): boolean {
+  const n = name.toLowerCase()
+  return n === 'task' || n === 'agent'
+}
 
 const props = defineProps<{
   events: RunTranscriptEvent[]
@@ -123,6 +131,7 @@ function turnEndLabel(item: Extract<Item, { kind: 'turn_end' }>): string {
 const workingLabel = computed<string>(() => {
   const last = items.value[items.value.length - 1]
   if (last?.kind === 'tool' && !last.done) {
+    if (isSubagentTool(last.name)) return 'Subagent working'
     const m = /^mcp__(.+?)__(.+)$/.exec(last.name)
     return `Running ${m ? m[2] : last.name}`
   }
@@ -189,6 +198,15 @@ watch(
           <div class="mt-1 text-[10px] text-muted-foreground">{{ fmtTs(item.ts) }}</div>
         </div>
       </div>
+
+      <!-- Subagent: prominent card with progress + drill-in, in BOTH modes -->
+      <SubagentCard
+        v-else-if="item.kind === 'tool' && isSubagentTool(item.name)"
+        :input="item.input"
+        :output="item.output"
+        :is-error="item.isError"
+        :done="item.done"
+      />
 
       <!-- Tool call, narrated: plain-language line, click to expand the raw card -->
       <div v-else-if="item.kind === 'tool' && narrated" class="narration-item">
