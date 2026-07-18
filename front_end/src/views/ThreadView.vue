@@ -4,12 +4,18 @@
 // plan + timeline rail right.
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { Bot, Hammer, XCircle } from 'lucide-vue-next'
+import { Bot, Check, ChevronDown, Hammer, History, ScrollText, XCircle } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import ActionMenuBar from '@/components/workitem/ActionMenuBar.vue'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import PlanPanel from '@/components/threads/PlanPanel.vue'
+import {
+  Dialog,
+  DialogHeader,
+  DialogScrollContent,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { MarkdownView } from '@/components/ui/markdown'
 import ThreadChat from '@/components/threads/ThreadChat.vue'
 import ThreadTimeline from '@/components/threads/ThreadTimeline.vue'
 import ConvergenceChecklist from '@/components/delivery/ConvergenceChecklist.vue'
@@ -133,6 +139,20 @@ const active = computed(
   () => thread.value && thread.value.phase !== 'done' && thread.value.phase !== 'abandoned',
 )
 
+// Timeline is a side-channel, not the main event: collapsed by default so
+// the conversation gets the width.
+const timelineOpen = ref(false)
+
+// The plan only surfaces here while it needs a decision; approved plans live
+// on the Ticket tab.
+const planModalOpen = ref(false)
+const planAwaitingApproval = computed(
+  () =>
+    Boolean(thread.value?.plan_text?.trim()) &&
+    thread.value?.plan_state === 'drafted' &&
+    thread.value?.phase === 'refining',
+)
+
 /** Latest delivery_blocked detail — shown until a PR exists (a successful
  *  push/PR supersedes any earlier failure). */
 const deliveryBlocked = computed(() => {
@@ -179,16 +199,6 @@ watch(uid, () => {
   loading.value = true
   void reload()
 })
-
-async function onSavePlan(text: string) {
-  try {
-    await threads.updatePlan(uid.value, text)
-    toast.success('Plan saved')
-  } catch (e) {
-    toast.error('Couldn’t save plan', e instanceof ApiError ? e.detail : String(e))
-  }
-  await reload()
-}
 
 async function onApprovePlan() {
   try {
@@ -340,35 +350,80 @@ async function onFix() {
     <div v-if="error" class="text-sm text-bad">{{ error }}</div>
     <div v-else-if="loading" class="text-sm text-muted-foreground">Loading thread…</div>
 
-    <div v-else-if="thread" class="flex min-h-0 flex-1 gap-4">
-      <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+    <div v-else-if="thread" class="flex min-h-0 flex-1 flex-col gap-3">
+      <!-- Sub-navigation: compact underline tabs + the timeline toggle on one
+           quiet rule — no floating pill strip. -->
+      <div class="flex items-end border-b">
         <Tabs v-model="activeTab">
-          <TabsList>
-            <TabsTrigger value="conversation">Conversation</TabsTrigger>
-            <TabsTrigger value="files">{{ filesTabLabel }}</TabsTrigger>
-            <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsList class="-mb-px h-auto justify-start gap-1 rounded-none bg-transparent p-0">
+            <TabsTrigger
+              v-for="t in [
+                { value: 'conversation', label: 'Conversation' },
+                { value: 'files', label: filesTabLabel },
+                { value: 'details', label: 'Details' },
+              ]"
+              :key="t.value"
+              :value="t.value"
+              class="rounded-none border-b-2 border-transparent bg-transparent px-3 py-1.5 text-sm text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+            >
+              {{ t.label }}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
-
-        <div
-          v-if="openQuestions.length"
-          class="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+        <button
+          type="button"
+          class="ml-auto mb-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          @click="timelineOpen = !timelineOpen"
         >
-          <span class="text-muted-foreground">
-            {{ openQuestions.length }} question{{ openQuestions.length === 1 ? '' : 's' }} waiting
-            <template v-if="answeredWaiting"> · {{ answeredWaiting }} answered</template>
-            — the agent resumes when all are answered.
-          </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            class="ml-auto h-6 text-xs"
-            :loading="continuing"
-            @click="onContinueQuestions"
-          >
-            Continue anyway
+          <History class="size-3.5" />
+          Timeline
+          <span v-if="thread.events?.length" class="text-muted-foreground/70">{{ thread.events.length }}</span>
+          <ChevronDown class="size-3 transition-transform" :class="timelineOpen ? 'rotate-180' : ''" />
+        </button>
+      </div>
+
+      <!-- Plan gate: only surfaces while a drafted plan waits for approval —
+           the approved plan's permanent home is the Ticket tab. -->
+      <div
+        v-if="planAwaitingApproval"
+        class="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+      >
+        <ScrollText class="size-3.5 shrink-0 text-primary" />
+        <span class="text-muted-foreground">
+          The agent drafted a plan and is waiting for your approval — approving starts implementation.
+        </span>
+        <div class="ml-auto flex shrink-0 items-center gap-1.5">
+          <Button size="sm" variant="ghost" class="h-6 text-xs" @click="planModalOpen = true">
+            Read plan
+          </Button>
+          <Button size="sm" class="h-6 text-xs" @click="onApprovePlan">
+            <Check /> Approve
           </Button>
         </div>
+      </div>
+
+      <div
+        v-if="openQuestions.length"
+        class="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+      >
+        <span class="text-muted-foreground">
+          {{ openQuestions.length }} question{{ openQuestions.length === 1 ? '' : 's' }} waiting
+          <template v-if="answeredWaiting"> · {{ answeredWaiting }} answered</template>
+          — the agent resumes when all are answered.
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          class="ml-auto h-6 text-xs"
+          :loading="continuing"
+          @click="onContinueQuestions"
+        >
+          Continue anyway
+        </Button>
+      </div>
+
+      <div class="flex min-h-0 flex-1 gap-4">
+        <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         <ThreadChat
           v-if="thread.active_run_uid"
           v-show="activeTab === 'conversation'"
@@ -464,36 +519,60 @@ async function onFix() {
             </CardContent>
           </Card>
         </div>
-      </section>
+        </section>
 
-      <aside class="w-96 shrink-0 space-y-4 overflow-y-auto">
-        <Card v-if="pr && thread.phase === 'in_review'">
-          <CardContent class="space-y-3 p-4">
-            <div class="flex items-center justify-between">
-              <h3 class="text-sm font-semibold">Convergence</h3>
-              <Button
-                v-if="verdict?.result === 'request_changes'"
-                size="sm"
-                variant="outline"
-                :loading="fixing"
-                @click="onFix"
-              >
-                Run fix
-              </Button>
-            </div>
-            <ConvergenceChecklist :convergence="pr.convergence" />
-            <VerdictCard v-if="verdict" :verdict="verdict" :head-sha="pr.head_sha" />
-          </CardContent>
-        </Card>
-        <PlanPanel
-          :plan-text="thread.plan_text"
-          :plan-state="thread.plan_state"
-          :editable="thread.phase === 'refining'"
-          @save="onSavePlan"
-          @approve="onApprovePlan"
-        />
-        <ThreadTimeline :events="thread.events" :runs="thread.runs" />
-      </aside>
+        <!-- Conversation rail: only convergence (when in review) and the
+             timeline, only when opened — collapsed by default so the
+             conversation gets the width. -->
+        <aside
+          v-if="activeTab === 'conversation' && (timelineOpen || (pr && thread.phase === 'in_review'))"
+          class="w-80 shrink-0 space-y-4 overflow-y-auto"
+        >
+          <Card v-if="pr && thread.phase === 'in_review'">
+            <CardContent class="space-y-3 p-4">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold">Convergence</h3>
+                <Button
+                  v-if="verdict?.result === 'request_changes'"
+                  size="sm"
+                  variant="outline"
+                  :loading="fixing"
+                  @click="onFix"
+                >
+                  Run fix
+                </Button>
+              </div>
+              <ConvergenceChecklist :convergence="pr.convergence" />
+              <VerdictCard v-if="verdict" :verdict="verdict" :head-sha="pr.head_sha" />
+            </CardContent>
+          </Card>
+          <ThreadTimeline v-if="timelineOpen" :events="thread.events" :runs="thread.runs" />
+        </aside>
+      </div>
     </div>
+
+    <!-- Full-plan reader with the approval action — the drafted plan's only
+         surface on this page (the approved plan lives on the Ticket tab). -->
+    <Dialog v-model:open="planModalOpen">
+      <DialogScrollContent class="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2">
+            Plan
+            <Badge :variant="thread?.plan_state === 'approved' ? 'success' : 'secondary'">
+              {{ thread?.plan_state }}
+            </Badge>
+            <Button
+              v-if="planAwaitingApproval"
+              size="sm"
+              class="ml-auto mr-6"
+              @click="((planModalOpen = false), onApprovePlan())"
+            >
+              <Check /> Approve
+            </Button>
+          </DialogTitle>
+        </DialogHeader>
+        <MarkdownView :model-value="thread?.plan_text ?? ''" :preview-only="true" min-height="0" />
+      </DialogScrollContent>
+    </Dialog>
   </div>
 </template>
