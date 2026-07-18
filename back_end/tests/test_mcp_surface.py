@@ -18,6 +18,11 @@ EXPECTED = {
     "opensweep_list_docs", "opensweep_get_doc", "opensweep_create_doc",
     "opensweep_list_memories",
     "opensweep_list_run_policies", "opensweep_get_run_policy", "opensweep_create_run_policy",
+    # Dev flow (`opensweep connect`) — local-agent surface.
+    "opensweep_ticket_list", "opensweep_ticket_get",
+    "opensweep_thread_list", "opensweep_thread_get",
+    "opensweep_list_pull_requests", "opensweep_get_pull_request",
+    "opensweep_comment_list", "opensweep_comment_create",
 }
 
 LEGACY_FORBIDDEN = {

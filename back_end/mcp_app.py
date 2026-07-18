@@ -52,6 +52,18 @@ OPENSWEEP_MCP_OPERATIONS = [
     # Audit
     "opensweep_list_audit_events",
     "opensweep_get_audit_event",
+    # Dev flow — `opensweep connect`: local agents (Claude Code, Codex,
+    # OpenCode) pull tickets/threads/plans/test notes and report back.
+    # Read-heavy by design; the only writes are comments (discussion) —
+    # ticket status, plan approval, and merges stay in the UI.
+    "opensweep_ticket_list",
+    "opensweep_ticket_get",
+    "opensweep_thread_list",
+    "opensweep_thread_get",
+    "opensweep_list_pull_requests",
+    "opensweep_get_pull_request",
+    "opensweep_comment_list",
+    "opensweep_comment_create",
 ]
 
 
