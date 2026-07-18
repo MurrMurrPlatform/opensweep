@@ -44,12 +44,12 @@ import CommentThread from '@/components/comments/CommentThread.vue'
 import DiscussionChip from '@/components/runs/DiscussionChip.vue'
 import TicketDialog from '@/components/tickets/TicketDialog.vue'
 import FindingEditDialog from '@/components/findings/FindingEditDialog.vue'
+import { severityVariant } from '@/components/findings/findingMeta'
 import { extractCodeIdentifiersFrom } from '@/lib/codeHints'
 import { isLiveRunStatus, runStatusLabel, runStatusVariant } from '@/lib/runStatus'
 import type {
   FindingDTO,
   RunDTO,
-  Severity,
   TicketDTO,
 } from '@/types/api'
 
@@ -142,12 +142,6 @@ const affectedSlices = computed<AffectedSlice[]>(() => {
   if (!item.value?.affected_paths?.length) return []
   return item.value.affected_paths.map(parseAffectedPath)
 })
-
-const severityVariant = (sev: Severity): BadgeVariants['variant'] => {
-  if (sev === 'critical' || sev === 'high') return 'destructive'
-  if (sev === 'medium') return 'warn'
-  return 'secondary'
-}
 
 /** Legacy run-status tones (from lib/runStatus) → shadcn Badge variants. */
 function toneToBadge(tone: 'success' | 'danger' | 'warn' | 'info' | 'default'): BadgeVariants['variant'] {

@@ -203,6 +203,24 @@ function fmt(ts?: string | null): string {
             <TicketOriginBadge :origin="ticket.origin" />
             <Badge v-for="label in ticket.labels" :key="label" variant="secondary" class="px-1.5 text-[10px]">{{ label }}</Badge>
             <span class="text-xs text-muted-foreground">{{ repoName }}</span>
+            <!-- The PR is this ticket's counterpart — keep the jump at the very top. -->
+            <RouterLink
+              v-for="prUid in ticket.linked_pr_uids"
+              :key="prUid"
+              :to="{ name: 'pull-request-detail', params: { uid: prUid } }"
+              class="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+            >
+              <GitPullRequest class="size-3" />
+              PR <span class="font-mono">{{ prUid.slice(0, 8) }}</span>
+            </RouterLink>
+            <RouterLink
+              v-if="ticket.origin_finding_uid"
+              :to="{ name: 'finding-detail', params: { uid: ticket.origin_finding_uid } }"
+              class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Search class="size-3" />
+              origin finding <span class="font-mono">{{ ticket.origin_finding_uid.slice(0, 8) }}</span>
+            </RouterLink>
           </div>
         </template>
 

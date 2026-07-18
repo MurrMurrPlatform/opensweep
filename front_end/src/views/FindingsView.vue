@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { Archive, Inbox, Plus, ShieldCheck, SquareKanban, Trash2, X } from 'lucide-vue-next'
+import { Archive, FileCode2, Inbox, Plus, Search, ShieldCheck, SquareKanban, Trash2, X } from 'lucide-vue-next'
 import { useFindingStore } from '@/stores/findingStore'
 import { useTicketStore } from '@/stores/ticketStore'
 import { formatRelativeTime } from '@/lib/utils'
@@ -9,8 +9,10 @@ import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
 import { PageHeader } from '@/components/ui/page-header'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,6 +43,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import FindingEditDialog from '@/components/findings/FindingEditDialog.vue'
+import { SEVERITY_RANK, severityVariant } from '@/components/findings/findingMeta'
 import type { FindingDTO, FindingStatus, Severity, TicketPriority, TicketSize } from '@/types/api'
 
 const findings = useFindingStore()
@@ -52,6 +55,7 @@ const all = ref<FindingDTO[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 const createOpen = ref(false)
+const search = ref('')
 const filter = ref<'all' | 'issues' | 'improvements' | 'proposals'>('all')
 const tagFilter = ref('')
 const severityFilter = ref<'' | Severity>('')
@@ -85,8 +89,6 @@ const SORT_OPTIONS = [
   { label: 'Confidence', value: 'confidence_desc' },
   { label: 'Title A–Z', value: 'title_asc' },
 ]
-
-const SEVERITY_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 }
 
 // reka SelectItem values can't be empty strings; 'all' is the "no filter"
 // sentinel, translated back to '' (the item.filter treats '' as no severity).
@@ -142,8 +144,26 @@ const items = computed(() => {
   else if (filter.value === 'proposals') out = out.filter((f) => f.kind === 'proposal')
   if (tagFilter.value) out = out.filter((f) => (f.tags || []).includes(tagFilter.value))
   if (severityFilter.value) out = out.filter((f) => f.severity === severityFilter.value)
+  const q = search.value.trim().toLowerCase()
+  if (q) {
+    out = out.filter((f) =>
+      [f.title, f.description, f.subtype, ...(f.tags || []), ...(f.affected_paths || [])]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    )
+  }
   return sortFindings(out, sortKey.value)
 })
+
+const filtersActive = computed(
+  () =>
+    search.value.trim() !== '' ||
+    filter.value !== 'all' ||
+    tagFilter.value !== '' ||
+    severityFilter.value !== '',
+)
 
 const visibleSelectedCount = computed(() => items.value.filter((f) => selected.value.has(f.uid)).length)
 const allVisibleSelected = computed(() => items.value.length > 0 && visibleSelectedCount.value === items.value.length)
@@ -190,7 +210,7 @@ const CHIPS: { id: typeof filter.value; label: string }[] = [
   { id: 'proposals', label: 'Proposals' },
 ]
 
-watch([filter, tagFilter, severityFilter], () => {
+watch([filter, tagFilter, severityFilter, search], () => {
   selected.value = new Set()
 })
 
@@ -436,6 +456,12 @@ async function confirmRatchet() {
 }
 
 const emptyCopy = computed(() => {
+  if (search.value.trim()) {
+    return {
+      title: 'No matching findings',
+      description: `Nothing matches “${search.value.trim()}” in the current filter.`,
+    }
+  }
   switch (filter.value) {
     case 'issues':
       return { title: 'No issues', description: 'No defects or gaps in the current filter.' }
@@ -497,69 +523,90 @@ const emptyCopy = computed(() => {
     </Card>
 
     <Card class="overflow-hidden">
-      <div class="flex flex-wrap items-center gap-2 border-b p-4">
-        <Button
-          v-for="c in CHIPS"
-          :key="c.id"
-          :variant="filter === c.id ? 'secondary' : 'ghost'"
-          size="sm"
-          @click="filter = c.id"
-        >
-          {{ c.label }}
-          <span class="text-muted-foreground">· {{ counts[c.id] }}</span>
-        </Button>
-        <template v-if="allTags.length">
-          <span class="mx-1 hidden h-4 w-px bg-border sm:block" />
-          <button
-            v-for="t in allTags"
-            :key="t"
-            type="button"
-            :class="[
-              'rounded-full border px-2.5 py-0.5 text-xs transition-colors',
-              tagFilter === t
-                ? 'border-primary bg-primary/10 text-primary'
-                : 'border-border text-muted-foreground hover:bg-accent',
-            ]"
-            @click="tagFilter = tagFilter === t ? '' : t"
-          >
-            {{ t }}
-          </button>
-        </template>
-        <span class="mx-1 hidden h-4 w-px bg-border sm:block" />
-        <Select :model-value="severityFilter || 'all'" @update:model-value="onSeverity">
-          <SelectTrigger class="w-full sm:w-36">
-            <SelectValue placeholder="All severities" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All severities</SelectItem>
-            <SelectItem v-for="o in SEVERITY_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select :model-value="statusFilter" @update:model-value="onStatus">
-          <SelectTrigger class="w-full sm:w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="o in STATUS_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select :model-value="sortKey" @update:model-value="onSort">
-          <SelectTrigger class="w-full sm:w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="o in SORT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-          </SelectContent>
-        </Select>
-        <div class="flex items-center gap-2 sm:ml-auto">
+      <div class="space-y-3 border-b p-4">
+        <!-- Row 1: search + structured filters + selection -->
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative w-full min-w-48 sm:w-auto sm:flex-1 sm:max-w-80">
+            <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input v-model="search" placeholder="Search title, description, tags, paths…" class="h-9 pl-8" />
+            <button
+              v-if="search"
+              type="button"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+              title="Clear search"
+              @click="search = ''"
+            >
+              <X class="size-3.5" />
+            </button>
+          </div>
+          <Select :model-value="severityFilter || 'all'" @update:model-value="onSeverity">
+            <SelectTrigger class="h-9 w-full sm:w-36">
+              <SelectValue placeholder="All severities" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All severities</SelectItem>
+              <SelectItem v-for="o in SEVERITY_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select :model-value="statusFilter" @update:model-value="onStatus">
+            <SelectTrigger class="h-9 w-full sm:w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="o in STATUS_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select :model-value="sortKey" @update:model-value="onSort">
+            <SelectTrigger class="h-9 w-full sm:w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="o in SORT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <div class="flex items-center gap-2 sm:ml-auto">
+            <span v-if="filtersActive" class="text-xs tabular-nums text-muted-foreground">
+              {{ items.length }} of {{ all.length }}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="items.length === 0"
+              @click="toggleVisible(!allVisibleSelected)"
+            >
+              {{ allVisibleSelected ? 'Clear visible' : 'Select visible' }}
+            </Button>
+          </div>
+        </div>
+        <!-- Row 2: kind chips + data-driven tag chips -->
+        <div class="flex flex-wrap items-center gap-2">
           <Button
-            variant="outline"
+            v-for="c in CHIPS"
+            :key="c.id"
+            :variant="filter === c.id ? 'secondary' : 'ghost'"
             size="sm"
-            :disabled="items.length === 0"
-            @click="toggleVisible(!allVisibleSelected)"
+            @click="filter = c.id"
           >
-            {{ allVisibleSelected ? 'Clear visible' : 'Select visible' }}
+            {{ c.label }}
+            <span class="text-muted-foreground">· {{ counts[c.id] }}</span>
           </Button>
+          <template v-if="allTags.length">
+            <span class="mx-1 hidden h-4 w-px bg-border sm:block" />
+            <button
+              v-for="t in allTags"
+              :key="t"
+              type="button"
+              :class="[
+                'rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+                tagFilter === t
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border text-muted-foreground hover:bg-accent',
+              ]"
+              @click="tagFilter = tagFilter === t ? '' : t"
+            >
+              {{ t }}
+            </button>
+          </template>
         </div>
       </div>
 
@@ -610,10 +657,10 @@ const emptyCopy = computed(() => {
               :to="{ name: 'finding-detail', params: { uid: f.uid } }"
               class="-mx-2 block rounded-sm px-2 py-1 transition-colors hover:bg-accent"
             >
-              <div class="flex flex-wrap items-center gap-2 text-sm">
-                <span class="font-mono text-xs uppercase text-muted-foreground">{{ f.kind }}</span>
-                <span class="font-mono text-xs uppercase text-muted-foreground">· {{ f.severity }}</span>
-                <span v-if="f.subtype" class="font-mono text-xs uppercase text-muted-foreground">· {{ f.subtype }}</span>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <Badge :variant="severityVariant(f.severity)" class="px-1.5 text-[10px]">{{ f.severity }}</Badge>
+                <Badge variant="outline" class="px-1.5 text-[10px]">{{ f.kind }}</Badge>
+                <span v-if="f.subtype" class="font-mono text-[10px] uppercase text-muted-foreground">{{ f.subtype }}</span>
                 <span
                   v-for="t in f.tags || []"
                   :key="t"
@@ -621,11 +668,23 @@ const emptyCopy = computed(() => {
                 >
                   {{ t }}
                 </span>
+                <span v-if="f.created_at" class="ml-auto text-[10px] text-muted-foreground">
+                  found {{ formatRelativeTime(f.created_at) }}
+                </span>
               </div>
-              <div class="font-medium">{{ f.title }}</div>
-              <div class="text-xs text-muted-foreground">
-                {{ f.executor }} · {{ (f.affected_paths || []).length }} affected path(s)
-                <template v-if="f.created_at"> · found {{ formatRelativeTime(f.created_at) }}</template>
+              <div class="mt-1 font-medium">{{ f.title }}</div>
+              <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                <span
+                  v-if="(f.affected_paths || []).length"
+                  class="inline-flex min-w-0 max-w-full items-center gap-1"
+                >
+                  <FileCode2 class="size-3 shrink-0" />
+                  <span class="truncate font-mono">{{ (f.affected_paths || [])[0] }}</span>
+                  <span v-if="(f.affected_paths || []).length > 1" class="shrink-0">
+                    +{{ (f.affected_paths || []).length - 1 }} more
+                  </span>
+                </span>
+                <span>{{ f.executor }}</span>
               </div>
             </RouterLink>
           </li>
