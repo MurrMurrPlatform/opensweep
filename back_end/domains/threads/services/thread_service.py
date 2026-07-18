@@ -240,6 +240,14 @@ class ThreadService:
                 )
         addendum = compose_addendum_for_thread(t.plan_state, t.plan_text or "", events)
 
+        # Group flow: a parent ticket's thread implements the whole batch in
+        # one branch/PR — inline the subtickets into the intent.
+        from domains.threads.services.intents import build_group_addendum
+        from domains.tickets.models import Ticket
+
+        children = list(await Ticket.nodes.filter(parent_ticket_uid=ticket.uid))
+        addendum += build_group_addendum(children)
+
         # trigger_implement_run raises HTTPException(409) itself when Gate 1
         # hasn't passed or a PR already exists — let those propagate untouched.
         run = await trigger_implement_run(

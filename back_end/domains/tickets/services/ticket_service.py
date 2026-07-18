@@ -426,7 +426,12 @@ class TicketService:
     async def mark_done_via_merge(
         self, uid: str, *, pull_request_uid: str = ""
     ) -> Ticket:
-        """Gate-2 follow-through: a merged linked PR completes the ticket."""
+        """Gate-2 follow-through: a merged linked PR completes the ticket.
+
+        Group flow (unified dev flow): a group parent is implemented as ONE
+        unit — merging its PR completes every subticket too
+        ("ticket.done_via_group_merge").
+        """
         t = await self.get_node(uid)
         if t.status == "done":
             return t
@@ -439,6 +444,22 @@ class TicketService:
             actor_uid="system",
             payload={"from": frm, "pull_request_uid": pull_request_uid},
         )
+        for child in await Ticket.nodes.filter(parent_ticket_uid=uid):
+            if child.status == "done":
+                continue
+            child_frm = child.status
+            await self._set_status(child, "done")
+            await write_audit(
+                kind="ticket.done_via_group_merge",
+                subject_uid=child.uid,
+                subject_type="Ticket",
+                actor_uid="system",
+                payload={
+                    "from": child_frm,
+                    "parent_ticket_uid": uid,
+                    "pull_request_uid": pull_request_uid,
+                },
+            )
         return t
 
     # ── Delete ───────────────────────────────────────────────────────────
