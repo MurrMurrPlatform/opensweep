@@ -393,6 +393,12 @@ async def finalize_implement_run(run: Run) -> None:
             run.linked_pr_uid = pr_uid
             await run.save()
 
+        # Thread follow-through: a draft PR moves the run's thread (if any)
+        # to in_review. Never raises.
+        from domains.threads.services.hooks import note_pr_opened_for_run
+
+        await note_pr_opened_for_run(run)
+
     await finalize_write_run(
         run,
         audit_prefix="implement_run",
