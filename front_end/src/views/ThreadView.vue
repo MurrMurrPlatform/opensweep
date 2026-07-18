@@ -11,7 +11,6 @@ import { PageHeader } from '@/components/ui/page-header'
 import AgentTodosPanel from '@/components/threads/AgentTodosPanel.vue'
 import PlanPanel from '@/components/threads/PlanPanel.vue'
 import ThreadChat from '@/components/threads/ThreadChat.vue'
-import ThreadQuestionCard from '@/components/threads/ThreadQuestionCard.vue'
 import ThreadTimeline from '@/components/threads/ThreadTimeline.vue'
 import ConvergenceChecklist from '@/components/delivery/ConvergenceChecklist.vue'
 import TestLocallyButton from '@/components/delivery/TestLocallyButton.vue'
@@ -138,6 +137,19 @@ const openQuestions = computed(() =>
   (thread.value?.events ?? []).filter((e) => e.type === 'question' && e.status === 'open'),
 )
 
+// Re-sent with every message while planning: keeps the agent on the
+// plan-mode contract in follow-up turns (observed failure: it started
+// implementing right after a question was answered).
+const PLANNING_REMINDER =
+  '[Thread protocol reminder — PLANNING phase: do not edit files or commit; ' +
+  'continue the protocol only: ask the next question via opensweep_platform_ask_user, ' +
+  'or update the ticket and submit the plan via opensweep_platform_submit_thread_plan, ' +
+  'then stop and wait for approval.]'
+
+const protocolReminder = computed(() =>
+  thread.value?.phase === 'refining' ? PLANNING_REMINDER : undefined,
+)
+
 async function onAnswerQuestion(questionUid: string, questionText: string, answer: string) {
   try {
     await threads.answerQuestion(uid.value, questionUid, answer)
@@ -215,19 +227,16 @@ async function onFix() {
 
     <div v-else-if="thread" class="flex min-h-0 flex-1 gap-4">
       <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-        <ThreadQuestionCard
-          v-for="q in openQuestions"
-          :key="String(q.uid)"
-          :question="q"
-          @answer="(text) => onAnswerQuestion(String(q.uid), String(q.question ?? ''), text)"
-        />
         <ThreadChat
           v-if="thread.active_run_uid"
           ref="chatRef"
           :run-uids="thread.runs.map((r) => r.uid)"
           :run-uid="thread.active_run_uid"
+          :questions="openQuestions"
+          :protocol-reminder="protocolReminder"
           @turn-settled="reload"
           @todos="todos = $event"
+          @answer="onAnswerQuestion"
         />
         <p v-else class="text-sm text-muted-foreground">No conversation attached yet.</p>
       </section>

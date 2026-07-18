@@ -14,8 +14,15 @@ import { useToast } from '@/composables/useToast'
 import { useRunSocket, type RunSocketState } from '@/composables/useRunSocket'
 import { acceptsFollowUp, runStatusLabel, runStatusVariant } from '@/lib/runStatus'
 import { ApiError } from '@/services/api'
+import ThreadQuestionCard from '@/components/threads/ThreadQuestionCard.vue'
 import { useRunStore } from '@/stores/runStore'
-import type { AgentTodo, RunDTO, RunStatus, RunTranscriptEvent } from '@/types/api'
+import type {
+  AgentTodo,
+  RunDTO,
+  RunStatus,
+  RunTranscriptEvent,
+  ThreadEventDTO,
+} from '@/types/api'
 
 const props = defineProps<{
   /** Every run in the thread, oldest first — earlier runs render as the
@@ -23,10 +30,18 @@ const props = defineProps<{
   runUids: string[]
   /** The run currently accepting messages (composer + live socket). */
   runUid: string
+  /** Open structured questions (ask_user) — rendered directly above the
+   *  composer so answering feels like part of the conversation. */
+  questions?: ThreadEventDTO[]
+  /** Appended to every outgoing message while it applies (e.g. the
+   *  planning-phase protocol reminder) — keeps the agent on contract in
+   *  follow-up turns, where the original instructions are far behind. */
+  protocolReminder?: string
 }>()
 const emit = defineEmits<{
   (e: 'turn-settled'): void
   (e: 'todos', todos: AgentTodo[]): void
+  (e: 'answer', questionUid: string, questionText: string, text: string): void
 }>()
 
 const runs = useRunStore()
@@ -256,9 +271,11 @@ async function send() {
 }
 
 /** Programmatic send — used by the thread view to deliver question answers
- *  into the conversation. */
+ *  into the conversation. Appends the protocol reminder (when set) so the
+ *  contract travels with every turn, not just the opening prompt. */
 async function sendText(text: string) {
   if (!run.value || !text.trim()) return
+  if (props.protocolReminder) text = `${text}\n\n${props.protocolReminder}`
   const optimistic = pushOptimisticUserEvent(text)
 
   if (socket.value && wsState.value === 'open' && socket.value.send(text)) {
@@ -343,6 +360,13 @@ async function interrupt() {
           :narrated="narrated"
         />
       </div>
+
+      <ThreadQuestionCard
+        v-for="q in questions ?? []"
+        :key="String(q.uid)"
+        :question="q"
+        @answer="(text) => emit('answer', String(q.uid), String(q.question ?? ''), text)"
+      />
 
       <div class="shrink-0 border-t p-4 space-y-1.5">
         <div class="flex items-end gap-2">

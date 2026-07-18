@@ -31,6 +31,16 @@ def test_session_intent_names_the_plan_tool():
     assert "opensweep_platform_update_ticket" in intent
 
 
+def test_session_intent_forbids_implementing():
+    intent = build_thread_session_intent(_ticket(), "th-1")
+    assert "PLANNING MODE — HARD RULES" in intent
+    assert "NEVER edit or write files" in intent
+    assert "throwaway analysis clone" in intent
+    # The rules must explicitly survive follow-up turns (the observed failure
+    # mode: agent starts implementing right after a question is answered).
+    assert "after the user answers a question" in intent
+
+
 def test_addendum_contains_plan_and_decisions():
     out = build_implement_addendum("## Plan\n1. do X", "## Decisions\n- (user) soft gate")
     assert "## Plan" in out and "soft gate" in out
