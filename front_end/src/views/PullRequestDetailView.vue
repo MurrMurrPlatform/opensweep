@@ -47,6 +47,7 @@ import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/ui/error-state'
 import CiStateBadge from '@/components/delivery/CiStateBadge.vue'
+import TestLocallyButton from '@/components/delivery/TestLocallyButton.vue'
 import ConvergenceChecklist from '@/components/delivery/ConvergenceChecklist.vue'
 import ResolutionCard from '@/components/delivery/ResolutionCard.vue'
 import VerdictCard from '@/components/delivery/VerdictCard.vue'
@@ -473,6 +474,7 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
           <Button v-if="pr.url" as="a" :href="pr.url" target="_blank" rel="noopener" variant="ghost" size="sm">
             <ExternalLink /> GitHub
           </Button>
+          <TestLocallyButton :branch="pr.head_ref" :pr-number="pr.github_number" />
           <Button variant="outline" size="sm" :loading="discussing" @click="discussInRun">
             <MessagesSquare /> Discuss
           </Button>

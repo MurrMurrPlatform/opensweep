@@ -1304,6 +1304,45 @@ export interface SlackRuleCreateRequest {
 
 export type SlackRuleUpdateRequest = Partial<SlackRuleCreateRequest>
 
+// ── Threads (unified dev flow) ──────────────────────────────────────────────
+
+export type ThreadPhase = 'refining' | 'implementing' | 'in_review' | 'done' | 'abandoned'
+export type PlanState = 'none' | 'drafted' | 'approved'
+
+export interface ThreadDTO {
+  uid: string
+  repository_uid: string
+  subject_ticket_uid: string
+  phase: ThreadPhase
+  plan_state: PlanState
+  branch: string
+  pr_uid: string
+  active_run_uid: string
+  created_by: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface ThreadRunSummaryDTO {
+  uid: string
+  playbook: string
+  status: string
+  title: string
+  created_at: string | null
+}
+
+export interface ThreadEventDTO {
+  ts: string
+  type: string
+  [key: string]: unknown
+}
+
+export interface ThreadDetailDTO extends ThreadDTO {
+  plan_text: string
+  events: ThreadEventDTO[]
+  runs: ThreadRunSummaryDTO[]
+}
+
 // ── Legacy short-name aliases ───────────────────────────────────────────────
 // Components written before the *DTO rename import these. Cheaper to keep the
 // aliases than touch every component.

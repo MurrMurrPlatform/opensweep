@@ -16,6 +16,7 @@ import {
   Unlink,
 } from 'lucide-vue-next'
 import { useTicketStore } from '@/stores/ticketStore'
+import { useThreadStore } from '@/stores/threadStore'
 import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
@@ -171,6 +172,42 @@ async function leaveGroup() {
 function fmt(ts?: string | null): string {
   return ts ? new Date(ts).toLocaleString() : '—'
 }
+
+// ── Thread — the unified dev flow's conversation per ticket ─────────────────
+
+const threadStore = useThreadStore()
+const activeThreadUid = ref<string | null>(null)
+const startingThread = ref(false)
+
+watch(
+  ticket,
+  async (t) => {
+    if (!t) return
+    try {
+      const existing = await threadStore.listThreads({ subject_ticket_uid: t.uid })
+      activeThreadUid.value =
+        existing.find((x) => x.phase !== 'done' && x.phase !== 'abandoned')?.uid ?? null
+    } catch {
+      activeThreadUid.value = null
+    }
+  },
+  { immediate: true },
+)
+
+async function startThread() {
+  if (!ticket.value || startingThread.value) return
+  startingThread.value = true
+  try {
+    const targetUid =
+      activeThreadUid.value ?? (await threadStore.createThread(ticket.value.uid)).uid
+    void router.push({ name: 'thread-detail', params: { uid: targetUid } })
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Couldn’t start thread', msg)
+  } finally {
+    startingThread.value = false
+  }
+}
 </script>
 
 <template>
@@ -208,6 +245,9 @@ function fmt(ts?: string | null): string {
 
         <div class="flex flex-wrap items-center gap-2">
           <DiscussionChip v-for="chat in discussions" :key="chat.uid" :run="chat" />
+          <Button size="sm" :loading="startingThread" @click="startThread">
+            <MessagesSquare /> {{ activeThreadUid ? 'Open thread' : 'Start thread' }}
+          </Button>
           <TicketRefineButton :ticket="ticket" />
           <TicketImplementButton :ticket="ticket" @updated="onUpdated" />
           <Button variant="outline" size="sm" :loading="discussing" @click="discussInRun">

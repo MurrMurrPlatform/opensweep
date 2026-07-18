@@ -1,0 +1,186 @@
+<script setup lang="ts">
+// Thread view — one conversation carrying a ticket through refine → plan →
+// implement → review. Chat pane left (against the thread's active run),
+// plan + timeline rail right.
+import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
+import { GitPullRequest, Hammer, MessagesSquare, XCircle } from 'lucide-vue-next'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/page-header'
+import PlanPanel from '@/components/threads/PlanPanel.vue'
+import ThreadChat from '@/components/threads/ThreadChat.vue'
+import ThreadTimeline from '@/components/threads/ThreadTimeline.vue'
+import TestLocallyButton from '@/components/delivery/TestLocallyButton.vue'
+import { useToast } from '@/composables/useToast'
+import { ApiError } from '@/services/api'
+import { useDeliveryStore } from '@/stores/deliveryStore'
+import { useThreadStore } from '@/stores/threadStore'
+import type { PullRequestDTO, ThreadDetailDTO, ThreadPhase } from '@/types/api'
+
+const route = useRoute()
+const threads = useThreadStore()
+const delivery = useDeliveryStore()
+const toast = useToast()
+
+const uid = computed(() => String(route.params.uid))
+const thread = ref<ThreadDetailDTO | null>(null)
+const pr = ref<PullRequestDTO | null>(null)
+const loading = ref(true)
+const error = ref<string | null>(null)
+
+const PHASE_LABELS: Record<ThreadPhase, string> = {
+  refining: 'Refining & planning',
+  implementing: 'Implementing',
+  in_review: 'In review',
+  done: 'Done',
+  abandoned: 'Abandoned',
+}
+
+const active = computed(
+  () => thread.value && thread.value.phase !== 'done' && thread.value.phase !== 'abandoned',
+)
+
+async function reload() {
+  try {
+    thread.value = await threads.getThread(uid.value)
+    if (thread.value.pr_uid && pr.value?.uid !== thread.value.pr_uid) {
+      try {
+        pr.value = await delivery.getPullRequest(thread.value.pr_uid)
+      } catch {
+        pr.value = null
+      }
+    }
+    error.value = null
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(reload)
+watch(uid, () => {
+  thread.value = null
+  pr.value = null
+  loading.value = true
+  void reload()
+})
+
+async function onSavePlan(text: string) {
+  try {
+    await threads.updatePlan(uid.value, text)
+    toast.success('Plan saved')
+  } catch (e) {
+    toast.error('Couldn’t save plan', e instanceof ApiError ? e.detail : String(e))
+  }
+  await reload()
+}
+
+async function onApprovePlan() {
+  try {
+    await threads.approvePlan(uid.value)
+    toast.success('Plan approved')
+  } catch (e) {
+    toast.error('Couldn’t approve plan', e instanceof ApiError ? e.detail : String(e))
+  }
+  await reload()
+}
+
+const implementing = ref(false)
+async function onImplement() {
+  if (implementing.value) return
+  implementing.value = true
+  try {
+    await threads.implement(uid.value)
+    toast.success('Implementation started', 'The conversation continues with the implement run.')
+  } catch (e) {
+    toast.error(
+      'Couldn’t start implementation',
+      e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e),
+    )
+  } finally {
+    implementing.value = false
+  }
+  await reload()
+}
+
+async function onAbandon() {
+  try {
+    await threads.abandon(uid.value)
+    toast.info('Thread abandoned')
+  } catch (e) {
+    toast.error('Couldn’t abandon thread', e instanceof ApiError ? e.detail : String(e))
+  }
+  await reload()
+}
+</script>
+
+<template>
+  <div class="flex h-full flex-col gap-4 p-4">
+    <PageHeader title="Thread">
+      <template #breadcrumb>
+        <div class="mb-1 flex flex-wrap items-center gap-2">
+          <MessagesSquare class="h-4 w-4 text-muted-foreground" />
+          <Badge v-if="thread" variant="secondary">{{ PHASE_LABELS[thread.phase] }}</Badge>
+          <Badge v-if="thread" variant="outline" class="px-1.5 text-[10px]">
+            plan: {{ thread.plan_state }}
+          </Badge>
+        </div>
+      </template>
+
+      <div v-if="thread" class="flex flex-wrap items-center gap-2">
+        <Button
+          v-if="thread.phase === 'refining'"
+          size="sm"
+          :loading="implementing"
+          @click="onImplement"
+        >
+          <Hammer /> Implement
+        </Button>
+        <TestLocallyButton
+          v-if="thread.branch || pr"
+          :branch="pr?.head_ref || thread.branch"
+          :pr-number="pr?.github_number ?? null"
+        />
+        <RouterLink
+          v-if="thread.pr_uid"
+          :to="{ name: 'pull-request-detail', params: { uid: thread.pr_uid } }"
+        >
+          <Button size="sm" variant="outline"><GitPullRequest /> Pull request</Button>
+        </RouterLink>
+        <RouterLink :to="{ name: 'ticket-detail', params: { uid: thread.subject_ticket_uid } }">
+          <Button size="sm" variant="ghost">Ticket</Button>
+        </RouterLink>
+        <Button v-if="active" size="sm" variant="ghost" @click="onAbandon">
+          <XCircle /> Abandon
+        </Button>
+      </div>
+    </PageHeader>
+
+    <div v-if="error" class="text-sm text-bad">{{ error }}</div>
+    <div v-else-if="loading" class="text-sm text-muted-foreground">Loading thread…</div>
+
+    <div v-else-if="thread" class="flex min-h-0 flex-1 gap-4">
+      <section class="flex min-h-0 min-w-0 flex-1 flex-col">
+        <ThreadChat
+          v-if="thread.active_run_uid"
+          :run-uid="thread.active_run_uid"
+          @turn-settled="reload"
+        />
+        <p v-else class="text-sm text-muted-foreground">No conversation attached yet.</p>
+      </section>
+
+      <aside class="w-96 shrink-0 space-y-4 overflow-y-auto">
+        <PlanPanel
+          :plan-text="thread.plan_text"
+          :plan-state="thread.plan_state"
+          :editable="thread.phase === 'refining'"
+          @save="onSavePlan"
+          @approve="onApprovePlan"
+        />
+        <ThreadTimeline :events="thread.events" :runs="thread.runs" />
+      </aside>
+    </div>
+  </div>
+</template>
