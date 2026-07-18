@@ -364,17 +364,20 @@ async def http_ask_user(
     user: UserDTO = Depends(get_current_user),
 ):
     from domains.platform_tools.ask_user import ask_user
-    from domains.threads.models import Thread
+    from domains.threads.services.thread_service import (
+        THREAD_NOT_FOUND_DETAIL,
+        resolve_thread,
+    )
 
-    thread = await Thread.nodes.get_or_none(uid=thread_uid)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="not found")
-    await require_tool_repo_access(request, user, thread.repository_uid)
     executor = request.headers.get("x-opensweep-run-uid") or "manual"
+    thread = await resolve_thread(thread_uid, run_uid=executor)
+    if thread is None:
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
+    await require_tool_repo_access(request, user, thread.repository_uid)
     return await _invoke_platform_tool(
         "ask_user",
         ask_user,
-        thread_uid=thread_uid,
+        thread_uid=thread.uid,
         question=req.question,
         options=req.options,
         context=req.context,
@@ -399,17 +402,20 @@ async def http_submit_thread_plan(
     request: Request,
     user: UserDTO = Depends(get_current_user),
 ):
-    from domains.threads.models import Thread
+    from domains.threads.services.thread_service import (
+        THREAD_NOT_FOUND_DETAIL,
+        resolve_thread,
+    )
 
-    thread = await Thread.nodes.get_or_none(uid=thread_uid)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="not found")
-    await require_tool_repo_access(request, user, thread.repository_uid)
     executor = request.headers.get("x-opensweep-run-uid") or "manual"
+    thread = await resolve_thread(thread_uid, run_uid=executor)
+    if thread is None:
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
+    await require_tool_repo_access(request, user, thread.repository_uid)
     return await _invoke_platform_tool(
         "submit_thread_plan",
         submit_thread_plan,
-        thread_uid=thread_uid,
+        thread_uid=thread.uid,
         plan_markdown=req.plan_markdown,
         steps=req.steps,
         executor=executor,
@@ -433,20 +439,24 @@ async def http_update_plan_step(
     user: UserDTO = Depends(get_current_user),
 ):
     from domains.platform_tools.update_plan_step import update_plan_step
-    from domains.threads.models import Thread
+    from domains.threads.services.thread_service import (
+        THREAD_NOT_FOUND_DETAIL,
+        resolve_thread,
+    )
 
-    thread = await Thread.nodes.get_or_none(uid=thread_uid)
+    executor = request.headers.get("x-opensweep-run-uid") or "manual"
+    thread = await resolve_thread(thread_uid, run_uid=executor)
     if thread is None:
-        raise HTTPException(status_code=404, detail="not found")
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
     await require_tool_repo_access(request, user, thread.repository_uid)
     return await _invoke_platform_tool(
         "update_plan_step",
         update_plan_step,
-        thread_uid=thread_uid,
+        thread_uid=thread.uid,
         step_id=req.step_id,
         status=req.status,
         notes=req.notes,
-        executor=request.headers.get("x-opensweep-run-uid") or "manual",
+        executor=executor,
     )
 
 

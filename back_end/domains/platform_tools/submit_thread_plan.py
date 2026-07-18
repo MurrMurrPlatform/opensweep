@@ -34,9 +34,15 @@ async def submit_thread_plan(
     from domains.threads.services.thread_service import normalize_plan_steps
 
     _validate(thread_uid=thread_uid, plan_markdown=plan_markdown)
-    thread = await Thread.nodes.get_or_none(uid=thread_uid)
+    from domains.threads.services.thread_service import (
+        THREAD_NOT_FOUND_DETAIL,
+        resolve_thread,
+    )
+
+    thread = await resolve_thread(thread_uid, run_uid=executor)
     if thread is None:
-        raise HTTPException(status_code=404, detail="thread not found")
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
+    thread_uid = thread.uid  # the candidate may have been the ticket uid
     if thread.phase != "refining":
         raise HTTPException(
             status_code=409,

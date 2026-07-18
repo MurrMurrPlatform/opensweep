@@ -38,9 +38,15 @@ async def update_plan_step(
     from domains.threads.services.thread_service import mirror_plan_to_ticket
 
     _validate(thread_uid=thread_uid, step_id=step_id, status=status)
-    thread = await Thread.nodes.get_or_none(uid=thread_uid)
+    from domains.threads.services.thread_service import (
+        THREAD_NOT_FOUND_DETAIL,
+        resolve_thread,
+    )
+
+    thread = await resolve_thread(thread_uid, run_uid=executor)
     if thread is None:
-        raise HTTPException(status_code=404, detail="thread not found")
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
+    thread_uid = thread.uid  # the candidate may have been the ticket uid
     steps = list(thread.plan_steps or [])
     for step in steps:
         if step.get("id") == step_id:

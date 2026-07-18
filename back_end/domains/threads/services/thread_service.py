@@ -98,6 +98,40 @@ async def mirror_plan_to_ticket(thread: Thread) -> None:
         )
 
 
+async def resolve_thread(candidate: str, *, run_uid: str = "") -> Thread | None:
+    """Self-healing thread resolution for platform tools (agents mix up the
+    thread/ticket uids — both opaque hex). Order:
+      1. exact Thread uid,
+      2. the calling run's own thread (run.thread_uid — most reliable),
+      3. the ACTIVE thread of a ticket uid.
+    Returns None only when nothing matches."""
+    candidate = (candidate or "").strip()
+    if candidate:
+        t = await Thread.nodes.get_or_none(uid=candidate)
+        if t is not None:
+            return t
+    if run_uid:
+        from domains.investigations.models import Run
+
+        run = await Run.nodes.get_or_none(uid=run_uid)
+        if run is not None and (run.thread_uid or ""):
+            t = await Thread.nodes.get_or_none(uid=run.thread_uid)
+            if t is not None:
+                return t
+    if candidate:
+        threads = await Thread.nodes.filter(subject_ticket_uid=candidate)
+        for t in threads:
+            if t.phase not in TERMINAL_PHASES:
+                return t
+    return None
+
+
+THREAD_NOT_FOUND_DETAIL = (
+    "thread not found — pass the Thread uid from your instructions (the "
+    "ticket uid also works while its thread is active)"
+)
+
+
 def open_question_events(events: list[dict]) -> list[dict]:
     return [e for e in events if e.get("type") == "question" and e.get("status") == "open"]
 
