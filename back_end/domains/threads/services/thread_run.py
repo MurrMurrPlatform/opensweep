@@ -75,6 +75,7 @@ def build_go_message(
     base_branch: str,
     denylist: list[str],
     children: list | None = None,
+    steps: list | None = None,
 ) -> str:
     """The platform's implementation go-signal, sent into the thread
     conversation when the user approves. Carries the write-run contract that
@@ -96,6 +97,17 @@ def build_go_message(
         from domains.threads.services.intents import build_group_addendum
 
         group_block = build_group_addendum(children)
+    steps_block = ""
+    if steps:
+        listing = "\n".join(f"- [{s.get('id')}] {s.get('title')}" for s in steps)
+        steps_block = (
+            "\n## Implementation checklist (keep it in sync)\n"
+            "The plan's steps are tracked on the ticket. As you work, mark "
+            "each step with `opensweep_platform_update_plan_step` "
+            "(thread_uid, step_id, status `in_progress` when you start it, "
+            "`done` when it holds):\n"
+            f"{listing}\n"
+        )
     return (
         "GO — the user approved implementation. PLANNING MODE IS OVER for "
         "this conversation: implement now, in this workspace.\n"
@@ -125,6 +137,7 @@ def build_go_message(
         "- When done, summarize: commits made (sha + message), test results, "
         "and anything you deviated on. Then stop — review runs take it from "
         "here, and their findings will arrive in this conversation.\n"
+        f"{steps_block}"
         f"{group_block}"
     )
 

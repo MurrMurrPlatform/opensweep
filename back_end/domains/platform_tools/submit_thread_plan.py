@@ -27,9 +27,11 @@ async def submit_thread_plan(
     *,
     thread_uid: str,
     plan_markdown: str,
+    steps: list | None = None,
     executor: str = "manual",
 ) -> dict[str, Any]:
     from domains.threads.models import Thread
+    from domains.threads.services.thread_service import normalize_plan_steps
 
     _validate(thread_uid=thread_uid, plan_markdown=plan_markdown)
     thread = await Thread.nodes.get_or_none(uid=thread_uid)
@@ -42,6 +44,7 @@ async def submit_thread_plan(
         )
     now = datetime.now(UTC)
     thread.plan_text = plan_markdown
+    thread.plan_steps = normalize_plan_steps(steps)
     thread.plan_state = "drafted"
     thread.events = [
         *(thread.events or []),

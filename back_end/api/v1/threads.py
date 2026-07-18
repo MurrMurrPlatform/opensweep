@@ -126,6 +126,23 @@ async def answer_question(
 
 
 @router.post(
+    "/{uid}/questions/continue",
+    response_model=ThreadDetailDTO,
+    operation_id="opensweep_thread_continue_questions",
+)
+async def continue_without_answers(
+    uid: str, user: UserDTO = Depends(require_role("maintainer"))
+):
+    """Force the conversation on: delivers accumulated answers and dismisses
+    the still-open questions ('the user chose to proceed')."""
+    svc = ThreadService()
+    t = await svc.get_node(uid)
+    await require_repo_in_org(t.repository_uid, user.org_uid)
+    await svc.continue_without_answers(uid, actor_uid=user.uid)
+    return await svc.get_detail(uid)
+
+
+@router.post(
     "/{uid}/abandon", response_model=ThreadDTO, operation_id="opensweep_thread_abandon"
 )
 async def abandon_thread(uid: str, user: UserDTO = Depends(require_role("maintainer"))):

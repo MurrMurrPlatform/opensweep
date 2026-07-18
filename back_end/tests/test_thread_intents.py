@@ -20,7 +20,9 @@ def _ticket():
 
 def test_session_intent_is_interactive_and_stage_gated():
     intent = build_thread_session_intent(_ticket(), "th-1")
-    assert "one question at a time" in intent
+    # Batched interrogation: independent questions all in one turn.
+    assert "in ONE turn" in intent
+    assert "delivers all answers together" in intent
     assert "do not edit files and do not commit" in intent
     assert "t-1" in intent and "th-1" in intent
 

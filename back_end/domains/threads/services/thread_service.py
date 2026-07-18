@@ -41,6 +41,31 @@ def has_active_thread(threads: list) -> bool:
     return any(t.phase not in TERMINAL_PHASES for t in threads)
 
 
+PLAN_STEP_STATUSES = {"pending", "in_progress", "done"}
+
+
+def normalize_plan_steps(raw) -> list[dict]:
+    """Agent-submitted steps (strings or dicts) → the canonical checklist
+    shape. Pure; caps sizes so a runaway plan can't bloat the node."""
+    steps: list[dict] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            title, notes = item.strip(), ""
+        elif isinstance(item, dict):
+            title = str(item.get("title") or item.get("content") or "").strip()
+            notes = str(item.get("notes") or "")[:500]
+        else:
+            continue
+        if not title:
+            continue
+        steps.append(
+            {"id": f"s{len(steps) + 1}", "title": title[:300], "status": "pending", "notes": notes}
+        )
+        if len(steps) >= 40:
+            break
+    return steps
+
+
 async def mirror_plan_to_ticket(thread: Thread) -> None:
     """The plan's canonical public home is the TICKET's `plan` JSON metadata
     (user-facing, survives the thread). The thread stays the editing surface;
@@ -55,6 +80,7 @@ async def mirror_plan_to_ticket(thread: Thread) -> None:
         now = datetime.now(UTC)
         ticket.plan = {
             "markdown": thread.plan_text or "",
+            "steps": list(thread.plan_steps or []),
             "state": thread.plan_state or "none",
             "thread_uid": thread.uid,
             "updated_at": now.isoformat(),
@@ -70,6 +96,38 @@ async def mirror_plan_to_ticket(thread: Thread) -> None:
             f"plan mirror to ticket failed for thread {thread.uid}: {exc}",
             extra={"tag": "threads"},
         )
+
+
+def open_question_events(events: list[dict]) -> list[dict]:
+    return [e for e in events if e.get("type") == "question" and e.get("status") == "open"]
+
+
+def pending_answer_events(events: list[dict]) -> list[dict]:
+    """Answered questions whose answers were not yet delivered to the agent —
+    batch gating (multiple questions per turn) accumulates them here."""
+    return [
+        e
+        for e in events
+        if e.get("type") == "question"
+        and e.get("status") == "answered"
+        and not e.get("delivered_at")
+    ]
+
+
+def build_answers_message(answered: list[dict], skipped: list[dict] | None = None) -> str:
+    """One combined message delivering every accumulated answer (and, on a
+    forced continue, naming what the user chose not to answer)."""
+    lines = ["Answers to your questions:"]
+    for e in answered:
+        lines.append(f'- Q: "{e.get("question", "")}"\n  A: {e.get("answer", "")}')
+    if skipped:
+        lines.append(
+            "\nThe user chose to CONTINUE WITHOUT ANSWERING these — proceed "
+            "with your best judgment and say what you assumed:"
+        )
+        for e in skipped:
+            lines.append(f'- Q: "{e.get("question", "")}"')
+    return "\n".join(lines)
 
 
 async def route_comment_reply(*, parent_comment_uid: str, body: str, actor_uid: str) -> None:
@@ -276,7 +334,11 @@ class ThreadService:
                 )
         base = thread_to_dto(t).model_dump()
         return ThreadDetailDTO(
-            **base, plan_text=t.plan_text or "", events=t.events or [], runs=runs
+            **base,
+            plan_text=t.plan_text or "",
+            plan_steps=list(t.plan_steps or []),
+            events=t.events or [],
+            runs=runs,
         )
 
     async def update_plan(self, uid: str, plan_text: str, *, actor_uid: str) -> Thread:
@@ -397,15 +459,70 @@ class ThreadService:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Deliver into the conversation — the agent resumes on this turn.
-        if deliver and t.active_run_uid:
-            from domains.threads.services.intents import PLANNING_TURN_REMINDER
-            from domains.threads.services.thread_run import send_message_turn
+        # Batch gating: with several questions in flight the agent resumes
+        # only once ALL are answered (or the user forces continue).
+        if deliver:
+            await self._deliver_pending_answers(t)
+        return t
 
-            text = f'Answer to "{question_text}": {answer.strip()}'
-            if t.phase == "refining":
-                text = f"{text}\n\n{PLANNING_TURN_REMINDER}"
-            send_message_turn(t.active_run_uid, text)
+    async def _deliver_pending_answers(self, t: Thread, *, force: bool = False) -> bool:
+        """Deliver accumulated answers as ONE message when no questions remain
+        open (or on force: deliver what's answered, dismiss the rest).
+        Returns True when a message was sent."""
+        if not t.active_run_uid:
+            return False
+        events = list(t.events or [])
+        open_qs = open_question_events(events)
+        pending = pending_answer_events(events)
+        if open_qs and not force:
+            return False  # still waiting on answers — keep accumulating
+        if not pending and not (force and open_qs):
+            return False  # nothing to deliver
+        now = datetime.now(UTC)
+        for e in pending:
+            e["delivered_at"] = now.isoformat()
+        if force:
+            for e in open_qs:
+                e["status"] = "dismissed"
+                await self._sync_mirror_status(e, "dismissed")
+        t.events = events
+        t.updated_at = now
+        await t.save()
+
+        from domains.threads.services.intents import PLANNING_TURN_REMINDER
+        from domains.threads.services.thread_run import send_message_turn
+
+        text = build_answers_message(pending, skipped=open_qs if force else None)
+        if t.phase == "refining":
+            text = f"{text}\n\n{PLANNING_TURN_REMINDER}"
+        send_message_turn(t.active_run_uid, text)
+        return True
+
+    async def _sync_mirror_status(self, question_event: dict, status: str) -> None:
+        """Best-effort: keep the mirrored ticket comment's meta in step."""
+        mirror_uid = str(question_event.get("comment_uid") or "")
+        if not mirror_uid:
+            return
+        try:
+            from domains.comments.models import Comment
+
+            mirror = await Comment.nodes.get_or_none(uid=mirror_uid)
+            if mirror is not None:
+                meta = dict(mirror.meta or {})
+                meta["status"] = status
+                mirror.meta = meta
+                await mirror.save()
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def continue_without_answers(self, uid: str, *, actor_uid: str) -> Thread:
+        """User forces the conversation on: deliver whatever is answered,
+        dismiss the open questions."""
+        t = await self.get_node(uid)
+        delivered = await self._deliver_pending_answers(t, force=True)
+        if not delivered:
+            raise HTTPException(status_code=409, detail="no pending questions to continue past")
+        await self.record_event(t, "questions_continued", by=actor_uid)
         return t
 
     async def transition(self, uid: str, to_phase: str, *, actor_uid: str) -> Thread:
@@ -476,6 +593,7 @@ class ThreadService:
             base_branch=str(target.get("base_branch") or "main"),
             denylist=effective_denylist(policy),
             children=children,
+            steps=list(t.plan_steps or []),
         )
         await self.transition(uid, "implementing", actor_uid=actor_uid)
         await self.record_event(t, "implement_started", by=actor_uid)

@@ -28,6 +28,10 @@ class Thread(AsyncStructuredNode):
     # implement; an approved plan is injected into the implement run context.
     plan_state = StringProperty(default="none")
     plan_text = StringProperty(default="")
+    # Implementation checklist: [{id, title, status: pending|in_progress|done,
+    # notes}] — submitted with the plan, updated by the agent as it works,
+    # mirrored to Ticket.plan.steps (the durable copy).
+    plan_steps = JSONProperty(default=[])
     plan_approved_by = StringProperty(default="")
     plan_approved_at = DateTimeProperty()
 

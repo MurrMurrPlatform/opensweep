@@ -29,6 +29,7 @@ class ThreadRunSummaryDTO(BaseModel):
 
 class ThreadDetailDTO(ThreadDTO):
     plan_text: str = ""
+    plan_steps: list[dict] = []
     events: list[dict] = []
     runs: list[ThreadRunSummaryDTO] = []
 

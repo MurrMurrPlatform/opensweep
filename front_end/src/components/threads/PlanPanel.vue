@@ -5,12 +5,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import MarkdownView from '@/components/ui/markdown/MarkdownView.vue'
-import type { PlanState } from '@/types/api'
+import PlanStepsList from '@/components/threads/PlanStepsList.vue'
+import type { PlanState, PlanStep } from '@/types/api'
 
 const props = defineProps<{
   planText: string
   planState: PlanState
   editable: boolean
+  steps?: PlanStep[]
 }>()
 const emit = defineEmits<{
   (e: 'save', text: string): void
@@ -64,6 +66,10 @@ function save() {
       <p v-else class="text-sm text-muted-foreground">
         No plan yet — the agent drafts one in the conversation, or tell it to “just implement it”.
       </p>
+      <template v-if="!editing && steps?.length">
+        <h4 class="pt-1 text-xs font-semibold uppercase text-muted-foreground">Checklist</h4>
+        <PlanStepsList :steps="steps" />
+      </template>
     </CardContent>
   </Card>
 </template>

@@ -39,6 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import PlanStepsList from '@/components/threads/PlanStepsList.vue'
 import TicketCard from '@/components/tickets/TicketCard.vue'
 import TicketDialog from '@/components/tickets/TicketDialog.vue'
 import TicketOriginBadge from '@/components/tickets/TicketOriginBadge.vue'
@@ -298,8 +299,12 @@ async function startThread() {
                 </RouterLink>
               </CardTitle>
             </CardHeader>
-            <CardContent class="p-6 pt-4">
+            <CardContent class="space-y-4 p-6 pt-4">
               <MarkdownView :model-value="ticket.plan.markdown" preview-only />
+              <template v-if="ticket.plan.steps?.length">
+                <h4 class="text-xs font-semibold uppercase text-muted-foreground">Checklist</h4>
+                <PlanStepsList :steps="ticket.plan.steps" />
+              </template>
             </CardContent>
           </Card>
 

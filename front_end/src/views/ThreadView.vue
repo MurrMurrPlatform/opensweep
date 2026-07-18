@@ -137,6 +137,30 @@ const openQuestions = computed(() =>
   (thread.value?.events ?? []).filter((e) => e.type === 'question' && e.status === 'open'),
 )
 
+/** Answered but not yet delivered — batch gating holds them until every
+ *  open question is answered (or the user forces continue). */
+const answeredWaiting = computed(
+  () =>
+    (thread.value?.events ?? []).filter(
+      (e) => e.type === 'question' && e.status === 'answered' && !e.delivered_at,
+    ).length,
+)
+
+const continuing = ref(false)
+async function onContinueQuestions() {
+  if (continuing.value) return
+  continuing.value = true
+  try {
+    await threads.continueQuestions(uid.value)
+    toast.info('Continuing', 'Answers delivered; unanswered questions were dismissed.')
+  } catch (e) {
+    toast.error('Couldn’t continue', e instanceof ApiError ? e.detail : String(e))
+  } finally {
+    continuing.value = false
+  }
+  await reload()
+}
+
 // Re-sent with every message while planning: keeps the agent on the
 // staged contract in follow-up turns (observed failure: it started
 // implementing right after a question was answered). Implementation is
@@ -229,6 +253,25 @@ async function onFix() {
 
     <div v-else-if="thread" class="flex min-h-0 flex-1 gap-4">
       <section class="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        <div
+          v-if="openQuestions.length"
+          class="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+        >
+          <span class="text-muted-foreground">
+            {{ openQuestions.length }} question{{ openQuestions.length === 1 ? '' : 's' }} waiting
+            <template v-if="answeredWaiting"> · {{ answeredWaiting }} answered</template>
+            — the agent resumes when all are answered.
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            class="ml-auto h-6 text-xs"
+            :loading="continuing"
+            @click="onContinueQuestions"
+          >
+            Continue anyway
+          </Button>
+        </div>
         <ThreadChat
           v-if="thread.active_run_uid"
           ref="chatRef"
@@ -266,6 +309,7 @@ async function onFix() {
           :plan-text="thread.plan_text"
           :plan-state="thread.plan_state"
           :editable="thread.phase === 'refining'"
+          :steps="thread.plan_steps"
           @save="onSavePlan"
           @approve="onApprovePlan"
         />
