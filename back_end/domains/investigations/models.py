@@ -103,6 +103,9 @@ class Run(AsyncStructuredNode):
     linked_pr_uid = StringProperty(default="", index=True)
     linked_ticket_uid = StringProperty(default="", index=True)
     linked_finding_uid = StringProperty(default="", index=True)
+    # Set when a Thread dispatched (or adopted) this run — reverse lookup for
+    # thread hooks (unified dev flow). "" for standalone runs.
+    thread_uid = StringProperty(default="", index=True)
     # Playbook-specific blob (head_sha, node uids, paths, fix_round, …).
     target = JSONProperty(default={})
 
