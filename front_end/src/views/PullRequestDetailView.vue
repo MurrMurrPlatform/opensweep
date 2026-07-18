@@ -9,6 +9,7 @@ import {
   Link2,
   ListChecks,
   MessagesSquare,
+  MoreHorizontal,
   RefreshCw,
   RotateCcw,
   Search,
@@ -17,6 +18,7 @@ import {
   Wrench,
 } from 'lucide-vue-next'
 import { useDeliveryStore } from '@/stores/deliveryStore'
+import { useTicketStore } from '@/stores/ticketStore'
 import { useToast } from '@/composables/useToast'
 import { extractDispatchConflict, useActiveRuns } from '@/composables/useActiveRuns'
 import { useDiscussions } from '@/composables/useDiscussions'
@@ -34,6 +36,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -66,6 +74,7 @@ import type {
 
 const route = useRoute()
 const delivery = useDeliveryStore()
+const ticketStore = useTicketStore()
 const toast = useToast()
 
 const pr = ref<PullRequestDTO | null>(null)
@@ -169,6 +178,22 @@ async function load() {
 
 onMounted(load)
 watch(uid, () => void load())
+
+/** Title of the bound ticket — makes the header chip readable, not just a uid. */
+const ticketTitle = ref('')
+watch(
+  () => pr.value?.ticket_uid,
+  async (ticketUid) => {
+    ticketTitle.value = ''
+    if (!ticketUid) return
+    try {
+      ticketTitle.value = (await ticketStore.getTicket(ticketUid)).title
+    } catch {
+      /* chip falls back to the short uid */
+    }
+  },
+  { immediate: true },
+)
 
 const stateVariant = computed<BadgeVariants['variant']>(() => {
   switch (pr.value?.state) {
@@ -462,6 +487,24 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
             <Badge v-if="pr.converged" variant="success" class="px-1.5 text-[10px]">
               <CheckCircle2 class="h-3 w-3" /> converged
             </Badge>
+            <!-- The ticket is this PR's counterpart — keep the jump at the very top. -->
+            <RouterLink
+              v-if="pr.ticket_uid"
+              :to="{ name: 'ticket-detail', params: { uid: pr.ticket_uid } }"
+              class="inline-flex max-w-72 items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+              :title="ticketTitle || undefined"
+            >
+              <SquareKanban class="size-3 shrink-0" />
+              <span class="truncate">{{ ticketTitle || `ticket ${pr.ticket_uid.slice(0, 8)}` }}</span>
+            </RouterLink>
+            <button
+              v-else
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              @click="linkTicketOpen = true"
+            >
+              <Link2 class="size-3" /> Link ticket
+            </button>
             <span class="text-xs text-muted-foreground">
               <span class="font-mono">{{ pr.head_ref }} → {{ pr.base_ref }}</span>
               <template v-if="pr.author"> · {{ pr.author }}</template>
@@ -471,6 +514,8 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
         </template>
 
         <div class="flex flex-wrap items-center gap-2">
+          <DiscussionChip v-for="chat in discussions" :key="chat.uid" :run="chat" />
+          <ActiveRunChip v-if="activeRun" :run="activeRun" />
           <Button v-if="pr.url" as="a" :href="pr.url" target="_blank" rel="noopener" variant="ghost" size="sm">
             <ExternalLink /> GitHub
           </Button>
@@ -478,14 +523,6 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
           <Button variant="outline" size="sm" :loading="discussing" @click="discussInRun">
             <MessagesSquare /> Discuss
           </Button>
-          <Button variant="outline" size="sm" :loading="syncing" @click="resync">
-            <RefreshCw /> Re-sync
-          </Button>
-          <Button variant="outline" size="sm" :loading="recomputing" @click="recompute">
-            <Target /> Recompute
-          </Button>
-          <DiscussionChip v-for="chat in discussions" :key="chat.uid" :run="chat" />
-          <ActiveRunChip v-if="activeRun" :run="activeRun" />
           <Button
             size="sm"
             :loading="reviewing"
@@ -495,6 +532,28 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
           >
             <Search /> Request review
           </Button>
+          <!-- Maintenance actions — needed rarely, kept out of the primary row. -->
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                class="size-8"
+                title="More actions"
+                :loading="syncing || recomputing"
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-48">
+              <DropdownMenuItem :disabled="syncing" @select="resync">
+                <RefreshCw /> Re-sync from GitHub
+              </DropdownMenuItem>
+              <DropdownMenuItem :disabled="recomputing" @select="recompute">
+                <Target /> Recompute convergence
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </PageHeader>
 
@@ -775,10 +834,10 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
               <RouterLink
                 v-if="pr.ticket_uid"
                 :to="{ name: 'ticket-detail', params: { uid: pr.ticket_uid } }"
-                class="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                class="inline-flex max-w-full items-center gap-1.5 text-sm text-primary hover:underline"
               >
-                <SquareKanban class="h-4 w-4" />
-                <span class="font-mono">{{ pr.ticket_uid.slice(0, 8) }}</span>
+                <SquareKanban class="h-4 w-4 shrink-0" />
+                <span class="min-w-0 truncate">{{ ticketTitle || pr.ticket_uid.slice(0, 8) }}</span>
               </RouterLink>
               <div v-else class="space-y-2">
                 <p class="text-xs text-muted-foreground">

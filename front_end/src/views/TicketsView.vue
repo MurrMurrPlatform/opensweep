@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, ArrowRight, ChevronDown, Crosshair, Layers, Plus, RefreshCw,
-  Search, SlidersHorizontal, Sparkles, SquareKanban,
+  Search, SlidersHorizontal, Sparkles, SquareKanban, X,
 } from 'lucide-vue-next'
 import { useTicketStore } from '@/stores/ticketStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
@@ -129,14 +129,38 @@ const COLUMN_HINTS: Record<TicketStatus, string> = {
   done: 'Merged and finished.',
 }
 
+/* ── Board-wide search + priority filter ─────────────────────────────── */
+
+const boardSearch = ref('')
+const boardPriority = ref<'all' | TicketPriority>('all')
+const boardFiltering = computed(() => boardSearch.value.trim() !== '' || boardPriority.value !== 'all')
+
+function clearBoardFilters() {
+  boardSearch.value = ''
+  boardPriority.value = 'all'
+}
+
+function matchesBoardFilters(t: TicketDTO): boolean {
+  if (boardPriority.value !== 'all' && t.priority !== boardPriority.value) return false
+  const q = boardSearch.value.trim().toLowerCase()
+  if (!q) return true
+  return `${t.title} ${t.description} ${t.labels.join(' ')}`.toLowerCase().includes(q)
+}
+
 const columns = computed(() =>
-  STATUS_ORDER.map((status) => ({
-    status,
-    title: STATUS_LABELS[status],
-    subtitle: COLUMN_HINTS[status],
-    items: tickets.value.filter((t) => t.status === status),
-  })),
+  STATUS_ORDER.map((status) => {
+    const all = tickets.value.filter((t) => t.status === status)
+    return {
+      status,
+      title: STATUS_LABELS[status],
+      subtitle: COLUMN_HINTS[status],
+      items: boardFiltering.value ? all.filter(matchesBoardFilters) : all,
+      total: all.length,
+    }
+  }),
 )
+
+const boardMatchCount = computed(() => columns.value.reduce((n, c) => n + c.items.length, 0))
 
 /* ── Board view preferences (persisted per repo) ─────────────────────── */
 
@@ -165,10 +189,10 @@ const laneSearch = ref('')
 const lanePriority = ref<'all' | TicketPriority>('all')
 const laneSort = ref<'newest' | 'oldest' | 'priority' | 'title'>('newest')
 
-// Each lane starts with a clean slate — filters don't leak between lanes.
-watch(laneView, () => {
-  laneSearch.value = ''
-  lanePriority.value = 'all'
+// Entering a lane carries the board filters along; switching lanes resets.
+watch(laneView, (lane) => {
+  laneSearch.value = lane ? boardSearch.value : ''
+  lanePriority.value = lane ? boardPriority.value : 'all'
   laneSort.value = 'newest'
 })
 
@@ -358,27 +382,59 @@ function onTicketCreated(ticket: TicketDTO) {
       <Button variant="outline" size="sm" :disabled="loading" @click="reload">
         <RefreshCw :class="{ 'animate-spin': loading }" /> Refresh
       </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        :disabled="!repoUid || groupableTickets.length < 2"
-        :loading="proposing"
-        @click="suggestGroups"
-      >
-        <Sparkles /> Suggest groups
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        :disabled="!repoUid || groupableTickets.length < 2"
-        @click="groupOpen = true"
-      >
-        <Layers /> Group tickets
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="!repoUid || groupableTickets.length < 2"
+            :loading="proposing"
+          >
+            <Layers /> Group
+            <ChevronDown class="!size-3.5 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" class="w-56">
+          <DropdownMenuItem class="gap-2" :disabled="proposing" @select="suggestGroups">
+            <Sparkles class="size-4" /> Suggest groups (agent run)
+          </DropdownMenuItem>
+          <DropdownMenuItem class="gap-2" @select="groupOpen = true">
+            <Layers class="size-4" /> Group tickets by hand…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button size="sm" @click="createOpen = true">
         <Plus /> New ticket
       </Button>
     </PageHeader>
+
+    <!-- Board-wide search + priority filter — applies across every lane -->
+    <div
+      v-if="!loading && !error && tickets.length > 0 && !laneView"
+      class="flex flex-wrap items-center gap-2"
+    >
+      <div class="relative w-full sm:w-72">
+        <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input v-model="boardSearch" placeholder="Search tickets — title, description, labels…" class="h-9 pl-8" />
+      </div>
+      <Select :model-value="boardPriority" @update:model-value="boardPriority = $event as typeof boardPriority">
+        <SelectTrigger class="h-9 w-full sm:w-40">
+          <SelectValue placeholder="All priorities" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All priorities</SelectItem>
+          <SelectItem v-for="p in PRIORITY_OPTIONS" :key="p" :value="p">{{ p }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <template v-if="boardFiltering">
+        <span class="text-xs tabular-nums text-muted-foreground">
+          {{ boardMatchCount }} of {{ tickets.length }} tickets match
+        </span>
+        <Button variant="ghost" size="sm" @click="clearBoardFilters">
+          <X /> Clear
+        </Button>
+      </template>
+    </div>
 
     <!-- Agent-proposed groupings awaiting human approval -->
     <GroupProposalsPanel
@@ -493,6 +549,7 @@ function onTicketCreated(ticket: TicketDTO) {
         :status="col.status"
         :subtitle="col.subtitle"
         :items="col.items"
+        :total="col.total"
         :child-counts="childCounts"
         :collapsed="isCollapsed(col.status)"
         :dragging-uid="dragging?.uid ?? null"

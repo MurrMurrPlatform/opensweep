@@ -16,6 +16,8 @@ interface Props {
   status: TicketStatus
   subtitle: string
   items: TicketDTO[]
+  /** Unfiltered lane size — shown as "matches/total" while a board filter is active. */
+  total?: number
   childCounts: Record<string, number>
   collapsed: boolean
   /** uid of the ticket currently being dragged anywhere on the board. */
@@ -38,6 +40,11 @@ const emit = defineEmits<{
 }>()
 
 const title = computed(() => STATUS_LABELS[props.status])
+
+const filtered = computed(() => props.total !== undefined && props.total !== props.items.length)
+const countLabel = computed(() =>
+  filtered.value ? `${props.items.length}/${props.total}` : `${props.items.length}`,
+)
 
 /* Cap long lanes; the user can open the tail explicitly. */
 const showAllCards = ref(false)
@@ -90,7 +97,7 @@ function onCardDragStart(event: DragEvent, ticket: TicketDTO) {
     @drop="onDrop"
   >
     <ChevronsLeftRight class="size-3.5 text-muted-foreground" />
-    <Badge :variant="statusVariant(status)" class="px-1.5 text-[10px]">{{ items.length }}</Badge>
+    <Badge :variant="statusVariant(status)" class="px-1.5 text-[10px]">{{ countLabel }}</Badge>
     <span class="text-xs font-semibold text-muted-foreground [writing-mode:vertical-rl]">{{ title }}</span>
   </section>
 
@@ -113,7 +120,7 @@ function onCardDragStart(event: DragEvent, ticket: TicketDTO) {
           >
             {{ title }}
           </button>
-          <Badge :variant="statusVariant(status)" class="px-1.5 text-[10px]">{{ items.length }}</Badge>
+          <Badge :variant="statusVariant(status)" class="px-1.5 text-[10px]">{{ countLabel }}</Badge>
         </h2>
         <p class="mt-0.5 text-xs text-muted-foreground">{{ subtitle }}</p>
       </div>
@@ -134,7 +141,7 @@ function onCardDragStart(event: DragEvent, ticket: TicketDTO) {
         class="rounded-lg border border-dashed px-2 py-6 text-center text-xs text-muted-foreground"
         :class="draggingUid && dropLegal ? 'border-primary/40 text-primary' : ''"
       >
-        {{ draggingUid && dropLegal ? 'Drop here' : 'Nothing here.' }}
+        {{ draggingUid && dropLegal ? 'Drop here' : filtered ? 'No matching tickets.' : 'Nothing here.' }}
       </p>
 
       <TransitionGroup name="board-card">
