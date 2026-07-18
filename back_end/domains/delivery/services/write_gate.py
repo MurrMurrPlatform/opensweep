@@ -90,6 +90,16 @@ def fix_rounds_exhausted(fix_rounds: int, max_fix_rounds: int) -> bool:
     return int(fix_rounds or 0) >= int(max_fix_rounds or 0)
 
 
+NO_COMMITS_VIOLATION = "no commits on the work branch — nothing to push"
+
+
+def is_only_no_commits(violations: list[str]) -> bool:
+    """A turn that simply produced no commits (conversation, planning, Q&A)
+    — not a real gate violation. Thread runs finalize every turn, so their
+    chatty turns must stay quiet instead of auditing as blocked."""
+    return violations == [NO_COMMITS_VIOLATION]
+
+
 def evaluate_changes(
     *,
     work_branch: str,
@@ -105,7 +115,7 @@ def evaluate_changes(
             f"work branch {work_branch!r} is a protected branch — writes go to opensweep/* branches only"
         )
     if commits <= 0:
-        violations.append("no commits on the work branch — nothing to push")
+        violations.append(NO_COMMITS_VIOLATION)
     violations.extend(denylist_violations(changed_paths, denylist))
     return WriteGateResult(
         ok=not violations,

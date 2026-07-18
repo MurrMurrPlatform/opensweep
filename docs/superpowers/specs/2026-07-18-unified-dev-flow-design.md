@@ -1,8 +1,52 @@
 # Unified Dev Flow ("Threads") — Design
 
 **Date:** 2026-07-18
-**Status:** Approved design, pending implementation plan
+**Status:** Approved design; **Revision 2 (same day): the flow model was
+superseded after dogfooding — see "Revision 2" below.** Original text kept
+for the record.
 **Scope:** opensweep (public repo). No cloud-overlay changes required; extension points only if billing/entitlements need to meter threads later.
+
+## Revision 2 — one thread agent, phase-gated by the platform
+
+Dogfooding the v1 build surfaced a fault line in Decision 2 ("one continuous
+conversation" realized as SEPARATE runs stitched together): the planning
+agent had to be prompt-forbidden from implementing, and the implement run was
+a different, cold agent fed a summary. The conversation identity broke at
+exactly the moment work started, and prompt-level enforcement of the split
+proved brittle (the planning agent implemented into its throwaway clone).
+
+**Key insight:** the write gate is platform-side — agents never push;
+the platform validates and pushes after the fact. So the read-only-planning
+vs write-implementation *sandbox* split was never load-bearing. The phase
+gate belongs in the platform, not in the prompt.
+
+**Superseding model:** a new `thread` playbook. ONE run, ONE conversation,
+in a write sandbox (work branch created up front) for the whole lifecycle:
+
+- **refining:** the agent explores, interrogates the user (`ask_user`),
+  sharpens the ticket, submits the plan (`submit_thread_plan`). The
+  finalizer runs no write gate — nothing the agent does in the sandbox
+  goes anywhere.
+- **Approval = a platform-authored message, not a new run.** "Implement"
+  checks Gate 1 (ticket todo/in-progress), flips the thread to
+  `implementing`, and sends a structured go-message into the SAME
+  conversation. Same agent, full memory; the decision-log carry-over
+  machinery is deleted as unnecessary.
+- **implementing / in_review:** each completed turn runs the existing
+  validate → push → draft-PR machinery (implement-style first, fix-style
+  continuation after). Review verdicts arrive as message turns; fixes are
+  further turns of the same conversation. For thread-owned PRs the
+  auto-fix chain messages the thread run instead of dispatching a fix run.
+- **Review stays an independent cold run** — unchanged; that separation is
+  the one that earns its keep.
+- The thread agent may use its executor's native subagents for parallel
+  exploration; platform-spawned independent runs (review, verify) act as
+  platform-managed subagents whose outputs land on the thread timeline.
+
+Consequences: transcript stitching becomes a legacy-only path (one run =
+one transcript), `decision_log` carry-over is removed, and legacy v1
+threads (separate-run model) remain viewable, with implement falling back
+to the old dispatch for them.
 
 ## Problem
 

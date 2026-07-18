@@ -95,8 +95,10 @@ def test_finding_uid_filter():
     assert [r.uid for r in filter_active_runs(runs, finding_uid="f1")] == ["r1"]
 
 
-def test_write_playbooks_are_implement_and_fix():
-    assert WRITE_PLAYBOOKS == {"implement", "fix"}
+def test_write_playbooks_are_implement_fix_and_thread():
+    # `thread` commits into a work branch too (rev2) — same one-writer-per-
+    # target serialization applies.
+    assert WRITE_PLAYBOOKS == {"implement", "fix", "thread"}
 
 
 def test_chat_never_blocks_and_is_never_blocked():

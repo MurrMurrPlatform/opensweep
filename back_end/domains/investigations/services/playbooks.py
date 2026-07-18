@@ -32,13 +32,16 @@ from __future__ import annotations
 from domains.investigations.models import Run
 from logging_config import logger
 
-PLAYBOOKS = {"chat", "ask", "review", "fix", "implement", "verify", "document", "refine"}
+PLAYBOOKS = {"chat", "ask", "review", "fix", "implement", "verify", "document", "refine", "thread"}
 
 # Playbooks whose turns run in IMPLEMENT mode (write sandbox + write gate).
-WRITE_PLAYBOOKS = {"fix", "implement"}
+# `thread` is write-CAPABLE but phase-gated: its finalizer runs the write
+# gate only once the Thread has left the refining phase (unified dev flow
+# rev2 — the phase gate lives in the platform, not the prompt).
+WRITE_PLAYBOOKS = {"fix", "implement", "thread"}
 
 # Analyze playbooks whose turns leave a "last investigated" stamp.
-CHECKED_PLAYBOOKS = {"ask", "review", "verify", "document", "refine"}
+CHECKED_PLAYBOOKS = {"ask", "review", "verify", "document", "refine", "thread"}
 
 
 async def on_turn_complete(run: Run) -> None:
@@ -61,6 +64,10 @@ async def on_turn_complete(run: Run) -> None:
             )
 
             await finalize_verification_run(run)
+        elif playbook == "thread":
+            from domains.threads.services.thread_run import finalize_thread_run
+
+            await finalize_thread_run(run)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             f"playbook hook failed for run {run.uid} ({run.playbook}): "

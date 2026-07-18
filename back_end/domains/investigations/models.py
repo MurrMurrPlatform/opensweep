@@ -166,7 +166,7 @@ RUN_STATUSES = {
     "paused_quota",
 }
 
-PLAYBOOKS = {"chat", "ask", "review", "fix", "implement", "verify", "document"}
+PLAYBOOKS = {"chat", "ask", "review", "fix", "implement", "verify", "document", "thread"}
 
 RUN_SURFACES = {"runs", "comment", "chat", "slack"}
 

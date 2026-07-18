@@ -18,10 +18,10 @@ def _ticket():
     )
 
 
-def test_session_intent_is_interactive_and_read_only():
+def test_session_intent_is_interactive_and_stage_gated():
     intent = build_thread_session_intent(_ticket(), "th-1")
     assert "one question at a time" in intent
-    assert "read-only" in intent
+    assert "do not edit files and do not commit" in intent
     assert "t-1" in intent and "th-1" in intent
 
 
@@ -31,13 +31,14 @@ def test_session_intent_names_the_plan_tool():
     assert "opensweep_platform_update_ticket" in intent
 
 
-def test_session_intent_forbids_implementing():
+def test_session_intent_stages_the_lifecycle():
     intent = build_thread_session_intent(_ticket(), "th-1")
-    assert "PLANNING MODE — HARD RULES" in intent
-    assert "NEVER edit or write files" in intent
-    assert "throwaway analysis clone" in intent
-    # The rules must explicitly survive follow-up turns (the observed failure
-    # mode: agent starts implementing right after a question is answered).
+    # Rev2: one conversation for the whole lifecycle, staged by the platform.
+    assert "CURRENT STAGE: PLANNING" in intent
+    assert "'GO —'" in intent or "GO message" in intent
+    assert "do not edit files and do not commit" in intent
+    # The stage rules must explicitly survive follow-up turns (the observed
+    # failure mode: agent starts implementing right after an answer).
     assert "after the user answers a question" in intent
 
 

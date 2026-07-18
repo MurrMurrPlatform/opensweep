@@ -126,11 +126,16 @@ async def finalize_write_run(
     base_ref: str,
     work_branch: str,
     on_pushed: Callable[[SandboxDTO, write_gate.WriteGateResult], Awaitable[None]],
+    quiet_when_unchanged: bool = False,
 ) -> None:
     """Shared per-turn write-run finalize (V3 §3): validate the sandbox's new
     commits against ``base_ref`` → block (audited) or push ``work_branch`` →
     per-service post-push action. Callers resolve their linked entity and
     handle the prep_failed short-circuit BEFORE calling this.
+
+    ``quiet_when_unchanged``: a turn whose only "violation" is having no
+    commits returns silently instead of auditing as blocked — thread runs
+    finalize every conversational turn (unified dev flow rev2).
     """
     # Local imports: execution service siblings would otherwise form an
     # import cycle through the delivery services package.
@@ -170,6 +175,8 @@ async def finalize_write_run(
     await record_write_gate_result(run.uid, result)
 
     if not result.ok:
+        if quiet_when_unchanged and write_gate.is_only_no_commits(result.violations):
+            return  # conversational turn — nothing to push, nothing to audit
         # NO push. Workspace retained for inspection.
         await write_audit(
             kind=f"{audit_prefix}.blocked",

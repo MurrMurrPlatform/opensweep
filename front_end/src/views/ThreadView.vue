@@ -138,13 +138,14 @@ const openQuestions = computed(() =>
 )
 
 // Re-sent with every message while planning: keeps the agent on the
-// plan-mode contract in follow-up turns (observed failure: it started
-// implementing right after a question was answered).
+// staged contract in follow-up turns (observed failure: it started
+// implementing right after a question was answered). Implementation is
+// authorized ONLY by the platform's GO message (rev2).
 const PLANNING_REMINDER =
-  '[Thread protocol reminder — PLANNING phase: do not edit files or commit; ' +
-  'continue the protocol only: ask the next question via opensweep_platform_ask_user, ' +
-  'or update the ticket and submit the plan via opensweep_platform_submit_thread_plan, ' +
-  'then stop and wait for approval.]'
+  '[Thread protocol reminder — PLANNING stage: do not edit files or commit; ' +
+  'the platform will send an explicit GO message when implementation is approved. ' +
+  'For now: ask the next question via opensweep_platform_ask_user, or update the ' +
+  'ticket and submit the plan via opensweep_platform_submit_thread_plan, then stop and wait.]'
 
 const protocolReminder = computed(() =>
   thread.value?.phase === 'refining' ? PLANNING_REMINDER : undefined,

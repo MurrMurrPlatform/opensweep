@@ -28,7 +28,7 @@ ACTIVE_RUN_STATUSES = frozenset({"queued", "running", "paused_quota"})
 
 # Playbooks that commit into a work branch — two of these on one target race
 # over the same branch and fix-round ledger.
-WRITE_PLAYBOOKS = frozenset({"implement", "fix"})
+WRITE_PLAYBOOKS = frozenset({"implement", "fix", "thread"})
 
 
 def blocking_run(active: Iterable[Any], *, playbook: str) -> Any | None:

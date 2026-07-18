@@ -78,6 +78,12 @@ class ThreadService:
     async def attach_run(self, thread: Thread, run_uid: str) -> None:
         from domains.investigations.models import Run
 
+        if run_uid in (thread.run_uids or []):
+            # Idempotent: rev2 threads keep ONE run for their whole life —
+            # re-attachment (fix messaging etc.) must not duplicate timeline.
+            thread.active_run_uid = run_uid
+            await thread.save()
+            return
         thread.run_uids = [*(thread.run_uids or []), run_uid]
         thread.active_run_uid = run_uid
         await thread.save()
@@ -88,46 +94,81 @@ class ThreadService:
         await self.record_event(thread, "run_attached", run_uid=run_uid)
 
     async def create(self, *, ticket_uid: str, actor_uid: str, org_uid: str) -> Thread:
+        """One run, one conversation (rev2): the thread run starts in a WRITE
+        sandbox on the ticket's work branch. Harmless while refining — the
+        agent never pushes; the phase-gated finalizer holds the write gate
+        shut until the user approves implementation."""
         # Imports local to avoid cycles, mirroring api/v1/tickets.py.
-        from domains.agent_overlays.services.composition import compose_playbook_intent
-        from domains.investigations.schemas import InvestigationEffort, RunTrigger
+        from domains.delivery.services.implement_run_service import branch_name_for_ticket
+        from domains.delivery.services.run_dispatch import require_repository
+        from domains.execution.services.sandbox_service import SandboxService
+        from domains.investigations.schemas import (
+            ExecutionMode,
+            Executor,
+            InvestigationEffort,
+            RunTrigger,
+        )
         from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+        from domains.repositories.services.repository_service import repository_to_dto
         from domains.run_policies.services.effort import ensure_policy_for_effort
         from domains.tickets.services.ticket_service import TicketService
+        from infrastructure.git_providers import get_provider_client
 
         ticket = await TicketService().get_node(ticket_uid)
         existing = await self.list(subject_ticket_uid=ticket_uid)
         if has_active_thread(existing):
             raise HTTPException(status_code=409, detail="ticket already has an active thread")
+        repo = await require_repository(ticket.repository_uid, require_github=True)
+
+        work_branch = branch_name_for_ticket(ticket)
+        base_branch = repo.default_branch or "main"
+        # Adopt an existing remote branch (earlier thread/implement attempt).
+        checkout_existing = False
+        client = get_provider_client(repo)
+        if client.is_active:
+            branch = await client.get_branch(repo.github_owner, repo.github_repo, work_branch)
+            checkout_existing = branch is not None
 
         thread = Thread(
             uid=uuid4().hex,
             repository_uid=ticket.repository_uid,
             subject_ticket_uid=ticket_uid,
+            branch=work_branch,
             created_by=actor_uid,
         )
         await thread.save()
 
-        composed = await compose_playbook_intent(
-            repository_uid=ticket.repository_uid,
-            playbook="refine",
-            stage="refine",
-            repo_guidance="",
-            custom_intent=build_thread_session_intent(ticket, thread.uid),
-            org_uid=org_uid,
-        )
+        repo_dto = repository_to_dto(repo)
+
+        async def _make_sandbox():
+            return await SandboxService().create_for_write(
+                repository=repo_dto,
+                agent_run_uid=thread.uid,
+                work_branch=work_branch,
+                base_branch=base_branch,
+                checkout_existing=checkout_existing,
+            )
+
         policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
         try:
             run = await trigger_run(
                 repository_uid=ticket.repository_uid,
-                intent=composed.text,
-                playbook="refine",
+                intent=build_thread_session_intent(ticket, thread.uid),
+                playbook="thread",
                 title=f"Thread: {(ticket.title or 'ticket')[:80]}",
-                target={"thread_uid": thread.uid, "ticket_uid": ticket_uid},
+                target={
+                    "thread_uid": thread.uid,
+                    "ticket_uid": ticket_uid,
+                    "work_branch": work_branch,
+                    "base_branch": base_branch,
+                },
                 linked_ticket_uid=ticket_uid,
+                executor=Executor.CLAUDE_CODE,
+                execution_mode=ExecutionMode.IMPLEMENT,
                 run_policy_uid=policy.uid,
                 trigger=RunTrigger.MANUAL,
                 triggered_by=actor_uid,
+                sandbox_factory=_make_sandbox,
             )
         except LifecycleError as exc:
             await thread.delete()  # dispatch never started — no orphan threads
@@ -138,7 +179,7 @@ class ThreadService:
             subject_uid=thread.uid,
             subject_type="Thread",
             actor_uid=actor_uid,
-            payload={"ticket_uid": ticket_uid, "run_uid": run.uid},
+            payload={"ticket_uid": ticket_uid, "run_uid": run.uid, "work_branch": work_branch},
         )
         return thread
 
@@ -247,8 +288,10 @@ class ThreadService:
         return t
 
     async def start_implement(self, uid: str, *, actor_uid: str):
-        from domains.delivery.services.implement_run_service import trigger_implement_run
-        from domains.investigations.services.run_events import read_events
+        """Rev2: implementation is a platform-authored GO message into the
+        SAME conversation — the phase flip opens the write gate; no new run.
+        Legacy threads (separate-run v1) fall back to the old dispatch."""
+        from domains.investigations.models import Run
         from domains.tickets.services.ticket_service import TicketService
 
         t = await self.get_node(uid)
@@ -256,30 +299,73 @@ class ThreadService:
             raise HTTPException(status_code=409, detail=f"thread is {t.phase}, not refining")
         ticket = await TicketService().get_node(t.subject_ticket_uid)
 
+        run = (
+            await Run.nodes.get_or_none(uid=t.active_run_uid) if t.active_run_uid else None
+        )
+        if run is None or run.playbook != "thread":
+            return await self._start_implement_legacy(t, ticket, actor_uid=actor_uid)
+
+        # Gate 1 stays human-only and stays enforced: no go-signal for a
+        # ticket that was never approved onto the board.
+        if (ticket.status or "") not in {"todo", "in-progress"}:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "ticket must have passed Gate 1 (status todo or in-progress) — "
+                    f"it is '{ticket.status}'"
+                ),
+            )
+        if ticket.status == "todo":
+            await TicketService().transition(
+                ticket.uid, "in-progress", actor_uid=actor_uid, actor_role="maintainer"
+            )
+
+        from domains.delivery.services.resolution_service import ensure_merge_policy
+        from domains.delivery.services.write_gate import effective_denylist
+        from domains.threads.services.thread_run import build_go_message, send_message_turn
+        from domains.tickets.models import Ticket
+
+        target = dict(run.target or {})
+        policy = await ensure_merge_policy(t.repository_uid)
+        children = list(await Ticket.nodes.filter(parent_ticket_uid=ticket.uid))
+        go = build_go_message(
+            ticket=ticket,
+            plan_state=t.plan_state,
+            plan_text=t.plan_text or "",
+            work_branch=str(target.get("work_branch") or t.branch or ""),
+            base_branch=str(target.get("base_branch") or "main"),
+            denylist=effective_denylist(policy),
+            children=children,
+        )
+        await self.transition(uid, "implementing", actor_uid=actor_uid)
+        await self.record_event(t, "implement_started", by=actor_uid)
+        send_message_turn(run.uid, go)
+        return run
+
+    async def _start_implement_legacy(self, t: Thread, ticket, *, actor_uid: str):
+        """v1 threads (refine-playbook conversation): dispatch a separate
+        implement run with decision-log carry-over, as originally shipped."""
+        from domains.delivery.services.implement_run_service import trigger_implement_run
+        from domains.investigations.services.run_events import read_events
+        from domains.threads.services.intents import build_group_addendum
+        from domains.tickets.models import Ticket
+
         events: list[dict] = []
         if t.active_run_uid:
             try:
                 events = read_events(t.active_run_uid)
             except Exception:  # noqa: BLE001 — carry-over is best-effort
                 logger.warning(
-                    f"thread {uid}: could not read session events for carry-over",
+                    f"thread {t.uid}: could not read session events for carry-over",
                     extra={"tag": "threads"},
                 )
         addendum = compose_addendum_for_thread(t.plan_state, t.plan_text or "", events)
-
-        # Group flow: a parent ticket's thread implements the whole batch in
-        # one branch/PR — inline the subtickets into the intent.
-        from domains.threads.services.intents import build_group_addendum
-        from domains.tickets.models import Ticket
-
         children = list(await Ticket.nodes.filter(parent_ticket_uid=ticket.uid))
         addendum += build_group_addendum(children)
 
-        # trigger_implement_run raises HTTPException(409) itself when Gate 1
-        # hasn't passed or a PR already exists — let those propagate untouched.
         run = await trigger_implement_run(
             ticket, triggered_by=actor_uid, intent_addendum=addendum
         )
         await self.attach_run(t, run.uid)
-        await self.transition(uid, "implementing", actor_uid=actor_uid)
+        await self.transition(t.uid, "implementing", actor_uid=actor_uid)
         return run

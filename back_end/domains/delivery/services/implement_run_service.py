@@ -367,10 +367,14 @@ async def _docs_for_ticket(ticket: Ticket) -> list[str]:
         return []
 
 
-async def finalize_implement_run(run: Run) -> None:
+async def finalize_implement_run(run: Run, *, quiet_when_unchanged: bool = False) -> None:
     """Per-turn playbook hook (V3 §3): validate → push → draft PR, or block +
     retain. Derived entirely from the run so it re-fires on follow-up turns
-    (the draft-PR step is idempotent — an existing PR is adopted)."""
+    (the draft-PR step is idempotent — an existing PR is adopted).
+
+    Thread runs (unified dev flow rev2) reuse this per turn once their thread
+    leaves the refining phase — with quiet_when_unchanged so conversational
+    turns don't audit as blocked."""
     ticket_uid = run.linked_ticket_uid or str((run.target or {}).get("ticket_uid") or "")
     if not ticket_uid:
         return
@@ -420,6 +424,7 @@ async def finalize_implement_run(run: Run) -> None:
         base_ref=base_branch,
         work_branch=work_branch,
         on_pushed=_after_push,
+        quiet_when_unchanged=quiet_when_unchanged,
     )
 
 

@@ -117,6 +117,15 @@ async def trigger_fix_run(
         raise HTTPException(status_code=409, detail="PR has no head_ref — sync it first")
     repo = await require_repository(pr.repository_uid, require_github=True)
 
+    # Thread-owned PR (unified dev flow rev2): review feedback goes INTO the
+    # thread conversation — same agent, full context — instead of a cold fix
+    # run. Rounds stay bounded on the PR exactly like dispatched fix runs.
+    thread_run = await _thread_conversation_for_pr(pr)
+    if thread_run is not None:
+        return await _message_fix_to_thread(
+            pr, thread_run, finding_uids, triggered_by=triggered_by
+        )
+
     async def _dispatch() -> Run:
         policy = await ensure_merge_policy(pr.repository_uid)
         if write_gate.fix_rounds_exhausted(int(pr.fix_rounds or 0), int(policy.max_fix_rounds or 0)):
@@ -284,6 +293,80 @@ async def maybe_auto_fix_for_pr(pr_uid: str, *, after_run_uid: str = "") -> Run 
         + (f" after run {after_run_uid}" if after_run_uid else ""),
         extra={"tag": "delivery"},
     )
+    return run
+
+
+async def _thread_conversation_for_pr(pr: PullRequest) -> Run | None:
+    """The PR's thread-playbook conversation, when one is live (rev2)."""
+    from domains.threads.models import Thread
+
+    try:
+        threads = await Thread.nodes.filter(pr_uid=pr.uid)
+    except Exception:  # noqa: BLE001 — never block fix dispatch on thread lookup
+        return None
+    for thread in threads:
+        if thread.phase != "in_review" or not thread.active_run_uid:
+            continue
+        run = await Run.nodes.get_or_none(uid=thread.active_run_uid)
+        if run is not None and run.playbook == "thread":
+            return run
+    return None
+
+
+async def _message_fix_to_thread(
+    pr: PullRequest,
+    run: Run,
+    finding_uids: list[str] | None,
+    *,
+    triggered_by: str = "",
+) -> Run:
+    """Deliver review findings as a message turn of the thread conversation.
+    Burns a fix round (same bound as dispatched fix runs)."""
+    from domains.threads.services.thread_run import build_fix_message, send_message_turn
+
+    policy = await ensure_merge_policy(pr.repository_uid)
+    if write_gate.fix_rounds_exhausted(int(pr.fix_rounds or 0), int(policy.max_fix_rounds or 0)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"fix rounds exhausted ({pr.fix_rounds}/{policy.max_fix_rounds}) — "
+                "human required"
+            ),
+        )
+    findings = await _collect_fixable_findings(pr, policy, finding_uids)
+    if not findings:
+        raise HTTPException(
+            status_code=409,
+            detail="no open/reopened finding resolutions to fix on this PR",
+        )
+    next_round = int(pr.fix_rounds or 0) + 1
+    pr.fix_rounds = next_round
+    pr.fix_rounds_exhausted = write_gate.fix_rounds_exhausted(
+        next_round, int(policy.max_fix_rounds or 0)
+    )
+    pr.updated_at = datetime.now(UTC)
+    await pr.save()
+
+    message = build_fix_message(
+        pr, findings, fix_round=next_round, max_rounds=int(policy.max_fix_rounds or 0)
+    )
+    send_message_turn(run.uid, message)
+    await write_audit(
+        kind="fix_run.messaged_thread",
+        subject_uid=pr.uid,
+        subject_type="PullRequest",
+        actor_uid=triggered_by,
+        payload={
+            "fix_round": next_round,
+            "max_fix_rounds": int(policy.max_fix_rounds or 0),
+            "run_uid": run.uid,
+            "resolution_uids": [f["resolution_uid"] for f in findings],
+        },
+    )
+    # Thread timeline follow-through — never raises.
+    from domains.threads.services.hooks import note_fix_run_for_pr
+
+    await note_fix_run_for_pr(pr.uid, run)
     return run
 
 
