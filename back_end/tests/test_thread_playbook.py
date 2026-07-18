@@ -60,6 +60,7 @@ def test_go_message_carries_plan_and_contract():
     assert "OpenSweep-Ticket: t-1" in go
     assert "DO NOT push" in go
     assert "test_note" in go
+    assert "TodoWrite" in go  # native todo nudge — the platform mirrors it
 
 
 def test_go_message_without_plan_still_instructs():
