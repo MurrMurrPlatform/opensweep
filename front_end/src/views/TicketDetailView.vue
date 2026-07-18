@@ -175,7 +175,14 @@ function fmt(ts?: string | null): string {
 
 const threadStore = useThreadStore()
 const activeThreadUid = ref<string | null>(null)
+const activeThreadPhase = ref<string | null>(null)
 const startingThread = ref(false)
+
+const THREAD_PHASE_LABELS: Record<string, string> = {
+  refining: 'Planning',
+  implementing: 'Implementing',
+  in_review: 'In review',
+}
 
 watch(
   ticket,
@@ -183,10 +190,12 @@ watch(
     if (!t) return
     try {
       const existing = await threadStore.listThreads({ subject_ticket_uid: t.uid })
-      activeThreadUid.value =
-        existing.find((x) => x.phase !== 'done' && x.phase !== 'abandoned')?.uid ?? null
+      const active = existing.find((x) => x.phase !== 'done' && x.phase !== 'abandoned')
+      activeThreadUid.value = active?.uid ?? null
+      activeThreadPhase.value = active?.phase ?? null
     } catch {
       activeThreadUid.value = null
+      activeThreadPhase.value = null
     }
   },
   { immediate: true },
@@ -248,6 +257,9 @@ async function startThread() {
           <Button size="sm" :loading="startingThread" @click="startThread">
             <MessagesSquare /> {{ activeThreadUid ? 'Open thread' : 'Start thread' }}
           </Button>
+          <Badge v-if="activeThreadPhase" variant="info" class="px-1.5 text-[10px]">
+            {{ THREAD_PHASE_LABELS[activeThreadPhase] ?? activeThreadPhase }}
+          </Badge>
           <Button variant="outline" size="sm" :loading="discussing" @click="discussInRun">
             <MessagesSquare /> Discuss
           </Button>

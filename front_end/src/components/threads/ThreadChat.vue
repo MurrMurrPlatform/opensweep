@@ -16,13 +16,7 @@ import { acceptsFollowUp, runStatusLabel, runStatusVariant } from '@/lib/runStat
 import { ApiError } from '@/services/api'
 import ThreadQuestionCard from '@/components/threads/ThreadQuestionCard.vue'
 import { useRunStore } from '@/stores/runStore'
-import type {
-  AgentTodo,
-  RunDTO,
-  RunStatus,
-  RunTranscriptEvent,
-  ThreadEventDTO,
-} from '@/types/api'
+import type { RunDTO, RunStatus, RunTranscriptEvent, ThreadEventDTO } from '@/types/api'
 
 const props = defineProps<{
   /** Every run in the thread, oldest first — earlier runs render as the
@@ -40,7 +34,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'turn-settled'): void
-  (e: 'todos', todos: AgentTodo[]): void
   (e: 'answer', questionUid: string, questionText: string, text: string): void
 }>()
 
@@ -78,31 +71,6 @@ async function loadPriorRuns() {
 
 const allEvents = computed(() => [...priorEvents.value, ...events.value])
 
-// Agent working plan: mirror of the LAST TodoWrite call in the conversation.
-const todos = computed<AgentTodo[]>(() => {
-  for (let i = allEvents.value.length - 1; i >= 0; i--) {
-    const e = allEvents.value[i]
-    if (e.type !== 'tool_use' || e.name !== 'TodoWrite') continue
-    try {
-      const parsed = JSON.parse(e.input || '{}')
-      const list = Array.isArray(parsed?.todos) ? parsed.todos : []
-      return list
-        .filter((t: unknown): t is Record<string, string> => typeof t === 'object' && t !== null)
-        .map((t: Record<string, string>) => ({
-          content: String(t.content ?? ''),
-          status: (['pending', 'in_progress', 'completed'].includes(t.status)
-            ? t.status
-            : 'pending') as AgentTodo['status'],
-          activeForm: t.activeForm ? String(t.activeForm) : undefined,
-        }))
-        .filter((t: AgentTodo) => t.content)
-    } catch {
-      return []
-    }
-  }
-  return []
-})
-watch(todos, (v) => emit('todos', v), { immediate: true })
 const lastSeq = ref(0)
 const draft = ref('')
 const awaitingReply = ref(false)

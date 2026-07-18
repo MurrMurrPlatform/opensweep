@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from domains.threads.models import Thread, is_legal_phase_transition
+from domains.threads.services.progress import compute_progress
 from domains.threads.schemas import ThreadDetailDTO, ThreadDTO, ThreadRunSummaryDTO
 from domains.threads.services.intents import build_thread_session_intent
 from infrastructure.audit import write_audit
@@ -344,7 +345,9 @@ class ThreadService:
         return ThreadDetailDTO(
             **base,
             plan_text=t.plan_text or "",
-            todos=dict(t.todos or {}),
+            progress=compute_progress(
+                phase=t.phase, plan_state=t.plan_state, events=t.events or []
+            ),
             events=t.events or [],
             runs=runs,
         )

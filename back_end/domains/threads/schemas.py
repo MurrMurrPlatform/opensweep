@@ -29,9 +29,9 @@ class ThreadRunSummaryDTO(BaseModel):
 
 class ThreadDetailDTO(ThreadDTO):
     plan_text: str = ""
-    # Native executor todos mirrored per phase: {phase: [{content, status,
-    # activeForm}]}.
-    todos: dict = {}
+    # Derived at read time from platform-observed facts (questions, plan,
+    # PR, verdicts, fix rounds) — never stored, so it cannot drift.
+    progress: dict = {}
     events: list[dict] = []
     runs: list[ThreadRunSummaryDTO] = []
 

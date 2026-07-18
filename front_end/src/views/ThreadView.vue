@@ -8,7 +8,6 @@ import { GitPullRequest, Hammer, MessagesSquare, XCircle } from 'lucide-vue-next
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/ui/page-header'
-import AgentTodosPanel from '@/components/threads/AgentTodosPanel.vue'
 import PlanPanel from '@/components/threads/PlanPanel.vue'
 import ThreadChat from '@/components/threads/ThreadChat.vue'
 import ThreadTimeline from '@/components/threads/ThreadTimeline.vue'
@@ -20,13 +19,7 @@ import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
 import { useDeliveryStore } from '@/stores/deliveryStore'
 import { useThreadStore } from '@/stores/threadStore'
-import type {
-  AgentTodo,
-  PullRequestDTO,
-  ThreadDetailDTO,
-  ThreadPhase,
-  VerdictDTO,
-} from '@/types/api'
+import type { PullRequestDTO, ThreadDetailDTO, ThreadPhase, VerdictDTO } from '@/types/api'
 
 const route = useRoute()
 const threads = useThreadStore()
@@ -131,7 +124,6 @@ async function onAbandon() {
 // ── Structured questions + agent task list ──────────────────────────────────
 
 const chatRef = ref<InstanceType<typeof ThreadChat> | null>(null)
-const todos = ref<AgentTodo[]>([])
 
 const openQuestions = computed(() =>
   (thread.value?.events ?? []).filter((e) => e.type === 'question' && e.status === 'open'),
@@ -212,7 +204,7 @@ async function onFix() {
       <template #breadcrumb>
         <div class="mb-1 flex flex-wrap items-center gap-2">
           <MessagesSquare class="h-4 w-4 text-muted-foreground" />
-          <Badge v-if="thread" variant="secondary">{{ PHASE_LABELS[thread.phase] }}</Badge>
+          <Badge v-if="thread" variant="secondary">{{ thread.progress?.label ?? PHASE_LABELS[thread.phase] }}</Badge>
           <Badge v-if="thread" variant="outline" class="px-1.5 text-[10px]">
             plan: {{ thread.plan_state }}
           </Badge>
@@ -280,7 +272,6 @@ async function onFix() {
           :questions="openQuestions"
           :protocol-reminder="protocolReminder"
           @turn-settled="reload"
-          @todos="todos = $event"
           @answer="onAnswerQuestion"
         />
         <p v-else class="text-sm text-muted-foreground">No conversation attached yet.</p>
@@ -312,7 +303,6 @@ async function onFix() {
           @save="onSavePlan"
           @approve="onApprovePlan"
         />
-        <AgentTodosPanel :live="todos" :stored="thread.todos" :phase="thread.phase" />
         <ThreadTimeline :events="thread.events" :runs="thread.runs" />
       </aside>
     </div>

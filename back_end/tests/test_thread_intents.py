@@ -58,7 +58,3 @@ def test_addendum_plan_only():
     out = build_implement_addendum("## Plan\n1. do X", "")
     assert "## Plan" in out and "Decisions" not in out
 
-
-def test_session_intent_nudges_native_todos():
-    intent = build_thread_session_intent(_ticket(), "th-1")
-    assert "TodoWrite" in intent and "mirrors it" in intent

@@ -1362,18 +1362,23 @@ export interface ThreadEventDTO {
 
 export interface ThreadDetailDTO extends ThreadDTO {
   plan_text: string
-  /** Native executor todos mirrored per phase (durable, updated per turn). */
-  todos: Record<string, AgentTodo[]>
+  progress: ThreadProgress
   events: ThreadEventDTO[]
   runs: ThreadRunSummaryDTO[]
 }
 
-/** Agent working-plan item, mirrored live from Claude Code's TodoWrite calls
- *  in the transcript (unified dev flow). */
-export interface AgentTodo {
-  content: string
-  status: 'pending' | 'in_progress' | 'completed'
-  activeForm?: string
+/** Derived thread progress — computed by the platform from observed facts
+ *  (questions, plan, PR, verdicts, fix rounds); never stored. */
+export interface ThreadProgress {
+  phase: ThreadPhase
+  label: string
+  questions_total: number
+  questions_answered: number
+  questions_open: number
+  plan_state: PlanState
+  pr_opened: boolean
+  fix_rounds: number
+  last_verdict: string
 }
 
 // ── Legacy short-name aliases ───────────────────────────────────────────────
