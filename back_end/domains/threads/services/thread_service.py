@@ -72,6 +72,38 @@ async def mirror_plan_to_ticket(thread: Thread) -> None:
         )
 
 
+async def route_comment_reply(*, parent_comment_uid: str, body: str, actor_uid: str) -> None:
+    """A human reply under a thread-question mirror comment IS the answer:
+    resolve the question and resume the conversation. Called best-effort from
+    the comment-create route — never raises."""
+    try:
+        from domains.comments.models import Comment
+
+        parent = await Comment.nodes.get_or_none(uid=parent_comment_uid)
+        if parent is None:
+            return
+        meta = dict(parent.meta or {})
+        if meta.get("kind") != "thread_question" or meta.get("status") == "answered":
+            return
+        thread_uid = str(meta.get("thread_uid") or "")
+        question_uid = str(meta.get("question_uid") or "")
+        if not thread_uid or not question_uid:
+            return
+        await ThreadService().answer_question(
+            thread_uid,
+            question_uid,
+            body,
+            actor_uid=actor_uid,
+            mirror_comment=False,  # the reply itself is the visible answer
+            deliver=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"comment-reply routing failed for {parent_comment_uid}: {exc}",
+            extra={"tag": "threads"},
+        )
+
+
 def compose_addendum_for_thread(plan_state: str, plan_text: str, events: list[dict]) -> str:
     from domains.threads.services.decision_log import build_decision_log
     from domains.threads.services.intents import build_implement_addendum
@@ -286,16 +318,26 @@ class ThreadService:
         return t
 
     async def answer_question(
-        self, uid: str, question_uid: str, answer: str, *, actor_uid: str
+        self,
+        uid: str,
+        question_uid: str,
+        answer: str,
+        *,
+        actor_uid: str,
+        mirror_comment: bool = True,
+        deliver: bool = True,
     ) -> Thread:
-        """Mark a structured `question` event answered. The answer itself is
-        delivered to the agent as a normal follow-up message by the caller
-        (the thread chat) — this records the metadata side."""
+        """Answer a structured `question` from EITHER surface (thread UI or a
+        ticket-comment reply): marks the event answered, syncs the mirror
+        comment's meta, posts the answer as a reply under the mirror
+        (unless the answer arrived AS that reply), and delivers it into the
+        conversation so the agent resumes."""
         t = await self.get_node(uid)
         if not (answer or "").strip():
             raise HTTPException(status_code=422, detail="answer must be non-empty")
         now = datetime.now(UTC)
         events = list(t.events or [])
+        question_event: dict | None = None
         for event in events:
             if event.get("type") == "question" and event.get("uid") == question_uid:
                 if event.get("status") == "answered":
@@ -304,6 +346,7 @@ class ThreadService:
                 event["answer"] = answer.strip()
                 event["answered_by"] = actor_uid
                 event["answered_at"] = now.isoformat()
+                question_event = event
                 break
         else:
             raise HTTPException(status_code=404, detail="question not found")
@@ -311,33 +354,58 @@ class ThreadService:
         t.updated_at = now
         await t.save()
 
-        # Mirror the answer next to the mirrored question on the ticket's
-        # discussion. Best-effort.
-        try:
-            from domains.comments import service as comment_service
-            from domains.comments.schemas import CommentAuthorKind, CommentSubjectType
+        question_text = str(question_event.get("question") or "")
+        mirror_uid = str(question_event.get("comment_uid") or "")
 
-            question_text = next(
-                (
-                    str(e.get("question") or "")
-                    for e in events
-                    if e.get("type") == "question" and e.get("uid") == question_uid
-                ),
-                "",
-            )
-            body = f"✅ **Answer**: {answer.strip()}"
-            if question_text:
-                short = question_text if len(question_text) <= 160 else question_text[:160] + "…"
-                body = f"✅ **Answer** to “{short}”:\n\n{answer.strip()}"
-            await comment_service.create_comment(
-                subject_type=CommentSubjectType.TICKET,
-                subject_uid=t.subject_ticket_uid,
-                body=body,
-                author_uid=actor_uid,
-                author_kind=CommentAuthorKind.USER,
-            )
-        except Exception:  # noqa: BLE001 — mirroring must never fail the answer
-            pass
+        # Sync the mirror comment's meta (chips flip to answered). Best-effort.
+        if mirror_uid:
+            try:
+                from domains.comments.models import Comment
+
+                mirror = await Comment.nodes.get_or_none(uid=mirror_uid)
+                if mirror is not None:
+                    meta = dict(mirror.meta or {})
+                    meta["status"] = "answered"
+                    mirror.meta = meta
+                    await mirror.save()
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Post the answer as a REPLY under the mirrored question — skipped
+        # when the answer itself arrived as that reply. Best-effort.
+        if mirror_comment:
+            try:
+                from domains.comments import service as comment_service
+                from domains.comments.schemas import CommentAuthorKind, CommentSubjectType
+
+                body = f"✅ {answer.strip()}"
+                if not mirror_uid and question_text:
+                    short = (
+                        question_text
+                        if len(question_text) <= 160
+                        else question_text[:160] + "…"
+                    )
+                    body = f"✅ **Answer** to “{short}”:\n\n{answer.strip()}"
+                await comment_service.create_comment(
+                    subject_type=CommentSubjectType.TICKET,
+                    subject_uid=t.subject_ticket_uid,
+                    body=body,
+                    author_uid=actor_uid,
+                    author_kind=CommentAuthorKind.USER,
+                    parent_comment_uid=mirror_uid,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Deliver into the conversation — the agent resumes on this turn.
+        if deliver and t.active_run_uid:
+            from domains.threads.services.intents import PLANNING_TURN_REMINDER
+            from domains.threads.services.thread_run import send_message_turn
+
+            text = f'Answer to "{question_text}": {answer.strip()}'
+            if t.phase == "refining":
+                text = f"{text}\n\n{PLANNING_TURN_REMINDER}"
+            send_message_turn(t.active_run_uid, text)
         return t
 
     async def transition(self, uid: str, to_phase: str, *, actor_uid: str) -> Thread:

@@ -9,6 +9,17 @@ _build_ticket_refine_intent).
 
 from __future__ import annotations
 
+# Appended to platform-delivered answers while the thread is refining — the
+# staged contract must ride with every turn (frontend keeps an identical copy
+# for user-typed messages).
+PLANNING_TURN_REMINDER = (
+    "[Thread protocol reminder — PLANNING stage: do not edit files or commit; "
+    "the platform will send an explicit GO message when implementation is "
+    "approved. For now: ask the next question via opensweep_platform_ask_user, "
+    "or update the ticket and submit the plan via "
+    "opensweep_platform_submit_thread_plan, then stop and wait.]"
+)
+
 
 def build_thread_session_intent(ticket, thread_uid: str) -> str:
     ac = "\n".join(f"- {c}" for c in (ticket.acceptance_criteria or [])) or "- (none yet)"
@@ -60,9 +71,11 @@ def build_thread_session_intent(ticket, thread_uid: str) -> str:
         f"question, call `opensweep_platform_ask_user` (thread_uid `{thread_uid}`, "
         "question, optional `options` list of 2-6 short choices) so the "
         "platform renders it as an answerable card — then end your turn and "
-        "wait. Surface trade-offs and your recommendation inside the "
-        "question. Do NOT silently assume answers to open product "
-        "questions.\n"
+        "wait. The platform also mirrors it to the ticket's discussion; the "
+        "user may answer in the thread or by replying to that comment, and "
+        "either way the answer arrives here as a normal message. Surface "
+        "trade-offs and your recommendation inside the question. Do NOT "
+        "silently assume answers to open product questions.\n"
         f"3. Call `opensweep_platform_update_ticket` (ticket_uid `{ticket.uid}`) "
         "to sharpen title/description and set 2-6 independently testable "
         "acceptance criteria, reflecting what you learned.\n"

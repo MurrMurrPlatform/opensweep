@@ -89,10 +89,22 @@ async def create_comment(
         subject_uid=req.subject_uid,
         body=req.body,
         author_uid=user.uid,
+        parent_comment_uid=req.parent_comment_uid,
     )
     dto = await comment_service.comment_to_dto(c)
     if mention_lib.mentions_opensweep(req.body):
         dto.triggered_run_uid = await trigger_opensweep_reply(c, req.subject_type, subject)
+    # A reply to a thread-question mirror IS the answer: route it into the
+    # thread (marks the question answered + resumes the conversation).
+    # Best-effort — a routing failure never fails the comment itself.
+    if req.parent_comment_uid:
+        from domains.threads.services.thread_service import route_comment_reply
+
+        await route_comment_reply(
+            parent_comment_uid=c.parent_comment_uid or req.parent_comment_uid,
+            body=req.body,
+            actor_uid=user.uid,
+        )
     return dto
 
 

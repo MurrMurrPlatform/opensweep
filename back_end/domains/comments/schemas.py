@@ -39,6 +39,8 @@ class CommentDTO(BaseModel):
     source_run_uid: str = ""
     body: str
     mentions: list[MentionRef] = []
+    parent_comment_uid: str = ""
+    meta: dict = {}
     # Set on the create response when the body summoned @opensweep and a
     # background run was dispatched to answer.
     triggered_run_uid: str = ""
@@ -49,6 +51,9 @@ class CreateCommentRequest(BaseModel):
     subject_type: CommentSubjectType
     subject_uid: str = Field(min_length=1)
     body: str = Field(min_length=1)
+    # Reply threading: uid of the comment this replies to ("" = top-level).
+    parent_comment_uid: str = ""
+
 
 
 class PendingOpenSweepRunDTO(BaseModel):

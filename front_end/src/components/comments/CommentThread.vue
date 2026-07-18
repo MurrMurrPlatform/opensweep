@@ -149,6 +149,57 @@ async function submit() {
   }
 }
 
+// ── Replies (one level) + thread-question quick answers ─────────────────────
+
+const topLevel = computed(() => items.value.filter((c) => !c.parent_comment_uid))
+
+function repliesFor(uid: string): CommentDTO[] {
+  return items.value.filter((c) => c.parent_comment_uid === uid)
+}
+
+const replyingTo = ref<string | null>(null)
+const replyDraft = ref('')
+const replySubmitting = ref(false)
+
+interface QuestionMeta {
+  options: string[]
+  status: string
+}
+
+/** Thread-question mirror comments carry meta driving quick-reply chips;
+ *  replying (chip or free text) routes the answer back into the thread. */
+function questionMeta(c: CommentDTO): QuestionMeta | null {
+  if (c.meta?.kind !== 'thread_question') return null
+  return {
+    options: Array.isArray(c.meta.options) ? (c.meta.options as string[]) : [],
+    status: String(c.meta.status ?? 'open'),
+  }
+}
+
+async function submitReply(parentUid: string, body: string) {
+  const text = body.trim()
+  if (!text || replySubmitting.value) return
+  replySubmitting.value = true
+  try {
+    await comments.create({
+      subject_type: props.subjectType,
+      subject_uid: props.subjectUid,
+      body: text,
+      parent_comment_uid: parentUid,
+    })
+    replyDraft.value = ''
+    replyingTo.value = null
+    // Reload: the reply may have answered a thread question (meta flips to
+    // answered server-side) — the list must reflect it.
+    await load()
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Reply failed', msg)
+  } finally {
+    replySubmitting.value = false
+  }
+}
+
 function isOwn(comment: CommentDTO): boolean {
   return comment.author_uid === currentUser.uid
 }
@@ -205,45 +256,134 @@ async function confirmRemoveComment() {
       </div>
       <ul v-else class="space-y-3">
         <li
-          v-for="c in items"
+          v-for="c in topLevel"
           :key="c.uid"
-          class="-mx-2 flex gap-3 rounded-lg p-2"
+          class="-mx-2 rounded-lg p-2"
           :class="c.author_kind === 'opensweep' ? 'bg-primary/5' : ''"
         >
-          <Avatar class="mt-0.5 size-8 shrink-0">
-            <AvatarFallback
-              class="text-xs"
-              :class="c.author_kind === 'opensweep' ? 'bg-primary/15 text-primary' : ''"
-            >
-              <Bot v-if="c.author_kind === 'opensweep'" class="size-4" />
-              <template v-else>{{ initials(c) }}</template>
-            </AvatarFallback>
-          </Avatar>
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 text-xs">
-              <span class="font-medium" :class="c.author_kind === 'opensweep' ? 'text-primary' : 'text-foreground'">
-                {{ c.author_kind === 'opensweep' ? 'OpenSweep' : authorName(c) }}
-              </span>
-              <RouterLink
-                v-if="c.author_kind === 'opensweep' && c.source_run_uid && currentUser.isPlatformAdmin"
-                :to="{ name: 'run-detail', params: { uid: c.source_run_uid } }"
-                class="text-muted-foreground hover:underline"
-              >view run</RouterLink>
-              <span class="text-muted-foreground" :title="c.created_at">{{ formatRelativeTime(c.created_at) }}</span>
-              <button
-                v-if="isOwn(c)"
-                type="button"
-                class="ml-auto inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
-                :disabled="deletingUid === c.uid"
-                title="Delete comment"
-                @click="removeComment(c)"
+          <div class="flex gap-3">
+            <Avatar class="mt-0.5 size-8 shrink-0">
+              <AvatarFallback
+                class="text-xs"
+                :class="c.author_kind === 'opensweep' ? 'bg-primary/15 text-primary' : ''"
               >
-                <Trash2 class="size-3.5" />
-              </button>
+                <Bot v-if="c.author_kind === 'opensweep'" class="size-4" />
+                <template v-else>{{ initials(c) }}</template>
+              </AvatarFallback>
+            </Avatar>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 text-xs">
+                <span class="font-medium" :class="c.author_kind === 'opensweep' ? 'text-primary' : 'text-foreground'">
+                  {{ c.author_kind === 'opensweep' ? 'OpenSweep' : authorName(c) }}
+                </span>
+                <RouterLink
+                  v-if="c.author_kind === 'opensweep' && c.source_run_uid && currentUser.isPlatformAdmin"
+                  :to="{ name: 'run-detail', params: { uid: c.source_run_uid } }"
+                  class="text-muted-foreground hover:underline"
+                >view run</RouterLink>
+                <span class="text-muted-foreground" :title="c.created_at">{{ formatRelativeTime(c.created_at) }}</span>
+                <span
+                  v-if="questionMeta(c)?.status === 'answered'"
+                  class="rounded-full bg-good/10 px-1.5 text-[10px] text-good"
+                >answered</span>
+                <button
+                  type="button"
+                  class="ml-auto text-muted-foreground hover:text-foreground"
+                  @click="replyingTo = replyingTo === c.uid ? null : c.uid"
+                >
+                  Reply
+                </button>
+                <button
+                  v-if="isOwn(c)"
+                  type="button"
+                  class="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+                  :disabled="deletingUid === c.uid"
+                  title="Delete comment"
+                  @click="removeComment(c)"
+                >
+                  <Trash2 class="size-3.5" />
+                </button>
+              </div>
+              <div class="mt-1 text-sm leading-relaxed">
+                <CommentBody :body="c.body" />
+              </div>
+
+              <!-- Thread-question quick answers: chips post a reply that the
+                   platform routes back into the thread conversation. -->
+              <div
+                v-if="questionMeta(c) && questionMeta(c)!.status === 'open' && questionMeta(c)!.options.length"
+                class="mt-2 flex flex-wrap gap-1.5"
+              >
+                <Button
+                  v-for="opt in questionMeta(c)!.options"
+                  :key="opt"
+                  size="sm"
+                  variant="outline"
+                  class="h-7 text-xs"
+                  :disabled="replySubmitting"
+                  @click="submitReply(c.uid, opt)"
+                >
+                  {{ opt }}
+                </Button>
+              </div>
             </div>
-            <div class="mt-1 text-sm leading-relaxed">
-              <CommentBody :body="c.body" />
-            </div>
+          </div>
+
+          <!-- Replies (one level) -->
+          <ul v-if="repliesFor(c.uid).length" class="ml-11 mt-2 space-y-2 border-l pl-3">
+            <li v-for="r in repliesFor(c.uid)" :key="r.uid" class="flex gap-2">
+              <Avatar class="mt-0.5 size-6 shrink-0">
+                <AvatarFallback
+                  class="text-[10px]"
+                  :class="r.author_kind === 'opensweep' ? 'bg-primary/15 text-primary' : ''"
+                >
+                  <Bot v-if="r.author_kind === 'opensweep'" class="size-3" />
+                  <template v-else>{{ initials(r) }}</template>
+                </AvatarFallback>
+              </Avatar>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="font-medium">
+                    {{ r.author_kind === 'opensweep' ? 'OpenSweep' : authorName(r) }}
+                  </span>
+                  <span class="text-muted-foreground" :title="r.created_at">{{ formatRelativeTime(r.created_at) }}</span>
+                  <button
+                    v-if="isOwn(r)"
+                    type="button"
+                    class="ml-auto text-muted-foreground hover:text-destructive disabled:opacity-50"
+                    :disabled="deletingUid === r.uid"
+                    title="Delete comment"
+                    @click="removeComment(r)"
+                  >
+                    <Trash2 class="size-3" />
+                  </button>
+                </div>
+                <div class="mt-0.5 text-sm leading-relaxed">
+                  <CommentBody :body="r.body" />
+                </div>
+              </div>
+            </li>
+          </ul>
+
+          <!-- Inline reply composer -->
+          <div v-if="replyingTo === c.uid" class="ml-11 mt-2 flex items-end gap-2">
+            <MentionComposer
+              v-model="replyDraft"
+              :rows="2"
+              placeholder="Reply… (Cmd/Ctrl+Enter to submit)"
+              :disabled="replySubmitting"
+              :repository-uid="repositoryUid"
+              @submit="submitReply(c.uid, replyDraft)"
+            />
+            <Button
+              size="sm"
+              class="shrink-0"
+              :loading="replySubmitting"
+              :disabled="!replyDraft.trim()"
+              @click="submitReply(c.uid, replyDraft)"
+            >
+              <Send /> Reply
+            </Button>
           </div>
         </li>
       </ul>

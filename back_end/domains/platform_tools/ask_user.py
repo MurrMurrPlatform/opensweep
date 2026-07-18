@@ -63,7 +63,9 @@ async def ask_user(
 
     # Mirror to the ticket's discussion so followers see the question without
     # opening the thread (the agent itself cannot post comments — the
-    # platform does, deterministically). Best-effort.
+    # platform does, deterministically). Carries machine meta so the UI can
+    # render quick-reply chips and a reply routes back as the answer.
+    # Best-effort.
     try:
         from domains.comments import service as comment_service
         from domains.comments.schemas import CommentAuthorKind, CommentSubjectType
@@ -72,16 +74,32 @@ async def ask_user(
         body = (
             f"❓ **Agent question** (from the ticket's thread)\n\n{question.strip()}"
             + (f"\n\n{opts_block}" if opts_block else "")
-            + "\n\n_Answer it in the thread — the answer will be posted back here._"
+            + "\n\n_Reply to this comment — or answer in the thread — and the "
+            "conversation continues._"
         )
-        await comment_service.create_comment(
+        mirror = await comment_service.create_comment(
             subject_type=CommentSubjectType.TICKET,
             subject_uid=thread.subject_ticket_uid,
             body=body,
             author_uid=executor,
             author_kind=CommentAuthorKind.OPENSWEEP,
             source_run_uid=executor if executor != "manual" else "",
+            meta={
+                "kind": "thread_question",
+                "thread_uid": thread_uid,
+                "question_uid": question_uid,
+                "options": opts,
+                "status": "open",
+            },
         )
+        # Back-link so answering (either side) can sync the other.
+        events = list(thread.events or [])
+        for event in events:
+            if event.get("type") == "question" and event.get("uid") == question_uid:
+                event["comment_uid"] = mirror.uid
+                break
+        thread.events = events
+        await thread.save()
     except Exception:  # noqa: BLE001 — mirroring must never fail the question
         pass
 

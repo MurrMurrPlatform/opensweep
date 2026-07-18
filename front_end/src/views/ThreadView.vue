@@ -151,11 +151,12 @@ const protocolReminder = computed(() =>
   thread.value?.phase === 'refining' ? PLANNING_REMINDER : undefined,
 )
 
-async function onAnswerQuestion(questionUid: string, questionText: string, answer: string) {
+async function onAnswerQuestion(questionUid: string, _questionText: string, answer: string) {
   try {
+    // The backend records the answer, syncs the mirrored ticket comment,
+    // and delivers it into the conversation (the same path comment replies
+    // take) — the chat picks the turn up over its live socket.
     await threads.answerQuestion(uid.value, questionUid, answer)
-    // Deliver the answer into the conversation so the agent resumes.
-    await chatRef.value?.sendText(`Answer to "${questionText}": ${answer}`)
   } catch (e) {
     toast.error('Couldn’t answer', e instanceof ApiError ? e.detail : String(e))
   }

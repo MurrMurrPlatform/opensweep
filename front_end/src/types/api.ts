@@ -1239,6 +1239,12 @@ export interface CommentDTO {
   source_run_uid: string
   body: string
   mentions: MentionRef[]
+  /** Reply threading (one level): uid of the parent comment, '' = top-level. */
+  parent_comment_uid: string
+  /** Machine metadata for platform-authored comments — thread-question
+   *  mirrors carry {kind: 'thread_question', thread_uid, question_uid,
+   *  options, status}. */
+  meta: Record<string, unknown>
   /** Set when the comment summoned @opensweep and a background run was dispatched. */
   triggered_run_uid: string
   created_at: string
@@ -1248,6 +1254,8 @@ export interface CreateCommentRequest {
   subject_type: CommentSubjectType
   subject_uid: string
   body: string
+  /** Reply threading: uid of the comment being replied to. */
+  parent_comment_uid?: string
 }
 
 /** An in-flight @opensweep reply run for a thread — drives the thinking bubble. */
