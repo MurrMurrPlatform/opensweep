@@ -58,3 +58,33 @@ async def approve(req: ApproveRequest, user: UserDTO = Depends(get_current_user)
         params["state"] = req.state
     sep = "&" if "?" in req.redirect_uri else "?"
     return {"redirect_to": f"{req.redirect_uri}{sep}{urlencode(params)}"}
+
+
+class DenyRequest(BaseModel):
+    client_id: str = Field(min_length=1)
+    redirect_uri: str = Field(min_length=1)
+    state: str = ""
+
+
+@router.post("/deny", operation_id="opensweep_oauth_mcp_deny")
+async def deny(req: DenyRequest, user: UserDTO = Depends(get_current_user)) -> dict:
+    """Denial redirect, server-validated: the browser-carried redirect_uri is
+    only followed when it is registered for the client — a raw client-side
+    redirect would be an open redirect from our origin."""
+    client = await oauth_service.get_client(req.client_id)
+    if not oauth_service.redirect_uri_allowed(req.redirect_uri, client.redirect_uris or []):
+        raise HTTPException(status_code=400, detail="invalid_redirect_uri")
+    await write_audit(
+        kind="oauth_mcp.consent_denied",
+        subject_uid=client.uid,
+        subject_type="OAuthClient",
+        actor_uid=user.uid,
+        payload={"client_name": client.name},
+    )
+    from urllib.parse import urlencode
+
+    params = {"error": "access_denied"}
+    if req.state:
+        params["state"] = req.state
+    sep = "&" if "?" in req.redirect_uri else "?"
+    return {"redirect_to": f"{req.redirect_uri}{sep}{urlencode(params)}"}

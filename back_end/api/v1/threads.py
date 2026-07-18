@@ -149,5 +149,5 @@ async def abandon_thread(uid: str, user: UserDTO = Depends(require_role("maintai
     svc = ThreadService()
     t = await svc.get_node(uid)
     await require_repo_in_org(t.repository_uid, user.org_uid)
-    t = await svc.transition(uid, "abandoned", actor_uid=user.uid)
+    t = await svc.abandon(uid, actor_uid=user.uid)
     return thread_to_dto(t)

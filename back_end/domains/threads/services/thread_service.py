@@ -21,6 +21,11 @@ from logging_config import logger
 
 TERMINAL_PHASES = {"done", "abandoned"}
 
+# The board follows the thread: each phase maps to the ticket column the
+# board should have reached by then. Order gives the forward walk.
+BOARD_ORDER = ["backlog", "todo", "in-progress", "in-review", "done"]
+PHASE_TICKET_TARGET = {"implementing": "in-progress", "in_review": "in-review", "done": "done"}
+
 
 def thread_to_dto(t) -> ThreadDTO:
     return ThreadDTO(
@@ -197,13 +202,23 @@ class ThreadService:
         return list(await qs.all())
 
     async def record_event(self, thread: Thread, type: str, **payload) -> None:
+        # ALWAYS reload before appending: neomodel save() writes EVERY
+        # declared property, so saving a stale node object clobbers fields
+        # written in between — a stale save here reverted phase transitions
+        # (the write gate then never opened; found in review, reproduced
+        # live). The caller's object is refreshed so its view stays coherent.
         now = datetime.now(UTC)
-        thread.events = [
-            *(thread.events or []),
+        fresh = await Thread.nodes.get_or_none(uid=thread.uid) or thread
+        fresh.events = [
+            *(fresh.events or []),
             {"ts": now.isoformat(), "type": type, **payload},
         ]
-        thread.updated_at = now
-        await thread.save()
+        fresh.updated_at = now
+        await fresh.save()
+        if fresh is not thread:
+            thread.events = fresh.events
+            thread.phase = fresh.phase
+            thread.updated_at = fresh.updated_at
 
     async def attach_run(self, thread: Thread, run_uid: str) -> None:
         from domains.investigations.models import Run
@@ -222,6 +237,41 @@ class ThreadService:
             run.thread_uid = thread.uid
             await run.save()
         await self.record_event(thread, "run_attached", run_uid=run_uid)
+
+    async def abandon(self, uid: str, *, actor_uid: str) -> Thread:
+        """Abandon = transition + stop the conversation: cancel the active
+        run (no more token burn into a gate-closed sandbox) and dismiss open
+        questions (cards + comment chips close). Best-effort on the cleanup."""
+        t = await self.transition(uid, "abandoned", actor_uid=actor_uid)
+        if t.active_run_uid:
+            try:
+                from domains.investigations.services.turn_service import TurnService
+
+                await TurnService().cancel_run(t.active_run_uid, actor_uid=actor_uid)
+            except Exception as exc:  # noqa: BLE001 — already-terminal runs are fine
+                logger.info(
+                    f"thread {uid}: active run cancel on abandon skipped: {exc}",
+                    extra={"tag": "threads"},
+                )
+        try:
+            fresh = await self.get_node(uid)
+            events = list(fresh.events or [])
+            dismissed = False
+            for e in events:
+                if e.get("type") == "question" and e.get("status") == "open":
+                    e["status"] = "dismissed"
+                    dismissed = True
+                    await self._sync_mirror_status(e, "dismissed")
+            if dismissed:
+                fresh.events = events
+                fresh.updated_at = datetime.now(UTC)
+                await fresh.save()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"thread {uid}: question dismissal on abandon failed: {exc}",
+                extra={"tag": "threads"},
+            )
+        return t
 
     async def create(self, *, ticket_uid: str, actor_uid: str, org_uid: str) -> Thread:
         """One run, one conversation (rev2): the thread run starts in a WRITE
@@ -303,6 +353,11 @@ class ThreadService:
         except LifecycleError as exc:
             await thread.delete()  # dispatch never started — no orphan threads
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception:
+            # ANY dispatch failure must not leave an orphan active thread
+            # that 409-blocks all future threads for this ticket.
+            await thread.delete()
+            raise
         await self.attach_run(thread, run.uid)
 
         # Work has genuinely started: a todo ticket moves to in-progress on
@@ -312,8 +367,14 @@ class ThreadService:
                 await TicketService().transition(
                     ticket.uid, "in-progress", actor_uid=actor_uid, actor_role="maintainer"
                 )
-            except HTTPException:
-                pass  # board bookkeeping must never fail thread creation
+            except HTTPException as exc:
+                # Board bookkeeping must never fail thread creation — but a
+                # silent miss here is exactly the "ticket stuck in TODO" bug,
+                # so it is at least visible in the logs.
+                logger.warning(
+                    f"thread {thread.uid}: todo → in-progress advance failed: {exc.detail}",
+                    extra={"tag": "threads"},
+                )
 
         await write_audit(
             kind="thread.created",
@@ -388,6 +449,23 @@ class ThreadService:
             actor_uid=actor_uid,
             payload={},
         )
+        # Approval IS the go-signal: the agent parks on "waiting for approval",
+        # so approving a refining thread starts implementation in the same
+        # conversation. A blocked gate (mid-turn agent, ticket not on the
+        # board) keeps the approval and surfaces why on the timeline instead
+        # of failing the approve.
+        if t.phase == "refining":
+            try:
+                await self.start_implement(uid, actor_uid=actor_uid)
+                t = await self.get_node(uid)
+            except HTTPException as exc:
+                await self.record_event(
+                    t, "implement_blocked", detail=str(exc.detail), by=actor_uid
+                )
+                logger.warning(
+                    f"thread {uid}: auto-implement after approval blocked: {exc.detail}",
+                    extra={"tag": "threads"},
+                )
         return t
 
     async def answer_question(
@@ -479,7 +557,11 @@ class ThreadService:
     async def _deliver_pending_answers(self, t: Thread, *, force: bool = False) -> bool:
         """Deliver accumulated answers as ONE message when no questions remain
         open (or on force: deliver what's answered, dismiss the rest).
-        Returns True when a message was sent."""
+        Returns True when a message was sent.
+
+        Delivery is guarded BEFORE any state is stamped: if the run is
+        mid-turn, answers stay pending and are retried at the next turn
+        boundary (finalize_thread_run) — never marked delivered-but-lost."""
         if not t.active_run_uid:
             return False
         events = list(t.events or [])
@@ -489,6 +571,14 @@ class ThreadService:
             return False  # still waiting on answers — keep accumulating
         if not pending and not (force and open_qs):
             return False  # nothing to deliver
+        from domains.threads.services.thread_run import run_accepts_message
+
+        if not await run_accepts_message(t.active_run_uid):
+            logger.info(
+                f"thread {t.uid}: answers pending, run busy — will retry at turn end",
+                extra={"tag": "threads"},
+            )
+            return False
         now = datetime.now(UTC)
         for e in pending:
             e["delivered_at"] = now.isoformat()
@@ -500,12 +590,11 @@ class ThreadService:
         t.updated_at = now
         await t.save()
 
-        from domains.threads.services.intents import PLANNING_TURN_REMINDER
         from domains.threads.services.thread_run import send_message_turn
 
+        # The planning-stage reminder is appended server-side by
+        # TurnService.run_turn for every thread turn — no need here.
         text = build_answers_message(pending, skipped=open_qs if force else None)
-        if t.phase == "refining":
-            text = f"{text}\n\n{PLANNING_TURN_REMINDER}"
         send_message_turn(t.active_run_uid, text)
         return True
 
@@ -553,7 +642,36 @@ class ThreadService:
             actor_uid=actor_uid,
             payload={"from": frm, "to": to_phase},
         )
+        await self._sync_ticket_board(t, actor_uid=actor_uid)
         return t
+
+    async def _sync_ticket_board(self, t: Thread, *, actor_uid: str) -> None:
+        """The board follows the thread: every phase advance walks the ticket
+        forward to the matching column (implementing → in-progress,
+        in_review → in-review, done → done). Never walks backwards and never
+        crosses Gate 1 — a backlog ticket stays human-approved. Best-effort:
+        board bookkeeping never fails the phase transition."""
+        target = PHASE_TICKET_TARGET.get(t.phase)
+        if not target:
+            return
+        try:
+            from domains.tickets.services.ticket_service import TicketService
+
+            svc = TicketService()
+            ticket = await svc.get_node(t.subject_ticket_uid)
+            cur = ticket.status or "backlog"
+            if cur == "backlog" or cur not in BOARD_ORDER:
+                return  # Gate 1 is human-only
+            while BOARD_ORDER.index(cur) < BOARD_ORDER.index(target):
+                cur = BOARD_ORDER[BOARD_ORDER.index(cur) + 1]
+                await svc.transition(
+                    t.subject_ticket_uid, cur, actor_uid=actor_uid, actor_role="maintainer"
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"thread {t.uid}: board sync to '{target}' failed: {exc}",
+                extra={"tag": "threads"},
+            )
 
     async def start_implement(self, uid: str, *, actor_uid: str):
         """Rev2: implementation is a platform-authored GO message into the
@@ -572,6 +690,20 @@ class ThreadService:
         )
         if run is None or run.playbook != "thread":
             return await self._start_implement_legacy(t, ticket, actor_uid=actor_uid)
+
+        # Deliverability BEFORE any state flips: a mid-turn agent would never
+        # see the GO message (fire-and-forget turn 409s), leaving the thread
+        # 'implementing' with an uninformed agent.
+        from domains.threads.services.thread_run import run_accepts_message
+
+        if not await run_accepts_message(run.uid):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "the agent is mid-turn — wait for the current turn to "
+                    "finish, then approve implementation again"
+                ),
+            )
 
         # Gate 1 stays human-only and stays enforced: no go-signal for a
         # ticket that was never approved onto the board.

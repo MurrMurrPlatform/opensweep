@@ -176,6 +176,22 @@ class TurnService:
             _RUNNING[uid] = _STARTING
             _INTERRUPTED.discard(uid)
 
+        # Thread planning-stage contract rides with EVERY turn, enforced
+        # server-side at the single chokepoint both transports share (rev2 —
+        # a client-side append would only cover messages sent through the
+        # thread UI).
+        if (run.playbook or "") == "thread" and (getattr(run, "thread_uid", "") or ""):
+            from domains.threads.models import Thread
+            from domains.threads.services.intents import PLANNING_TURN_REMINDER
+
+            thread = await Thread.nodes.get_or_none(uid=run.thread_uid)
+            if (
+                thread is not None
+                and thread.phase == "refining"
+                and PLANNING_TURN_REMINDER not in text
+            ):
+                text = f"{text}\n\n{PLANNING_TURN_REMINDER}"
+
         # First-message queueing: a chat run stays `queued` while its
         # workspace clones in the background — hold the reserved turn slot
         # and start the turn the moment prep finishes. Concurrent sends see

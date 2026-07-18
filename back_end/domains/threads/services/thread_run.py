@@ -27,6 +27,25 @@ from logging_config import logger
 _TURN_TASKS: set[asyncio.Task] = set()
 
 
+async def run_accepts_message(run_uid: str) -> bool:
+    """Would a message turn start now? Status-based pre-check so platform-
+    authored messages are never fired at a mid-turn run (they would 409 in
+    the background and be silently lost)."""
+    from fastapi import HTTPException
+
+    from domains.investigations.models import Run
+    from domains.investigations.services.turn_service import ensure_can_send
+
+    run = await Run.nodes.get_or_none(uid=run_uid)
+    if run is None:
+        return False
+    try:
+        ensure_can_send(run.status or "", False, playbook=run.playbook or "")
+    except HTTPException:
+        return False
+    return True
+
+
 async def finalize_thread_run(run) -> None:
     """Per-turn playbook hook. Never raises (playbooks.py contract)."""
     from domains.threads.models import Thread
@@ -35,7 +54,20 @@ async def finalize_thread_run(run) -> None:
     if not thread_uid:
         return
     thread = await Thread.nodes.get_or_none(uid=thread_uid)
-    if thread is None or thread.phase in {"refining", "done", "abandoned"}:
+    if thread is None:
+        return
+    # Turn boundary = retry point for answer batches that were held while the
+    # run was mid-turn (delivery is guarded, never lost). Best-effort.
+    try:
+        from domains.threads.services.thread_service import ThreadService
+
+        await ThreadService()._deliver_pending_answers(thread)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"pending-answer retry failed for thread {thread_uid}: {exc}",
+            extra={"tag": "threads"},
+        )
+    if thread.phase in {"refining", "done", "abandoned"}:
         # Planning turns produce plan/ticket state via platform tools only;
         # the sandbox contents are inert until the phase gate opens.
         return

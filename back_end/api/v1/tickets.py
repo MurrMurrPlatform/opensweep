@@ -315,6 +315,15 @@ async def implement_ticket(uid: str, user: UserDTO = Depends(require_role("maint
 
     ticket = await TicketService().get_node(uid)
     await require_repo_in_org(ticket.repository_uid, user.org_uid)
+    # A live thread owns this ticket's work branch — a parallel one-shot
+    # implement run would race it on the branch and the fix-round ledger.
+    from domains.threads.services.thread_service import ThreadService, has_active_thread
+
+    if has_active_thread(await ThreadService().list(subject_ticket_uid=uid)):
+        raise HTTPException(
+            status_code=409,
+            detail="this ticket has an active thread — approve implementation from the thread instead",
+        )
     try:
         run = await trigger_implement_run(ticket, triggered_by=user.uid)
     except LifecycleError as exc:

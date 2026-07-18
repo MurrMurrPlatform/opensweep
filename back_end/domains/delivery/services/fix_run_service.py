@@ -321,9 +321,24 @@ async def _message_fix_to_thread(
     triggered_by: str = "",
 ) -> Run:
     """Deliver review findings as a message turn of the thread conversation.
-    Burns a fix round (same bound as dispatched fix runs)."""
-    from domains.threads.services.thread_run import build_fix_message, send_message_turn
+    Burns a fix round (same bound as dispatched fix runs).
 
+    Deliverability is checked BEFORE the round is burned — a mid-turn run
+    would silently lose the message after irreversibly spending the round."""
+    from domains.threads.services.thread_run import (
+        build_fix_message,
+        run_accepts_message,
+        send_message_turn,
+    )
+
+    if not await run_accepts_message(run.uid):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the thread conversation is mid-turn — the fix round was NOT "
+                "spent; retry when the turn finishes"
+            ),
+        )
     policy = await ensure_merge_policy(pr.repository_uid)
     if write_gate.fix_rounds_exhausted(int(pr.fix_rounds or 0), int(policy.max_fix_rounds or 0)):
         raise HTTPException(

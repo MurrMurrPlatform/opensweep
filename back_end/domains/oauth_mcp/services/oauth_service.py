@@ -168,12 +168,42 @@ async def exchange_code(
     )
 
 
+async def revoke_token_family(node: OAuthToken) -> int:
+    """Revoke a token and every successor minted from it (walk `rotated_to`).
+    Called on refresh-token REUSE: a rotated token being presented again
+    means the client or an attacker holds a stolen copy — per OAuth 2.1 /
+    RFC 9700 the whole family dies, so the stolen successor dies with it."""
+    now = datetime.now(UTC)
+    revoked = 0
+    seen: set[str] = set()
+    current: OAuthToken | None = node
+    while current is not None and current.uid not in seen:
+        seen.add(current.uid)
+        if current.revoked_at is None:
+            current.revoked_at = now
+            await current.save()
+            revoked += 1
+        next_uid = (current.rotated_to or "").strip()
+        current = await OAuthToken.nodes.get_or_none(uid=next_uid) if next_uid else None
+    return revoked
+
+
 async def refresh_tokens(*, refresh_token: str, client_id: str) -> OAuthToken:
     node = await OAuthToken.nodes.get_or_none(refresh_hash=hash_secret(refresh_token or ""))
     now = datetime.now(UTC)
+    if node is not None and node.revoked_at is not None:
+        # Reuse of a rotated/revoked refresh token — kill the whole family.
+        revoked = await revoke_token_family(node)
+        await write_audit(
+            kind="oauth_token.reuse_detected",
+            subject_uid=node.uid,
+            subject_type="OAuthToken",
+            actor_uid=node.user_uid,
+            payload={"client_id": node.client_id, "descendants_revoked": revoked},
+        )
+        raise HTTPException(status_code=400, detail="invalid_grant")
     if (
         node is None
-        or node.revoked_at is not None
         or node.client_id != (client_id or "").strip()
         or (node.refresh_expires_at and node.refresh_expires_at < now)
     ):

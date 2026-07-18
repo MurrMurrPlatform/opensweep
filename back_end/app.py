@@ -570,13 +570,25 @@ def _install_cloud_overlay(application: FastAPI) -> None:
     """Open-core seam: OpenSweep Cloud ships an additive `cloud_overlay`
     package (cloud repo only) whose `install(app)` registers cloud-only
     behavior — entitlement hooks, production guards, extra routes. The
-    public product has no such package, so this is a silent no-op here;
-    never put cloud logic in shared files (CLAUDE.md open-core rules)."""
-    import importlib
+    public product has no such package, so this is a no-op here; never put
+    cloud logic in shared files (CLAUDE.md open-core rules).
 
+    Gated behind OPENSWEEP_CLOUD_OVERLAY=1: an unconditional import of a
+    generically-named top-level module is a dependency-confusion seam (any
+    `cloud_overlay` landing on sys.path would execute at boot). The cloud
+    deployment sets the flag explicitly."""
+    import importlib
+    import os
+
+    if os.environ.get("OPENSWEEP_CLOUD_OVERLAY", "").strip().lower() not in {"1", "true"}:
+        return
     try:
         module = importlib.import_module("cloud_overlay")
     except ModuleNotFoundError:
+        logger.warning(
+            "OPENSWEEP_CLOUD_OVERLAY set but no cloud_overlay package found",
+            extra={"tag": "startup"},
+        )
         return
     install = getattr(module, "install", None)
     if callable(install):
