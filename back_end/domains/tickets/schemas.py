@@ -30,6 +30,8 @@ class TicketDTO(BaseModel):
     linked_finding_uids: list[str] = Field(default_factory=list)
     linked_pr_uids: list[str] = Field(default_factory=list)
     assignee_uid: str = ""
+    # Thread-authored implementation plan metadata (unified dev flow).
+    plan: dict = Field(default_factory=dict)
     approved_by: str = ""
     approved_at: datetime | None = None
     done_at: datetime | None = None

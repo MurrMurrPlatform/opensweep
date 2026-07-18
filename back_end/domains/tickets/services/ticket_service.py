@@ -77,6 +77,7 @@ def ticket_to_dto(t: Ticket) -> TicketDTO:
         linked_finding_uids=list(t.linked_finding_uids or []),
         linked_pr_uids=list(t.linked_pr_uids or []),
         assignee_uid=t.assignee_uid or "",
+        plan=dict(t.plan or {}),
         approved_by=t.approved_by or "",
         approved_at=t.approved_at,
         done_at=t.done_at,

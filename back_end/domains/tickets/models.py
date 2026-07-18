@@ -38,6 +38,11 @@ class Ticket(AsyncStructuredNode):
 
     assignee_uid = StringProperty(default="", index=True)
 
+    # Implementation plan, written by the ticket's Thread (unified dev flow):
+    # {markdown, state (drafted|approved), thread_uid, updated_at,
+    #  approved_by, approved_at}. Empty dict = no plan yet.
+    plan = JSONProperty(default={})
+
     # Gate-1 provenance — set on backlog → todo, kept as the approval record.
     approved_by = StringProperty(default="")
     approved_at = DateTimeProperty()

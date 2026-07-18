@@ -1107,6 +1107,17 @@ export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent'
 export type TicketSize = '' | 'trivial' | 'small' | 'medium' | 'large'
 export type TicketOrigin = 'finding' | 'human' | 'agent-proposal'
 
+/** Thread-authored implementation plan, mirrored onto the ticket as
+ *  metadata (unified dev flow). Empty object = no plan yet. */
+export interface TicketPlan {
+  markdown?: string
+  state?: 'drafted' | 'approved' | 'none'
+  thread_uid?: string
+  updated_at?: string | null
+  approved_by?: string
+  approved_at?: string | null
+}
+
 export interface TicketDTO {
   uid: string
   repository_uid: string
@@ -1123,6 +1134,7 @@ export interface TicketDTO {
   linked_finding_uids: string[]
   linked_pr_uids: string[]
   assignee_uid: string
+  plan: TicketPlan
   approved_by: string
   approved_at?: string | null
   done_at?: string | null

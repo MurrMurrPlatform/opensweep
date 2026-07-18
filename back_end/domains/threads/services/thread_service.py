@@ -41,6 +41,37 @@ def has_active_thread(threads: list) -> bool:
     return any(t.phase not in TERMINAL_PHASES for t in threads)
 
 
+async def mirror_plan_to_ticket(thread: Thread) -> None:
+    """The plan's canonical public home is the TICKET's `plan` JSON metadata
+    (user-facing, survives the thread). The thread stays the editing surface;
+    every plan write flows through here. Best-effort — a mirror failure never
+    breaks the plan write itself."""
+    try:
+        from domains.tickets.models import Ticket
+
+        ticket = await Ticket.nodes.get_or_none(uid=thread.subject_ticket_uid)
+        if ticket is None:
+            return
+        now = datetime.now(UTC)
+        ticket.plan = {
+            "markdown": thread.plan_text or "",
+            "state": thread.plan_state or "none",
+            "thread_uid": thread.uid,
+            "updated_at": now.isoformat(),
+            "approved_by": thread.plan_approved_by or "",
+            "approved_at": thread.plan_approved_at.isoformat()
+            if thread.plan_approved_at
+            else None,
+        }
+        ticket.updated_at = now
+        await ticket.save()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"plan mirror to ticket failed for thread {thread.uid}: {exc}",
+            extra={"tag": "threads"},
+        )
+
+
 def compose_addendum_for_thread(plan_state: str, plan_text: str, events: list[dict]) -> str:
     from domains.threads.services.decision_log import build_decision_log
     from domains.threads.services.intents import build_implement_addendum
@@ -174,6 +205,17 @@ class ThreadService:
             await thread.delete()  # dispatch never started — no orphan threads
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         await self.attach_run(thread, run.uid)
+
+        # Work has genuinely started: a todo ticket moves to in-progress on
+        # the board. Backlog tickets stay put — Gate 1 remains human-only.
+        if (ticket.status or "") == "todo":
+            try:
+                await TicketService().transition(
+                    ticket.uid, "in-progress", actor_uid=actor_uid, actor_role="maintainer"
+                )
+            except HTTPException:
+                pass  # board bookkeeping must never fail thread creation
+
         await write_audit(
             kind="thread.created",
             subject_uid=thread.uid,
@@ -212,6 +254,7 @@ class ThreadService:
         t.plan_text = plan_text
         t.plan_state = "drafted"  # hand-edits invalidate approval
         await t.save()
+        await mirror_plan_to_ticket(t)
         await self.record_event(t, "plan_edited", by=actor_uid)
         await write_audit(
             kind="thread.plan_edited",
@@ -231,6 +274,7 @@ class ThreadService:
         t.plan_approved_by = actor_uid
         t.plan_approved_at = now
         await t.save()
+        await mirror_plan_to_ticket(t)
         await self.record_event(t, "plan_approved", by=actor_uid)
         await write_audit(
             kind="thread.plan_approved",

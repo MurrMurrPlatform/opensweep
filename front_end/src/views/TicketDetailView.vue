@@ -278,6 +278,31 @@ async function startThread() {
             </CardContent>
           </Card>
 
+          <!-- Implementation plan (thread-authored ticket metadata) -->
+          <Card v-if="ticket.plan?.markdown">
+            <CardHeader class="p-6 pb-0">
+              <CardTitle class="flex items-center gap-2 text-base">
+                <ListChecks class="size-4 text-muted-foreground" /> Plan
+                <Badge
+                  :variant="ticket.plan.state === 'approved' ? 'success' : 'secondary'"
+                  class="px-1.5 text-[10px]"
+                >
+                  {{ ticket.plan.state }}
+                </Badge>
+                <RouterLink
+                  v-if="ticket.plan.thread_uid"
+                  :to="{ name: 'thread-detail', params: { uid: ticket.plan.thread_uid } }"
+                  class="ml-auto text-xs font-normal text-primary hover:underline"
+                >
+                  Open thread →
+                </RouterLink>
+              </CardTitle>
+            </CardHeader>
+            <CardContent class="p-6 pt-4">
+              <MarkdownView :model-value="ticket.plan.markdown" preview-only />
+            </CardContent>
+          </Card>
+
           <!-- Acceptance criteria -->
           <Card>
             <CardHeader class="p-6 pb-0">

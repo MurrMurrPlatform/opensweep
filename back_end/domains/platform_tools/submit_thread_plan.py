@@ -49,6 +49,13 @@ async def submit_thread_plan(
     ]
     thread.updated_at = now
     await thread.save()
+
+    # Canonical public copy lives on the ticket (user request: plan as
+    # ticket metadata, not buried in the conversation).
+    from domains.threads.services.thread_service import mirror_plan_to_ticket
+
+    await mirror_plan_to_ticket(thread)
+
     await write_audit(
         kind="thread.plan_drafted",
         subject_uid=thread_uid,
