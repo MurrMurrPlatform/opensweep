@@ -27,10 +27,8 @@ const props = defineProps<{
   /** Open structured questions (ask_user) — rendered directly above the
    *  composer so answering feels like part of the conversation. */
   questions?: ThreadEventDTO[]
-  /** Appended to every outgoing message while it applies (e.g. the
-   *  planning-phase protocol reminder) — keeps the agent on contract in
-   *  follow-up turns, where the original instructions are far behind. */
-  protocolReminder?: string
+  /** uid of the question whose answer is in flight (parent-owned). */
+  answeringUid?: string | null
 }>()
 const emit = defineEmits<{
   (e: 'turn-settled'): void
@@ -238,12 +236,11 @@ async function send() {
   await sendText(text)
 }
 
-/** Programmatic send — used by the thread view to deliver question answers
- *  into the conversation. Appends the protocol reminder (when set) so the
- *  contract travels with every turn, not just the opening prompt. */
+/** Programmatic send (also used by tests/future callers). The planning
+ *  protocol reminder is appended SERVER-side in TurnService.run_turn —
+ *  enforced for every transport, invisible boilerplate kept out of the UI. */
 async function sendText(text: string) {
   if (!run.value || !text.trim()) return
-  if (props.protocolReminder) text = `${text}\n\n${props.protocolReminder}`
   const optimistic = pushOptimisticUserEvent(text)
 
   if (socket.value && wsState.value === 'open' && socket.value.send(text)) {
@@ -326,6 +323,7 @@ async function interrupt() {
           :live="showWorking"
           :streaming-text="streamingText"
           :narrated="narrated"
+          fluid
         />
       </div>
 
@@ -333,6 +331,7 @@ async function interrupt() {
         v-for="q in questions ?? []"
         :key="String(q.uid)"
         :question="q"
+        :busy="answeringUid === String(q.uid)"
         @answer="(text) => emit('answer', String(q.uid), String(q.question ?? ''), text)"
       />
 

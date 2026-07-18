@@ -187,8 +187,12 @@ async function submitReply(parentUid: string, body: string) {
       body: text,
       parent_comment_uid: parentUid,
     })
-    replyDraft.value = ''
-    replyingTo.value = null
+    // Only clear the composer that actually sent — a quick-answer chip on
+    // another comment must not wipe an in-progress reply draft.
+    if (replyingTo.value === parentUid) {
+      replyDraft.value = ''
+      replyingTo.value = null
+    }
     // Reload: the reply may have answered a thread question (meta flips to
     // answered server-side) — the list must reflect it.
     await load()

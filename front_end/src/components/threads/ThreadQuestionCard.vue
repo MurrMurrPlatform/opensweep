@@ -4,25 +4,29 @@
 // answer in one click; the free-text input handles everything else.
 // Answering marks the question answered (metadata) AND delivers the answer
 // into the conversation as a follow-up message.
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { CircleHelp, SendHorizontal } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ThreadEventDTO } from '@/types/api'
 
-const props = defineProps<{ question: ThreadEventDTO }>()
+const props = defineProps<{
+  question: ThreadEventDTO
+  /** Owned by the parent (keyed by question uid) so a FAILED answer resets
+   *  the card instead of leaving it disabled forever. */
+  busy?: boolean
+}>()
 const emit = defineEmits<{ (e: 'answer', text: string): void }>()
 
 const freeText = ref('')
-const busy = ref(false)
+const busy = computed(() => Boolean(props.busy))
 
-const options = Array.isArray(props.question.options)
-  ? (props.question.options as string[])
-  : []
+const options = computed(() =>
+  Array.isArray(props.question.options) ? (props.question.options as string[]) : [],
+)
 
 function answer(text: string) {
   if (busy.value || !text.trim()) return
-  busy.value = true
   emit('answer', text.trim())
 }
 </script>

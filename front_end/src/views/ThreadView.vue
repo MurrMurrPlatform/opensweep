@@ -153,21 +153,10 @@ async function onContinueQuestions() {
   await reload()
 }
 
-// Re-sent with every message while planning: keeps the agent on the
-// staged contract in follow-up turns (observed failure: it started
-// implementing right after a question was answered). Implementation is
-// authorized ONLY by the platform's GO message (rev2).
-const PLANNING_REMINDER =
-  '[Thread protocol reminder — PLANNING stage: do not edit files or commit; ' +
-  'the platform will send an explicit GO message when implementation is approved. ' +
-  'For now: ask the next question via opensweep_platform_ask_user, or update the ' +
-  'ticket and submit the plan via opensweep_platform_submit_thread_plan, then stop and wait.]'
-
-const protocolReminder = computed(() =>
-  thread.value?.phase === 'refining' ? PLANNING_REMINDER : undefined,
-)
-
+const answeringUid = ref<string | null>(null)
 async function onAnswerQuestion(questionUid: string, _questionText: string, answer: string) {
+  if (answeringUid.value) return
+  answeringUid.value = questionUid
   try {
     // The backend records the answer, syncs the mirrored ticket comment,
     // and delivers it into the conversation (the same path comment replies
@@ -175,6 +164,8 @@ async function onAnswerQuestion(questionUid: string, _questionText: string, answ
     await threads.answerQuestion(uid.value, questionUid, answer)
   } catch (e) {
     toast.error('Couldn’t answer', e instanceof ApiError ? e.detail : String(e))
+  } finally {
+    answeringUid.value = null
   }
   await reload()
 }
@@ -270,7 +261,7 @@ async function onFix() {
           :run-uids="thread.runs.map((r) => r.uid)"
           :run-uid="thread.active_run_uid"
           :questions="openQuestions"
-          :protocol-reminder="protocolReminder"
+          :answering-uid="answeringUid"
           @turn-settled="reload"
           @answer="onAnswerQuestion"
         />

@@ -21,6 +21,9 @@ const props = defineProps<{
   /** Narrated mode: tool calls render as plain-language narration lines that
    *  expand to the raw card on click (unified dev flow Phase 2). */
   narrated?: boolean
+  /** Fill the parent container instead of the fixed 560px cap — the thread
+   *  view owns its own scroll container. */
+  fluid?: boolean
 }>()
 
 type Item =
@@ -148,7 +151,7 @@ watch(
 </script>
 
 <template>
-  <div ref="scrollEl" class="transcript overflow-y-auto p-5 space-y-4" @scroll="onScroll">
+  <div ref="scrollEl" class="transcript overflow-y-auto p-5 space-y-4" :class="{ fluid }" @scroll="onScroll">
     <div v-if="items.length === 0 && !streamingText" class="h-full grid place-items-center py-10">
       <div class="text-center text-sm text-muted-foreground max-w-sm">
         <Bot class="h-8 w-8 mx-auto mb-2" />
@@ -266,6 +269,11 @@ watch(
 .transcript {
   max-height: 560px;
   min-height: 320px;
+}
+
+.transcript.fluid {
+  height: 100%;
+  max-height: none;
 }
 
 .turn-divider {

@@ -35,12 +35,6 @@ const SCOPE_DESCRIPTIONS: Record<string, string> = {
 const busy = ref(false)
 const error = ref<string | null>(null)
 
-function clientRedirect(params: Record<string, string>) {
-  const qs = new URLSearchParams(params).toString()
-  const sep = redirectUri.value.includes('?') ? '&' : '?'
-  window.location.href = `${redirectUri.value}${sep}${qs}`
-}
-
 async function approve() {
   if (busy.value) return
   busy.value = true
@@ -60,10 +54,22 @@ async function approve() {
   }
 }
 
-function deny() {
-  const params: Record<string, string> = { error: 'access_denied' }
-  if (state.value) params.state = state.value
-  clientRedirect(params)
+async function deny() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    // Server-validated: only registered redirect URIs are followed (a raw
+    // client-side redirect here would be an open redirect from our origin).
+    const result = await apiPost<{ redirect_to: string }>('/oauth-mcp/deny', {
+      client_id: clientId.value,
+      redirect_uri: redirectUri.value,
+      state: state.value,
+    })
+    window.location.href = result.redirect_to
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    busy.value = false
+  }
 }
 </script>
 
