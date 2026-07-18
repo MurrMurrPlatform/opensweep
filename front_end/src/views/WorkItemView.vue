@@ -121,15 +121,35 @@ interface Tab {
   kind: Kind
   label: string
   icon: typeof SquareKanban
+  target: string | null
+  hint: string
 }
 
-const tabs = computed<Tab[]>(() => {
-  const out: Tab[] = []
-  if (ticketUid.value) out.push({ kind: 'ticket', label: 'Ticket', icon: SquareKanban })
-  if (threadUid.value) out.push({ kind: 'thread', label: 'Thread', icon: MessagesSquare })
-  if (prUid.value) out.push({ kind: 'pr', label: 'Pull request', icon: GitPullRequest })
-  return out
-})
+/** ALWAYS all three tabs — missing facets render disabled with a hint, so
+ *  the unified page is discoverable even on a bare ticket. */
+const tabs = computed<Tab[]>(() => [
+  {
+    kind: 'ticket',
+    label: 'Ticket',
+    icon: SquareKanban,
+    target: ticketUid.value,
+    hint: 'No ticket is linked — this PR was opened outside OpenSweep.',
+  },
+  {
+    kind: 'thread',
+    label: 'Thread',
+    icon: MessagesSquare,
+    target: threadUid.value,
+    hint: 'No thread yet — use “Start thread” on the ticket to begin the dev conversation.',
+  },
+  {
+    kind: 'pr',
+    label: 'Pull request',
+    icon: GitPullRequest,
+    target: prUid.value,
+    hint: 'No pull request yet — one opens when the thread finishes implementing.',
+  },
+])
 
 const ROUTE_BY_KIND: Record<Kind, string> = {
   ticket: 'ticket-detail',
@@ -155,17 +175,20 @@ const focusedUid = computed(() =>
 
 <template>
   <div class="space-y-3">
-    <Tabs v-if="tabs.length > 1" v-model="activeTab">
+    <Tabs v-model="activeTab">
       <TabsList>
-        <TabsTrigger v-for="tab in tabs" :key="tab.kind" :value="tab.kind">
+        <TabsTrigger
+          v-for="tab in tabs"
+          :key="tab.kind"
+          :value="tab.kind"
+          :disabled="!tab.target && !resolving"
+          :title="tab.target ? '' : tab.hint"
+        >
           <component :is="tab.icon" class="mr-1 size-3.5" /> {{ tab.label }}
         </TabsTrigger>
       </TabsList>
     </Tabs>
-    <p
-      v-else-if="!resolving && kind === 'pr' && !ticketUid"
-      class="text-xs text-muted-foreground"
-    >
+    <p v-if="!resolving && kind === 'pr' && !ticketUid" class="text-xs text-muted-foreground">
       This pull request has no linked ticket — it was likely opened outside OpenSweep. You can
       still review, discuss and converge it here.
     </p>
