@@ -446,6 +446,7 @@ export type RunTranscriptEventType =
   | 'system'
   | 'turn_end'
   | 'error'
+  | 'narration'
 
 export interface RunTranscriptEvent {
   seq: number
@@ -461,6 +462,8 @@ export interface RunTranscriptEvent {
   is_error?: boolean
   /** system marker kind: sandbox | run_status | … */
   kind?: string
+  /** narration: seq of the tool_use this line describes */
+  covers_seq?: number
   /** turn_end */
   status?: string
   usage?: Record<string, unknown>

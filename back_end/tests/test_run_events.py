@@ -33,10 +33,12 @@ def test_append_read_after_seq_roundtrip(tmp_path, monkeypatch):
     assert events[0]["turn"] == 1
     append_event("run1", "tool_use", name="Bash", input="pytest -q")
     tail = read_events("run1", after_seq=events[-1]["seq"])
-    assert [e["type"] for e in tail] == ["tool_use"]
+    # A tool_use gets a plain-language narration companion (unified dev flow).
+    assert [e["type"] for e in tail] == ["tool_use", "narration"]
     assert tail[0]["seq"] == 2
+    assert tail[1]["covers_seq"] == 2
     # Re-reading past the end yields nothing new.
-    assert read_events("run1", after_seq=2) == []
+    assert read_events("run1", after_seq=tail[-1]["seq"]) == []
 
 
 def test_seq_reseeds_from_file_after_restart(tmp_path, monkeypatch):
@@ -81,7 +83,9 @@ def test_read_events_from_tracks_byte_offset(tmp_path, monkeypatch):
     assert read_events_from("run1", offset) == ([], offset)
     append_event("run1", "tool_use", name="Bash", input="ls")
     events, offset2 = read_events_from("run1", offset)
-    assert [e["seq"] for e in events] == [2]
+    # tool_use + its narration companion (unified dev flow).
+    assert [e["seq"] for e in events] == [2, 3]
+    assert events[1]["type"] == "narration"
     assert offset2 > offset
 
 

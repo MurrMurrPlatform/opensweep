@@ -24,6 +24,8 @@ const runs = useRunStore()
 const toast = useToast()
 
 const run = ref<RunDTO | null>(null)
+/** Narrated feed by default; raw transcript on demand. */
+const narrated = ref(true)
 const events = ref<RunTranscriptEvent[]>([])
 const lastSeq = ref(0)
 const draft = ref('')
@@ -251,10 +253,22 @@ async function interrupt() {
         >
           <CircleStop /> Interrupt
         </Button>
+        <button
+          type="button"
+          class="ml-auto text-xs text-muted-foreground hover:text-foreground"
+          @click="narrated = !narrated"
+        >
+          {{ narrated ? 'Raw transcript' : 'Narrated view' }}
+        </button>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto">
-        <RunTranscript :events="events" :live="showWorking" :streaming-text="streamingText" />
+        <RunTranscript
+          :events="events"
+          :live="showWorking"
+          :streaming-text="streamingText"
+          :narrated="narrated"
+        />
       </div>
 
       <div class="shrink-0 border-t p-4 space-y-1.5">

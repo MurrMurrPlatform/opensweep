@@ -147,6 +147,20 @@ def append_event(run_uid: str, type: str, *, turn: int = 1, **payload: Any) -> N
         return
     _publish(run_uid, line)
 
+    # Narration sidecar (unified dev flow): every tool_use gets a plain-
+    # language `narration` line in the same stream, carrying covers_seq so
+    # the UI can expand it into the raw call. Pure templates — never blocks,
+    # never raises; narration events themselves never narrate (guard below).
+    if type == "tool_use":
+        try:
+            from domains.investigations.services.narration import narration_for_event
+
+            narration = narration_for_event(event)
+            if narration is not None:
+                append_event(run_uid, "narration", turn=turn, **narration)
+        except Exception:  # noqa: BLE001 — narration must never break a run
+            pass
+
 
 def publish_delta(run_uid: str, text: str, *, turn: int = 1) -> None:
     """Ephemeral token-stream fan-out — published to live watchers, never
