@@ -564,3 +564,24 @@ async def health() -> dict:
 from mcp_app import mount_mcp  # noqa: E402
 
 mount_mcp(app)
+
+
+def _install_cloud_overlay(application: FastAPI) -> None:
+    """Open-core seam: OpenSweep Cloud ships an additive `cloud_overlay`
+    package (cloud repo only) whose `install(app)` registers cloud-only
+    behavior — entitlement hooks, production guards, extra routes. The
+    public product has no such package, so this is a silent no-op here;
+    never put cloud logic in shared files (CLAUDE.md open-core rules)."""
+    import importlib
+
+    try:
+        module = importlib.import_module("cloud_overlay")
+    except ModuleNotFoundError:
+        return
+    install = getattr(module, "install", None)
+    if callable(install):
+        install(application)
+        logger.info("cloud overlay installed", extra={"tag": "startup"})
+
+
+_install_cloud_overlay(app)
