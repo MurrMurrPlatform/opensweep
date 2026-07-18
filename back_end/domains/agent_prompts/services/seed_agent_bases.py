@@ -36,6 +36,7 @@ AGENT_PLAYBOOKS = (
     "verify",
     "document",
     "refine",
+    "thread",
     "deep-scan",
     "generate-docs",
 )
@@ -166,6 +167,24 @@ _AGENT_BASES: dict[str, dict] = {
             "written back does not count. This is read-only against the repository: do\n"
             "not modify any code, and do not file new items unless you discover a\n"
             "genuinely new problem outside the target's scope."
+        ),
+    },
+    "thread": {
+        "title": "OpenSweep agent — Thread",
+        "description": (
+            "Task instructions for thread runs: one conversation carrying a ticket "
+            "from planning through implementation and review fixes, staged by the platform."
+        ),
+        "default_job_type": "implement",
+        "tags": ["opensweep-agent-base", "thread"],
+        "body": (
+            "You carry one ticket through its whole life in ONE conversation: interrogate\n"
+            "the user and plan first (ask_user / update_ticket / submit_thread_plan);\n"
+            "implement only after the platform's explicit GO message arrives in this\n"
+            "conversation; then address review findings here as they arrive. Before the\n"
+            "GO message, never edit files or commit — planning-stage changes are\n"
+            "discarded. After it, commit minimal changes and never push: the platform\n"
+            "validates and pushes after every turn."
         ),
     },
     "deep-scan": {

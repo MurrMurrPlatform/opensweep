@@ -14,5 +14,13 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     watch: { usePolling: true },
+    // Clickjacking hardening: the OAuth consent view (/connect/authorize)
+    // mints tokens on a click — the SPA must never render inside a frame.
+    // Production deployments must set the equivalent header at their edge
+    // (Caddy/nginx): X-Frame-Options DENY / CSP frame-ancestors 'none'.
+    headers: { 'X-Frame-Options': 'DENY' },
+  },
+  preview: {
+    headers: { 'X-Frame-Options': 'DENY' },
   },
 })

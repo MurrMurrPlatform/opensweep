@@ -43,7 +43,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import type { BlockingOverrideValue, FindingResolutionDTO, ResolutionState, Severity } from '@/types/api'
+import { severityVariant } from '@/components/findings/findingMeta'
+import type { BlockingOverrideValue, FindingResolutionDTO, ResolutionState } from '@/types/api'
 
 interface Props {
   resolution: FindingResolutionDTO
@@ -73,12 +74,6 @@ const canVerify = computed(() => props.resolution.state === 'fixed')
 const canWaive = computed(() => TRIAGEABLE.includes(props.resolution.state))
 const canDefer = computed(() => TRIAGEABLE.includes(props.resolution.state))
 const canReopen = computed(() => !['open', 'reopened'].includes(props.resolution.state))
-
-const severityVariant = (sev: Severity): BadgeVariants['variant'] => {
-  if (sev === 'critical' || sev === 'high') return 'destructive'
-  if (sev === 'medium') return 'warn'
-  return 'default'
-}
 
 const stateVariant = computed<BadgeVariants['variant']>(() => {
   switch (props.resolution.state) {

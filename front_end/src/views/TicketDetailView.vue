@@ -16,12 +16,13 @@ import {
   Unlink,
 } from 'lucide-vue-next'
 import { useTicketStore } from '@/stores/ticketStore'
+import { useThreadStore } from '@/stores/threadStore'
 import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
 import { useDiscussions } from '@/composables/useDiscussions'
 import { useDiscussInRun } from '@/composables/useDiscussInRun'
-import { PageHeader } from '@/components/ui/page-header'
+import ActionMenuBar from '@/components/workitem/ActionMenuBar.vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -40,9 +41,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import TicketCard from '@/components/tickets/TicketCard.vue'
 import TicketDialog from '@/components/tickets/TicketDialog.vue'
-import TicketImplementButton from '@/components/tickets/TicketImplementButton.vue'
-import TicketRefineButton from '@/components/tickets/TicketRefineButton.vue'
 import TicketOriginBadge from '@/components/tickets/TicketOriginBadge.vue'
+import TicketRefineButton from '@/components/tickets/TicketRefineButton.vue'
 import TicketStatusPipeline from '@/components/tickets/TicketStatusPipeline.vue'
 import TicketTransitionButtons from '@/components/tickets/TicketTransitionButtons.vue'
 import CommentThread from '@/components/comments/CommentThread.vue'
@@ -77,7 +77,9 @@ const { discussing, discuss: discussInRun } = useDiscussInRun(() =>
     : null,
 )
 
-const uid = computed(() => String(route.params.uid))
+// Embeddable in WorkItemView: an explicit uid prop wins over the route param.
+const props = defineProps<{ uid?: string }>()
+const uid = computed(() => props.uid || String(route.params.uid))
 
 async function load() {
   loading.value = true
@@ -90,6 +92,7 @@ async function load() {
     const { children: subtickets, ...ticketFields } = detail
     ticket.value = ticketFields
     children.value = subtickets
+    window.dispatchEvent(new CustomEvent('workitem:changed'))
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -106,6 +109,7 @@ const repoName = computed(() =>
 
 function onUpdated(updated: TicketDTO) {
   ticket.value = updated
+  window.dispatchEvent(new CustomEvent('workitem:changed'))
 }
 
 function onDeleted() {
@@ -171,6 +175,51 @@ async function leaveGroup() {
 function fmt(ts?: string | null): string {
   return ts ? new Date(ts).toLocaleString() : '—'
 }
+
+// ── Thread — the unified dev flow's conversation per ticket ─────────────────
+
+const threadStore = useThreadStore()
+const activeThreadUid = ref<string | null>(null)
+const activeThreadPhase = ref<string | null>(null)
+const startingThread = ref(false)
+
+const THREAD_PHASE_LABELS: Record<string, string> = {
+  refining: 'Planning',
+  implementing: 'Implementing',
+  in_review: 'In review',
+}
+
+watch(
+  ticket,
+  async (t) => {
+    if (!t) return
+    try {
+      const existing = await threadStore.listThreads({ subject_ticket_uid: t.uid })
+      const active = existing.find((x) => x.phase !== 'done' && x.phase !== 'abandoned')
+      activeThreadUid.value = active?.uid ?? null
+      activeThreadPhase.value = active?.phase ?? null
+    } catch {
+      activeThreadUid.value = null
+      activeThreadPhase.value = null
+    }
+  },
+  { immediate: true },
+)
+
+async function startThread() {
+  if (!ticket.value || startingThread.value) return
+  startingThread.value = true
+  try {
+    const targetUid =
+      activeThreadUid.value ?? (await threadStore.createThread(ticket.value.uid)).uid
+    void router.push({ name: 'thread-detail', params: { uid: targetUid } })
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Couldn’t start thread', msg)
+  } finally {
+    startingThread.value = false
+  }
+}
 </script>
 
 <template>
@@ -194,31 +243,29 @@ function fmt(ts?: string | null): string {
     </ErrorState>
 
     <template v-else-if="ticket">
-      <PageHeader :title="ticket.title || '(untitled)'">
-        <template #breadcrumb>
-          <div class="mb-1 flex flex-wrap items-center gap-2">
-            <Badge :variant="statusVariant(ticket.status)" class="px-1.5 text-[10px]">{{ STATUS_LABELS[ticket.status] }}</Badge>
-            <Badge :variant="priorityVariant(ticket.priority)" class="px-1.5 text-[10px]">{{ ticket.priority }}</Badge>
-            <Badge v-if="ticket.size" variant="outline" class="px-1.5 text-[10px]">{{ ticket.size }}</Badge>
-            <TicketOriginBadge :origin="ticket.origin" />
-            <Badge v-for="label in ticket.labels" :key="label" variant="secondary" class="px-1.5 text-[10px]">{{ label }}</Badge>
-            <span class="text-xs text-muted-foreground">{{ repoName }}</span>
-          </div>
-        </template>
-
-        <div class="flex flex-wrap items-center gap-2">
+      <!-- Identity (title, status, cross-links) lives in WorkItemView's
+           unified header — this bar is ONLY actions. -->
+      <ActionMenuBar>
+        <!-- The thread carries refine→plan→implement as ONE conversation;
+             once it exists the Thread tab is the way in. Refine stays as a
+             lighter one-shot that sharpens the ticket without starting it. -->
+        <Button v-if="!activeThreadUid" size="sm" :loading="startingThread" @click="startThread">
+          <MessagesSquare /> Start thread
+        </Button>
+        <TicketRefineButton :ticket="ticket" />
+        <Button variant="ghost" size="sm" :loading="discussing" @click="discussInRun">
+          <MessagesSquare /> Discuss
+        </Button>
+        <Button variant="ghost" size="sm" @click="editOpen = true">
+          <Pencil /> Edit
+        </Button>
+        <TicketTransitionButtons :ticket="ticket" @updated="onUpdated" @deleted="onDeleted" />
+        <template #trailing>
+          <Badge v-for="label in ticket.labels" :key="label" variant="secondary" class="px-1.5 text-[10px]">{{ label }}</Badge>
+          <Badge v-if="ticket.size" variant="outline" class="px-1.5 text-[10px]">{{ ticket.size }}</Badge>
           <DiscussionChip v-for="chat in discussions" :key="chat.uid" :run="chat" />
-          <TicketRefineButton :ticket="ticket" />
-          <TicketImplementButton :ticket="ticket" @updated="onUpdated" />
-          <Button variant="outline" size="sm" :loading="discussing" @click="discussInRun">
-            <MessagesSquare /> Discuss
-          </Button>
-          <Button variant="outline" size="sm" @click="editOpen = true">
-            <Pencil /> Edit
-          </Button>
-          <TicketTransitionButtons :ticket="ticket" @updated="onUpdated" @deleted="onDeleted" />
-        </div>
-      </PageHeader>
+        </template>
+      </ActionMenuBar>
 
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px] items-start">
         <!-- ── Main column ─────────────────────────────────────────────── -->
@@ -237,6 +284,31 @@ function fmt(ts?: string | null): string {
                 preview-only
               />
               <div v-else class="text-sm text-muted-foreground">No description yet — edit the ticket to add one.</div>
+            </CardContent>
+          </Card>
+
+          <!-- Implementation plan (thread-authored ticket metadata) -->
+          <Card v-if="ticket.plan?.markdown">
+            <CardHeader class="p-6 pb-0">
+              <CardTitle class="flex items-center gap-2 text-base">
+                <ListChecks class="size-4 text-muted-foreground" /> Plan
+                <Badge
+                  :variant="ticket.plan.state === 'approved' ? 'success' : 'secondary'"
+                  class="px-1.5 text-[10px]"
+                >
+                  {{ ticket.plan.state }}
+                </Badge>
+                <RouterLink
+                  v-if="ticket.plan.thread_uid"
+                  :to="{ name: 'thread-detail', params: { uid: ticket.plan.thread_uid } }"
+                  class="ml-auto text-xs font-normal text-primary hover:underline"
+                >
+                  Open thread →
+                </RouterLink>
+              </CardTitle>
+            </CardHeader>
+            <CardContent class="p-6 pt-4">
+              <MarkdownView :model-value="ticket.plan.markdown" preview-only />
             </CardContent>
           </Card>
 

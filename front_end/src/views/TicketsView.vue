@@ -2,10 +2,11 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, ArrowRight, ChevronDown, Crosshair, Layers, Plus, RefreshCw,
-  Search, SlidersHorizontal, Sparkles, SquareKanban,
+  ArrowLeft, ArrowRight, ChevronDown, Crosshair, GitPullRequest, Layers, Plus, RefreshCw,
+  Search, SlidersHorizontal, Sparkles, SquareKanban, X,
 } from 'lucide-vue-next'
 import { useTicketStore } from '@/stores/ticketStore'
+import { useDeliveryStore } from '@/stores/deliveryStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useBoardPrefs } from '@/composables/useBoardPrefs'
 import { useToast } from '@/composables/useToast'
@@ -52,7 +53,7 @@ import TicketDialog from '@/components/tickets/TicketDialog.vue'
 import GroupTicketsDialog from '@/components/tickets/GroupTicketsDialog.vue'
 import GroupProposalsPanel from '@/components/tickets/GroupProposalsPanel.vue'
 import { STATUS_LABELS, STATUS_ORDER, TRANSITIONS, statusVariant } from '@/components/tickets/ticketMeta'
-import type { TicketDTO, TicketPriority, TicketStatus } from '@/types/api'
+import type { PullRequestDTO, TicketDTO, TicketPriority, TicketStatus } from '@/types/api'
 
 const store = useTicketStore()
 const route = useRoute()
@@ -75,10 +76,31 @@ async function reload() {
   try {
     tickets.value = await store.fetchTickets({ repository_uid: repoUid.value })
     void proposalsPanel.value?.reload()
+    void loadOrphanPrs()
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+}
+
+// ── Ticketless PRs — work that exists on GitHub but not on the board yet ────
+// Synced PRs without a ticket (opened by hand, outside OpenSweep) surface in
+// their own strip; opening one lands on the work-item page where a ticket can
+// be created manually or drafted by AI.
+const delivery = useDeliveryStore()
+const orphanPrs = ref<PullRequestDTO[]>([])
+
+async function loadOrphanPrs() {
+  if (!repoUid.value) return
+  try {
+    const prs = await delivery.fetchPullRequests({
+      repository_uid: repoUid.value,
+      state: 'open',
+    })
+    orphanPrs.value = prs.filter((pr) => !pr.ticket_uid)
+  } catch {
+    orphanPrs.value = [] // strip is best-effort; the board must still render
   }
 }
 
@@ -129,14 +151,38 @@ const COLUMN_HINTS: Record<TicketStatus, string> = {
   done: 'Merged and finished.',
 }
 
+/* ── Board-wide search + priority filter ─────────────────────────────── */
+
+const boardSearch = ref('')
+const boardPriority = ref<'all' | TicketPriority>('all')
+const boardFiltering = computed(() => boardSearch.value.trim() !== '' || boardPriority.value !== 'all')
+
+function clearBoardFilters() {
+  boardSearch.value = ''
+  boardPriority.value = 'all'
+}
+
+function matchesBoardFilters(t: TicketDTO): boolean {
+  if (boardPriority.value !== 'all' && t.priority !== boardPriority.value) return false
+  const q = boardSearch.value.trim().toLowerCase()
+  if (!q) return true
+  return `${t.title} ${t.description} ${t.labels.join(' ')}`.toLowerCase().includes(q)
+}
+
 const columns = computed(() =>
-  STATUS_ORDER.map((status) => ({
-    status,
-    title: STATUS_LABELS[status],
-    subtitle: COLUMN_HINTS[status],
-    items: tickets.value.filter((t) => t.status === status),
-  })),
+  STATUS_ORDER.map((status) => {
+    const all = tickets.value.filter((t) => t.status === status)
+    return {
+      status,
+      title: STATUS_LABELS[status],
+      subtitle: COLUMN_HINTS[status],
+      items: boardFiltering.value ? all.filter(matchesBoardFilters) : all,
+      total: all.length,
+    }
+  }),
 )
+
+const boardMatchCount = computed(() => columns.value.reduce((n, c) => n + c.items.length, 0))
 
 /* ── Board view preferences (persisted per repo) ─────────────────────── */
 
@@ -165,10 +211,10 @@ const laneSearch = ref('')
 const lanePriority = ref<'all' | TicketPriority>('all')
 const laneSort = ref<'newest' | 'oldest' | 'priority' | 'title'>('newest')
 
-// Each lane starts with a clean slate — filters don't leak between lanes.
-watch(laneView, () => {
-  laneSearch.value = ''
-  lanePriority.value = 'all'
+// Entering a lane carries the board filters along; switching lanes resets.
+watch(laneView, (lane) => {
+  laneSearch.value = lane ? boardSearch.value : ''
+  lanePriority.value = lane ? boardPriority.value : 'all'
   laneSort.value = 'newest'
 })
 
@@ -283,7 +329,7 @@ function onTicketCreated(ticket: TicketDTO) {
 
 <template>
   <div class="space-y-4">
-    <PageHeader title="Tickets" subtitle="Delivery work items — Gate 1 lives on the Backlog → Todo edge.">
+    <PageHeader title="Work items" subtitle="Tickets, threads and pull requests — Gate 1 lives on the Backlog → Todo edge.">
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button variant="outline" size="sm">
@@ -358,27 +404,59 @@ function onTicketCreated(ticket: TicketDTO) {
       <Button variant="outline" size="sm" :disabled="loading" @click="reload">
         <RefreshCw :class="{ 'animate-spin': loading }" /> Refresh
       </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        :disabled="!repoUid || groupableTickets.length < 2"
-        :loading="proposing"
-        @click="suggestGroups"
-      >
-        <Sparkles /> Suggest groups
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        :disabled="!repoUid || groupableTickets.length < 2"
-        @click="groupOpen = true"
-      >
-        <Layers /> Group tickets
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="!repoUid || groupableTickets.length < 2"
+            :loading="proposing"
+          >
+            <Layers /> Group
+            <ChevronDown class="!size-3.5 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" class="w-56">
+          <DropdownMenuItem class="gap-2" :disabled="proposing" @select="suggestGroups">
+            <Sparkles class="size-4" /> Suggest groups (agent run)
+          </DropdownMenuItem>
+          <DropdownMenuItem class="gap-2" @select="groupOpen = true">
+            <Layers class="size-4" /> Group tickets by hand…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button size="sm" @click="createOpen = true">
         <Plus /> New ticket
       </Button>
     </PageHeader>
+
+    <!-- Board-wide search + priority filter — applies across every lane -->
+    <div
+      v-if="!loading && !error && tickets.length > 0 && !laneView"
+      class="flex flex-wrap items-center gap-2"
+    >
+      <div class="relative w-full sm:w-72">
+        <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input v-model="boardSearch" placeholder="Search tickets — title, description, labels…" class="h-9 pl-8" />
+      </div>
+      <Select :model-value="boardPriority" @update:model-value="boardPriority = $event as typeof boardPriority">
+        <SelectTrigger class="h-9 w-full sm:w-40">
+          <SelectValue placeholder="All priorities" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All priorities</SelectItem>
+          <SelectItem v-for="p in PRIORITY_OPTIONS" :key="p" :value="p">{{ p }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <template v-if="boardFiltering">
+        <span class="text-xs tabular-nums text-muted-foreground">
+          {{ boardMatchCount }} of {{ tickets.length }} tickets match
+        </span>
+        <Button variant="ghost" size="sm" @click="clearBoardFilters">
+          <X /> Clear
+        </Button>
+      </template>
+    </div>
 
     <!-- Agent-proposed groupings awaiting human approval -->
     <GroupProposalsPanel
@@ -388,6 +466,37 @@ function onTicketCreated(ticket: TicketDTO) {
       :tickets="tickets"
       @applied="reload"
     />
+
+    <!-- Externally-opened PRs with no ticket yet: work that exists on GitHub
+         but not on the board. Opening one offers ticket creation. -->
+    <Card v-if="orphanPrs.length">
+      <CardContent class="space-y-2 p-4">
+        <div class="flex items-center gap-2">
+          <GitPullRequest class="size-4 text-muted-foreground" />
+          <h2 class="text-sm font-semibold">Pull requests without a ticket</h2>
+          <Badge variant="secondary" class="px-1.5 text-[10px]">{{ orphanPrs.length }}</Badge>
+          <span class="text-xs text-muted-foreground">opened outside OpenSweep — open one to adopt it onto the board</span>
+        </div>
+        <div class="flex gap-2 overflow-x-auto pb-1">
+          <RouterLink
+            v-for="pr in orphanPrs"
+            :key="pr.uid"
+            :to="{ name: 'pull-request-detail', params: { uid: pr.uid } }"
+            class="card-interactive w-64 shrink-0 rounded-md border bg-muted/40 p-3 hover:border-primary/60"
+          >
+            <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <GitPullRequest class="size-3" /> #{{ pr.github_number }}
+              <Badge v-if="pr.draft" variant="outline" class="px-1 text-[9px]">draft</Badge>
+              <span class="ml-auto font-mono text-[10px]">{{ pr.ci_state || '—' }}</span>
+            </div>
+            <div class="mt-1 truncate text-sm font-medium">{{ pr.title || '(untitled)' }}</div>
+            <div class="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+              {{ pr.head_ref }} → {{ pr.base_ref }}
+            </div>
+          </RouterLink>
+        </div>
+      </CardContent>
+    </Card>
 
     <!-- Loading -->
     <div v-if="loading" class="flex gap-4 overflow-x-auto pb-2">
@@ -493,6 +602,7 @@ function onTicketCreated(ticket: TicketDTO) {
         :status="col.status"
         :subtitle="col.subtitle"
         :items="col.items"
+        :total="col.total"
         :child-counts="childCounts"
         :collapsed="isCollapsed(col.status)"
         :dragging-uid="dragging?.uid ?? null"

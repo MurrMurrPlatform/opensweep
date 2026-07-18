@@ -466,6 +466,10 @@ async def _process_delivery(*, event: str, action: str, payload: dict) -> dict:
                 await TicketService().mark_done_via_merge(
                     pr.ticket_uid, pull_request_uid=pr.uid
                 )
+            if pr is not None and pr.state == "merged":
+                from domains.threads.services.hooks import note_pr_merged
+
+                await note_pr_merged(pr.uid)
         except Exception as exc:
             logger.warning(
                 f"ticket done-via-merge failed for {repo.slug}#{number}: {exc}",

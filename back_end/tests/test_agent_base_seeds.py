@@ -21,7 +21,7 @@ _SWEEP_AGENTS = {"deep-scan", "generate-docs"}
 def test_bases_cover_every_playbook_exactly():
     assert set(_AGENT_BASES) == PLAYBOOKS | _SWEEP_AGENTS
     assert set(AGENT_PLAYBOOKS) == PLAYBOOKS | _SWEEP_AGENTS
-    assert len(AGENT_PLAYBOOKS) == 10
+    assert len(AGENT_PLAYBOOKS) == 11
 
 
 def test_base_specs_are_well_formed():

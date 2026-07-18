@@ -446,6 +446,7 @@ export type RunTranscriptEventType =
   | 'system'
   | 'turn_end'
   | 'error'
+  | 'narration'
 
 export interface RunTranscriptEvent {
   seq: number
@@ -461,6 +462,8 @@ export interface RunTranscriptEvent {
   is_error?: boolean
   /** system marker kind: sandbox | run_status | … */
   kind?: string
+  /** narration: seq of the tool_use this line describes */
+  covers_seq?: number
   /** turn_end */
   status?: string
   usage?: Record<string, unknown>
@@ -1104,6 +1107,17 @@ export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent'
 export type TicketSize = '' | 'trivial' | 'small' | 'medium' | 'large'
 export type TicketOrigin = 'finding' | 'human' | 'agent-proposal'
 
+/** Thread-authored implementation plan, mirrored onto the ticket as
+ *  metadata (unified dev flow). Empty object = no plan yet. */
+export interface TicketPlan {
+  markdown?: string
+  state?: 'drafted' | 'approved' | 'none'
+  thread_uid?: string
+  updated_at?: string | null
+  approved_by?: string
+  approved_at?: string | null
+}
+
 export interface TicketDTO {
   uid: string
   repository_uid: string
@@ -1120,6 +1134,7 @@ export interface TicketDTO {
   linked_finding_uids: string[]
   linked_pr_uids: string[]
   assignee_uid: string
+  plan: TicketPlan
   approved_by: string
   approved_at?: string | null
   done_at?: string | null
@@ -1224,6 +1239,12 @@ export interface CommentDTO {
   source_run_uid: string
   body: string
   mentions: MentionRef[]
+  /** Reply threading (one level): uid of the parent comment, '' = top-level. */
+  parent_comment_uid: string
+  /** Machine metadata for platform-authored comments — thread-question
+   *  mirrors carry {kind: 'thread_question', thread_uid, question_uid,
+   *  options, status}. */
+  meta: Record<string, unknown>
   /** Set when the comment summoned @opensweep and a background run was dispatched. */
   triggered_run_uid: string
   created_at: string
@@ -1233,6 +1254,8 @@ export interface CreateCommentRequest {
   subject_type: CommentSubjectType
   subject_uid: string
   body: string
+  /** Reply threading: uid of the comment being replied to. */
+  parent_comment_uid?: string
 }
 
 /** An in-flight @opensweep reply run for a thread — drives the thinking bubble. */
@@ -1303,6 +1326,60 @@ export interface SlackRuleCreateRequest {
 }
 
 export type SlackRuleUpdateRequest = Partial<SlackRuleCreateRequest>
+
+// ── Threads (unified dev flow) ──────────────────────────────────────────────
+
+export type ThreadPhase = 'refining' | 'implementing' | 'in_review' | 'done' | 'abandoned'
+export type PlanState = 'none' | 'drafted' | 'approved'
+
+export interface ThreadDTO {
+  uid: string
+  repository_uid: string
+  subject_ticket_uid: string
+  phase: ThreadPhase
+  plan_state: PlanState
+  branch: string
+  pr_uid: string
+  active_run_uid: string
+  created_by: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface ThreadRunSummaryDTO {
+  uid: string
+  playbook: string
+  status: string
+  title: string
+  created_at: string | null
+}
+
+export interface ThreadEventDTO {
+  ts: string
+  type: string
+  [key: string]: unknown
+}
+
+export interface ThreadDetailDTO extends ThreadDTO {
+  plan_text: string
+  progress: ThreadProgress
+  events: ThreadEventDTO[]
+  runs: ThreadRunSummaryDTO[]
+}
+
+/** Derived thread progress — computed by the platform from observed facts
+ *  (questions, plan, PR, verdicts, fix rounds); never stored. */
+export interface ThreadProgress {
+  phase: ThreadPhase
+  label: string
+  questions_total: number
+  questions_answered: number
+  questions_open: number
+  plan_state: PlanState
+  pr_opened: boolean
+  fix_rounds: number
+  last_verdict: string
+}
 
 // ── Legacy short-name aliases ───────────────────────────────────────────────
 // Components written before the *DTO rename import these. Cheaper to keep the

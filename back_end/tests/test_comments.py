@@ -64,11 +64,15 @@ def test_comment_dto_shape():
         "source_run_uid",
         "body",
         "mentions",
+        "parent_comment_uid",
+        "meta",
         "triggered_run_uid",
         "created_at",
     }
     assert data["author_kind"] == CommentAuthorKind.USER
     assert data["mentions"] == []
+    assert data["parent_comment_uid"] == ""
+    assert data["meta"] == {}
 
 
 # ── mention parsing ──────────────────────────────────────────────────────────

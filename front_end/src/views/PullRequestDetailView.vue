@@ -9,6 +9,7 @@ import {
   Link2,
   ListChecks,
   MessagesSquare,
+  MoreHorizontal,
   RefreshCw,
   RotateCcw,
   Search,
@@ -17,12 +18,13 @@ import {
   Wrench,
 } from 'lucide-vue-next'
 import { useDeliveryStore } from '@/stores/deliveryStore'
+import { useTicketStore } from '@/stores/ticketStore'
 import { useToast } from '@/composables/useToast'
 import { extractDispatchConflict, useActiveRuns } from '@/composables/useActiveRuns'
 import { useDiscussions } from '@/composables/useDiscussions'
 import { useDiscussInRun } from '@/composables/useDiscussInRun'
 import { ApiError } from '@/services/api'
-import { PageHeader } from '@/components/ui/page-header'
+import ActionMenuBar from '@/components/workitem/ActionMenuBar.vue'
 import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
@@ -34,6 +36,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -47,6 +55,7 @@ import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/ui/error-state'
 import CiStateBadge from '@/components/delivery/CiStateBadge.vue'
+import TestLocallyButton from '@/components/delivery/TestLocallyButton.vue'
 import ConvergenceChecklist from '@/components/delivery/ConvergenceChecklist.vue'
 import ResolutionCard from '@/components/delivery/ResolutionCard.vue'
 import VerdictCard from '@/components/delivery/VerdictCard.vue'
@@ -65,6 +74,7 @@ import type {
 
 const route = useRoute()
 const delivery = useDeliveryStore()
+const ticketStore = useTicketStore()
 const toast = useToast()
 
 const pr = ref<PullRequestDTO | null>(null)
@@ -114,7 +124,9 @@ const DEPTH_HELP: Record<ReviewDepth, string> = {
   deep: 'All lenses (correctness, security, API, performance, tests, maintainability) with subagent fan-out. Always reviews the full diff.',
 }
 
-const uid = computed(() => String(route.params.uid))
+// Embeddable in WorkItemView: an explicit uid prop wins over the route param.
+const props = defineProps<{ uid?: string }>()
+const uid = computed(() => props.uid || String(route.params.uid))
 
 // In-flight runs targeting this PR — surface a "view run" chip and gate the
 // dispatch buttons per the overlap rules: a review is blocked only by another
@@ -154,6 +166,7 @@ async function load() {
     verdict.value = v
     resolutions.value = rs
     fixSelection.value = new Set()
+    window.dispatchEvent(new CustomEvent('workitem:changed'))
     try {
       policy.value = await delivery.getMergePolicy(p.repository_uid)
     } catch {
@@ -168,6 +181,22 @@ async function load() {
 
 onMounted(load)
 watch(uid, () => void load())
+
+/** Title of the bound ticket — makes the header chip readable, not just a uid. */
+const ticketTitle = ref('')
+watch(
+  () => pr.value?.ticket_uid,
+  async (ticketUid) => {
+    ticketTitle.value = ''
+    if (!ticketUid) return
+    try {
+      ticketTitle.value = (await ticketStore.getTicket(ticketUid)).title
+    } catch {
+      /* chip falls back to the short uid */
+    }
+  },
+  { immediate: true },
+)
 
 const stateVariant = computed<BadgeVariants['variant']>(() => {
   switch (pr.value?.state) {
@@ -452,49 +481,64 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
     </ErrorState>
 
     <template v-else-if="pr">
-      <PageHeader :title="`#${pr.github_number} · ${pr.title || '(untitled)'}`">
-        <template #breadcrumb>
-          <div class="flex flex-wrap items-center gap-2 mb-1">
-            <Badge :variant="stateVariant" class="px-1.5 text-[10px]">{{ pr.state }}</Badge>
-            <Badge v-if="pr.draft" variant="outline" class="px-1.5 text-[10px]">draft</Badge>
-            <CiStateBadge :state="pr.ci_state" />
-            <Badge v-if="pr.converged" variant="success" class="px-1.5 text-[10px]">
-              <CheckCircle2 class="h-3 w-3" /> converged
-            </Badge>
-            <span class="text-xs text-muted-foreground">
-              <span class="font-mono">{{ pr.head_ref }} → {{ pr.base_ref }}</span>
-              <template v-if="pr.author"> · {{ pr.author }}</template>
-              <template v-if="pr.head_sha"> · head <span class="font-mono">{{ pr.head_sha.slice(0, 10) }}</span></template>
-            </span>
-          </div>
-        </template>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <Button v-if="pr.url" as="a" :href="pr.url" target="_blank" rel="noopener" variant="ghost" size="sm">
-            <ExternalLink /> GitHub
-          </Button>
-          <Button variant="outline" size="sm" :loading="discussing" @click="discussInRun">
-            <MessagesSquare /> Discuss
-          </Button>
-          <Button variant="outline" size="sm" :loading="syncing" @click="resync">
-            <RefreshCw /> Re-sync
-          </Button>
-          <Button variant="outline" size="sm" :loading="recomputing" @click="recompute">
-            <Target /> Recompute
-          </Button>
+      <!-- Identity (title, state, CI, branch) lives in WorkItemView's unified
+           header — this bar is ONLY actions. -->
+      <ActionMenuBar>
+        <Button
+          size="sm"
+          :loading="reviewing"
+          :disabled="pr.state !== 'open' || !pr.head_sha || reviewInFlight"
+          :title="reviewInFlight ? 'A review run is already in flight for this PR' : undefined"
+          @click="openReviewDialog"
+        >
+          <Search /> Request review
+        </Button>
+        <TestLocallyButton :branch="pr.head_ref" :pr-number="pr.github_number" />
+        <Button variant="ghost" size="sm" :loading="discussing" @click="discussInRun">
+          <MessagesSquare /> Discuss
+        </Button>
+        <Button v-if="pr.url" as="a" :href="pr.url" target="_blank" rel="noopener" variant="ghost" size="sm">
+          <ExternalLink /> GitHub
+        </Button>
+        <button
+          v-if="!pr.ticket_uid"
+          type="button"
+          class="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          @click="linkTicketOpen = true"
+        >
+          <Link2 class="size-3" /> Link ticket
+        </button>
+        <!-- Maintenance actions — needed rarely, kept out of the primary row. -->
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="size-8"
+              title="More actions"
+              :loading="syncing || recomputing"
+            >
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-48">
+            <DropdownMenuItem :disabled="syncing" @select="resync">
+              <RefreshCw /> Re-sync from GitHub
+            </DropdownMenuItem>
+            <DropdownMenuItem :disabled="recomputing" @select="recompute">
+              <Target /> Recompute convergence
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <template #trailing>
+          <span v-if="pr.author || pr.head_sha" class="text-xs text-muted-foreground">
+            <template v-if="pr.author">{{ pr.author }}</template>
+            <template v-if="pr.head_sha"> · head <span class="font-mono">{{ pr.head_sha.slice(0, 10) }}</span></template>
+          </span>
           <DiscussionChip v-for="chat in discussions" :key="chat.uid" :run="chat" />
           <ActiveRunChip v-if="activeRun" :run="activeRun" />
-          <Button
-            size="sm"
-            :loading="reviewing"
-            :disabled="pr.state !== 'open' || !pr.head_sha || reviewInFlight"
-            :title="reviewInFlight ? 'A review run is already in flight for this PR' : undefined"
-            @click="openReviewDialog"
-          >
-            <Search /> Request review
-          </Button>
-        </div>
-      </PageHeader>
+        </template>
+      </ActionMenuBar>
 
       <Dialog :open="reviewDialogOpen" @update:open="reviewDialogOpen = $event">
         <DialogContent class="sm:max-w-lg">
@@ -773,10 +817,10 @@ async function onResolutionUpdated(updated: FindingResolutionDTO) {
               <RouterLink
                 v-if="pr.ticket_uid"
                 :to="{ name: 'ticket-detail', params: { uid: pr.ticket_uid } }"
-                class="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                class="inline-flex max-w-full items-center gap-1.5 text-sm text-primary hover:underline"
               >
-                <SquareKanban class="h-4 w-4" />
-                <span class="font-mono">{{ pr.ticket_uid.slice(0, 8) }}</span>
+                <SquareKanban class="h-4 w-4 shrink-0" />
+                <span class="min-w-0 truncate">{{ ticketTitle || pr.ticket_uid.slice(0, 8) }}</span>
               </RouterLink>
               <div v-else class="space-y-2">
                 <p class="text-xs text-muted-foreground">

@@ -7,6 +7,7 @@ memories are live immediately (KNOWLEDGE_V3).
 
 from domains.platform_tools.add_analysis_note import add_analysis_note
 from domains.platform_tools.ask_question import ask_question
+from domains.platform_tools.ask_user import ask_user
 from domains.platform_tools.attach_artifact import attach_artifact
 from domains.platform_tools.complete_run import complete_run
 from domains.platform_tools.create_finding import create_finding
@@ -23,6 +24,7 @@ from domains.platform_tools.news_tools import (
     list_news_items,
 )
 from domains.platform_tools.set_analysis_section import set_analysis_section
+from domains.platform_tools.submit_thread_plan import submit_thread_plan
 from domains.platform_tools.update_finding import update_finding
 from domains.platform_tools.upsert_analysis import upsert_analysis
 from domains.platform_tools.web_tools import fetch_url, web_search
@@ -38,6 +40,8 @@ __all__ = [
     "search_memory",
     "attach_artifact",
     "complete_run",
+    "submit_thread_plan",
+    "ask_user",
     # Deep-scan Analysis authoring
     "upsert_analysis",
     "set_analysis_section",

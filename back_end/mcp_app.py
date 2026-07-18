@@ -52,6 +52,18 @@ OPENSWEEP_MCP_OPERATIONS = [
     # Audit
     "opensweep_list_audit_events",
     "opensweep_get_audit_event",
+    # Dev flow — `opensweep connect`: local agents (Claude Code, Codex,
+    # OpenCode) pull tickets/threads/plans/test notes and report back.
+    # Read-heavy by design; the only writes are comments (discussion) —
+    # ticket status, plan approval, and merges stay in the UI.
+    "opensweep_ticket_list",
+    "opensweep_ticket_get",
+    "opensweep_thread_list",
+    "opensweep_thread_get",
+    "opensweep_list_pull_requests",
+    "opensweep_get_pull_request",
+    "opensweep_comment_list",
+    "opensweep_comment_create",
 ]
 
 
@@ -103,6 +115,11 @@ OPENSWEEP_PLATFORM_TOOL_OPERATIONS = [
     # Grouping — agents may PROPOSE batching related tickets under one parent;
     # approval (which materializes the parent) is human-only, like Gate 1.
     "opensweep_platform_propose_ticket_group",
+    # Threads (unified dev flow) — the session agent persists its plan
+    # (drafts only; approval is human-only) and asks the user structured
+    # questions the thread UI renders as answer cards.
+    "opensweep_platform_submit_thread_plan",
+    "opensweep_platform_ask_user",
     # Comments — the human↔agent conversation on any data item. Agents read
     # the thread (also injected into run briefings) and reply in-thread;
     # @opensweep-summoned runs MUST answer via add_comment.

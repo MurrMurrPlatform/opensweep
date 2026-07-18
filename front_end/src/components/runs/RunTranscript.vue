@@ -7,9 +7,17 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Bot } from 'lucide-vue-next'
 import { MarkdownView } from '@/components/ui/markdown'
+import SubagentCard from '@/components/runs/SubagentCard.vue'
 import ToolCallCard from '@/components/runs/ToolCallCard.vue'
 import WorkingIndicator from '@/components/runs/WorkingIndicator.vue'
 import type { RunTranscriptEvent } from '@/types/api'
+
+/** Task/Agent tool calls ARE subagents — they get their own card with
+ *  progress and a drill-in modal instead of a generic tool card. */
+function isSubagentTool(name: string): boolean {
+  const n = name.toLowerCase()
+  return n === 'task' || n === 'agent'
+}
 
 const props = defineProps<{
   events: RunTranscriptEvent[]
@@ -18,19 +26,26 @@ const props = defineProps<{
   /** Assistant tokens streamed over the WebSocket for the in-flight turn —
    *  rendered as a live bubble below the settled events. */
   streamingText?: string
+  /** Narrated mode: tool calls render as plain-language narration lines that
+   *  expand to the raw card on click (unified dev flow Phase 2). */
+  narrated?: boolean
+  /** Fill the parent container instead of the fixed 560px cap — the thread
+   *  view owns its own scroll container. */
+  fluid?: boolean
 }>()
 
 type Item =
   | { kind: 'user'; text: string; ts: string }
   | { kind: 'assistant'; text: string; ts: string }
-  | { kind: 'tool'; name: string; input: string; output: string; isError: boolean; done: boolean; ts: string }
+  | { kind: 'tool'; name: string; input: string; output: string; isError: boolean; done: boolean; ts: string; narration: string; seq: number }
   | { kind: 'system'; text: string; ts: string }
   | { kind: 'turn_end'; status: string; usage: Record<string, unknown>; ts: string }
   | { kind: 'error'; detail: string; ts: string }
 
 /** Fold the event stream into renderable items: consecutive assistant_text
  *  chunks merge into one bubble; a tool_result attaches to its pending
- *  tool_use card (matched by name, most recent first). */
+ *  tool_use card (matched by name, most recent first); a narration line
+ *  attaches to the tool_use it covers (matched by covers_seq). */
 const items = computed<Item[]>(() => {
   const out: Item[] = []
   for (const e of props.events) {
@@ -42,7 +57,12 @@ const items = computed<Item[]>(() => {
     } else if (e.type === 'user_message') {
       out.push({ kind: 'user', text: e.text || '', ts })
     } else if (e.type === 'tool_use') {
-      out.push({ kind: 'tool', name: e.name || '?', input: e.input || '', output: '', isError: false, done: false, ts })
+      out.push({ kind: 'tool', name: e.name || '?', input: e.input || '', output: '', isError: false, done: false, ts, narration: '', seq: e.seq })
+    } else if (e.type === 'narration') {
+      const covered = [...out].reverse().find(
+        (i): i is Extract<Item, { kind: 'tool' }> => i.kind === 'tool' && i.seq === (e.covers_seq ?? -1),
+      )
+      if (covered) covered.narration = e.text || ''
     } else if (e.type === 'tool_result') {
       const pending = [...out].reverse().find(
         (i): i is Extract<Item, { kind: 'tool' }> => i.kind === 'tool' && !i.done && i.name === (e.name || '?'),
@@ -52,7 +72,7 @@ const items = computed<Item[]>(() => {
         pending.isError = Boolean(e.is_error)
         pending.done = true
       } else {
-        out.push({ kind: 'tool', name: e.name || '?', input: '', output: e.output || '', isError: Boolean(e.is_error), done: true, ts })
+        out.push({ kind: 'tool', name: e.name || '?', input: '', output: e.output || '', isError: Boolean(e.is_error), done: true, ts, narration: '', seq: e.seq })
       }
     } else if (e.type === 'system') {
       out.push({ kind: 'system', text: e.text || '', ts })
@@ -84,6 +104,20 @@ function fmtTs(ts: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+// Narrated mode: which narration lines are expanded into their raw card.
+const expandedTools = ref(new Set<number>())
+
+function toggleTool(idx: number) {
+  const next = new Set(expandedTools.value)
+  if (next.has(idx)) next.delete(idx)
+  else next.add(idx)
+  expandedTools.value = next
+}
+
+function narrationLabel(item: Extract<Item, { kind: 'tool' }>): string {
+  return item.narration || `Using the ${item.name} tool`
+}
+
 function turnEndLabel(item: Extract<Item, { kind: 'turn_end' }>): string {
   const bits = [item.status || 'turn finished']
   const ms = item.usage?.duration_ms
@@ -97,6 +131,7 @@ function turnEndLabel(item: Extract<Item, { kind: 'turn_end' }>): string {
 const workingLabel = computed<string>(() => {
   const last = items.value[items.value.length - 1]
   if (last?.kind === 'tool' && !last.done) {
+    if (isSubagentTool(last.name)) return 'Subagent working'
     const m = /^mcp__(.+?)__(.+)$/.exec(last.name)
     return `Running ${m ? m[2] : last.name}`
   }
@@ -125,7 +160,7 @@ watch(
 </script>
 
 <template>
-  <div ref="scrollEl" class="transcript overflow-y-auto p-5 space-y-4" @scroll="onScroll">
+  <div ref="scrollEl" class="transcript overflow-y-auto p-5 space-y-4" :class="{ fluid }" @scroll="onScroll">
     <div v-if="items.length === 0 && !streamingText" class="h-full grid place-items-center py-10">
       <div class="text-center text-sm text-muted-foreground max-w-sm">
         <Bot class="h-8 w-8 mx-auto mb-2" />
@@ -162,6 +197,42 @@ watch(
           </div>
           <div class="mt-1 text-[10px] text-muted-foreground">{{ fmtTs(item.ts) }}</div>
         </div>
+      </div>
+
+      <!-- Subagent: prominent card with progress + drill-in, in BOTH modes -->
+      <SubagentCard
+        v-else-if="item.kind === 'tool' && isSubagentTool(item.name)"
+        :input="item.input"
+        :output="item.output"
+        :is-error="item.isError"
+        :done="item.done"
+      />
+
+      <!-- Tool call, narrated: plain-language line, click to expand the raw card -->
+      <div v-else-if="item.kind === 'tool' && narrated" class="narration-item">
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 text-left text-xs text-muted-foreground hover:text-foreground"
+          @click="toggleTool(idx)"
+        >
+          <span
+            class="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+            :class="item.isError ? 'bg-destructive' : item.done ? 'bg-primary/50' : 'bg-primary animate-pulse'"
+          />
+          <span class="min-w-0 flex-1 truncate">{{ narrationLabel(item) }}</span>
+          <span class="shrink-0 text-[10px]">{{ expandedTools.has(idx) ? 'hide' : 'detail' }}</span>
+        </button>
+        <ToolCallCard
+          v-if="expandedTools.has(idx)"
+          class="mt-1.5"
+          :name="item.name"
+          :input="item.input"
+          :output="item.output"
+          :is-error="item.isError"
+          :done="item.done"
+          :live="live"
+          :ts="item.ts"
+        />
       </div>
 
       <!-- Tool call: collapsible per-tool card -->
@@ -216,6 +287,11 @@ watch(
 .transcript {
   max-height: 560px;
   min-height: 320px;
+}
+
+.transcript.fluid {
+  height: 100%;
+  max-height: none;
 }
 
 .turn-divider {

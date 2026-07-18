@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 from domains.comments import mentions as mention_lib
 from domains.comments.models import Comment
 from domains.comments.schemas import (
@@ -51,6 +53,8 @@ async def comment_to_dto(c: Comment) -> CommentDTO:
         source_run_uid=c.source_run_uid or "",
         body=c.body,
         mentions=[MentionRef(**m) for m in (c.mentions or [])],
+        parent_comment_uid=c.parent_comment_uid or "",
+        meta=dict(c.meta or {}),
         created_at=c.created_at,
     )
 
@@ -74,8 +78,24 @@ async def create_comment(
     author_uid: str,
     author_kind: CommentAuthorKind = CommentAuthorKind.USER,
     source_run_uid: str = "",
+    parent_comment_uid: str = "",
+    meta: dict | None = None,
 ) -> Comment:
-    """Persist a comment with its parsed mention refs, and audit it."""
+    """Persist a comment with its parsed mention refs, and audit it.
+
+    Replies: `parent_comment_uid` must reference a comment on the SAME
+    subject; replies-to-replies flatten onto the root parent (one level).
+    """
+    parent_uid = (parent_comment_uid or "").strip()
+    if parent_uid:
+        parent = await Comment.nodes.get_or_none(uid=parent_uid)
+        if (
+            parent is None
+            or parent.subject_type != subject_type.value
+            or parent.subject_uid != subject_uid
+        ):
+            raise HTTPException(status_code=404, detail="parent comment not found")
+        parent_uid = parent.parent_comment_uid or parent.uid
     c = Comment(
         uid=uuid4().hex,
         subject_type=subject_type.value,
@@ -85,6 +105,8 @@ async def create_comment(
         source_run_uid=source_run_uid,
         body=body,
         mentions=mention_lib.parse_item_mentions(body),
+        parent_comment_uid=parent_uid,
+        meta=dict(meta or {}),
         created_at=datetime.now(UTC),
     )
     await c.save()

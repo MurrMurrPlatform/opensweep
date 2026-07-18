@@ -113,6 +113,18 @@ def build_implement_intent(
         "  pytest configured → run pytest; a `package.json` with test scripts → run them.\n"
         "  Make them pass for your change; report failures honestly.\n"
         "\n"
+        "## How to test this change (definition of done)\n"
+        "- Attach a TEST NOTE via `attach_artifact` (target_type `ticket`, target_uid\n"
+        f"  `{ticket.uid}`, artifact_type `test_note`): the concrete manual verification\n"
+        "  steps a human should follow on this branch — what to start, what to click or\n"
+        "  call, and the expected behavior. Write it for someone who did not read the diff.\n"
+        "- If the change only shows with data, commit seed data/fixtures on this branch\n"
+        "  (extend the repo's existing seed script or test fixtures) and reference them\n"
+        "  in the test note.\n"
+        "- If you add or change migrations or environment setup, say so in the test note\n"
+        "  (including how to reset), and update the repository's setup/testing\n"
+        "  documentation page if one exists.\n"
+        "\n"
         + DOC_UPKEEP_INTENT_SECTION
         + "\n"
         "## Finish (mandatory)\n"
@@ -355,10 +367,14 @@ async def _docs_for_ticket(ticket: Ticket) -> list[str]:
         return []
 
 
-async def finalize_implement_run(run: Run) -> None:
+async def finalize_implement_run(run: Run, *, quiet_when_unchanged: bool = False) -> None:
     """Per-turn playbook hook (V3 §3): validate → push → draft PR, or block +
     retain. Derived entirely from the run so it re-fires on follow-up turns
-    (the draft-PR step is idempotent — an existing PR is adopted)."""
+    (the draft-PR step is idempotent — an existing PR is adopted).
+
+    Thread runs (unified dev flow rev2) reuse this per turn once their thread
+    leaves the refining phase — with quiet_when_unchanged so conversational
+    turns don't audit as blocked."""
     ticket_uid = run.linked_ticket_uid or str((run.target or {}).get("ticket_uid") or "")
     if not ticket_uid:
         return
@@ -393,6 +409,12 @@ async def finalize_implement_run(run: Run) -> None:
             run.linked_pr_uid = pr_uid
             await run.save()
 
+        # Thread follow-through: a draft PR moves the run's thread (if any)
+        # to in_review. Never raises.
+        from domains.threads.services.hooks import note_pr_opened_for_run
+
+        await note_pr_opened_for_run(run)
+
     await finalize_write_run(
         run,
         audit_prefix="implement_run",
@@ -402,6 +424,7 @@ async def finalize_implement_run(run: Run) -> None:
         base_ref=base_branch,
         work_branch=work_branch,
         on_pushed=_after_push,
+        quiet_when_unchanged=quiet_when_unchanged,
     )
 
 

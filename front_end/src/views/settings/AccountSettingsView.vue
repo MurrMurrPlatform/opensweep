@@ -13,6 +13,7 @@ import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
 import type { MyInvitationDTO } from '@/types/api'
 import { Mail } from 'lucide-vue-next'
+import ConnectLocalAgentCard from '@/components/opensweep/ConnectLocalAgentCard.vue'
 
 const currentUser = useCurrentUserStore()
 const repos = useRepositoryStore()
@@ -140,5 +141,7 @@ async function accept(inv: MyInvitationDTO) {
         </p>
       </CardContent>
     </Card>
+
+    <ConnectLocalAgentCard />
   </div>
 </template>

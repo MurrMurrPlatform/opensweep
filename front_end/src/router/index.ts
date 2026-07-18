@@ -46,8 +46,11 @@ const router = createRouter({
               meta: { title: 'Feature ideas', eyebrow: 'Inbox', section: 'main', repoScoped: true } },
             { path: 'news', name: 'news', component: () => import('@/views/NewsView.vue'),
               meta: { title: 'News', eyebrow: 'Inbox', section: 'main', repoScoped: true } },
-            { path: 'tickets', name: 'tickets', component: () => import('@/views/TicketsView.vue'),
-              meta: { title: 'Tickets', eyebrow: 'Deliver', section: 'main', repoScoped: true } },
+            // "Work items" absorbs the old Tickets index: the board plus
+            // externally-opened PRs that have no ticket yet. Old /tickets
+            // links keep working via the alias.
+            { path: 'workitems', alias: 'tickets', name: 'tickets', component: () => import('@/views/TicketsView.vue'),
+              meta: { title: 'Work items', eyebrow: 'Deliver', section: 'main', repoScoped: true } },
             { path: 'queue', name: 'queue', component: () => import('@/views/QueueView.vue'),
               meta: { title: 'Queue', eyebrow: 'Deliver', section: 'main', repoScoped: true } },
             { path: 'docs', name: 'documentation', component: () => import('@/views/DocumentationView.vue'),
@@ -65,10 +68,18 @@ const router = createRouter({
         },
 
         // Detail pages stay flat — detail context is the item itself, not the workspace.
-        { path: 'pull-requests/:uid', name: 'pull-request-detail', component: () => import('@/views/PullRequestDetailView.vue'),
+        // Ticket, thread and PR are the SAME piece of work: all three routes
+        // render the unified WorkItemView (tabbed); the route picks the tab.
+        { path: 'pull-requests/:uid', name: 'pull-request-detail', component: () => import('@/views/WorkItemView.vue'),
           meta: { title: 'Pull request', eyebrow: 'Deliver', section: 'main' } },
-        { path: 'tickets/:uid', name: 'ticket-detail', component: () => import('@/views/TicketDetailView.vue'),
+        { path: 'tickets/:uid', name: 'ticket-detail', component: () => import('@/views/WorkItemView.vue'),
           meta: { title: 'Ticket', eyebrow: 'Deliver', section: 'main' } },
+        { path: 'threads/:uid', name: 'thread-detail', component: () => import('@/views/WorkItemView.vue'),
+          meta: { title: 'Thread', eyebrow: 'Deliver', section: 'main' } },
+        // OAuth consent for `opensweep connect` — the backend gateway
+        // redirects MCP clients' browsers here (login enforced by the guard).
+        { path: 'connect/authorize', name: 'connect-authorize', component: () => import('@/views/ConnectAuthorizeView.vue'),
+          meta: { title: 'Connect agent', eyebrow: 'Connect', section: 'main' } },
         { path: 'findings/:uid', name: 'finding-detail', component: () => import('@/views/FindingDetailView.vue'),
           meta: { title: 'Finding', eyebrow: 'Inbox', section: 'main' } },
         { path: 'analyses/:uid', name: 'analysis-detail', component: () => import('@/views/AnalysisDetailView.vue'),

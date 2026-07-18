@@ -4,6 +4,7 @@ import { AtSign, Bot, Check } from 'lucide-vue-next'
 import { useCommentStore } from '@/stores/commentStore'
 import { MENTION_TYPES, mentionToken } from '@/lib/mentions'
 import { Button } from '@/components/ui/button'
+import CommentBody from '@/components/comments/CommentBody.vue'
 import type { MentionSearchResult, MentionTargetType } from '@/types/api'
 
 /**
@@ -27,6 +28,16 @@ const emit = defineEmits<{ 'update:modelValue': [value: string]; submit: [] }>()
 const comments = useCommentStore()
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const searchRef = ref<HTMLInputElement | null>(null)
+
+// GitHub-style Write / Preview toggle: bodies are markdown, so the composer
+// offers a rendered preview without giving up the @-mention machinery.
+const previewing = ref(false)
+watch(
+  () => props.modelValue,
+  (v) => {
+    if (!v.trim()) previewing.value = false // e.g. cleared after submit
+  },
+)
 
 type Phase = 'closed' | 'types' | 'search'
 const phase = ref<Phase>('closed')
@@ -211,9 +222,37 @@ function onSearchKeydown(event: KeyboardEvent) {
 
 <template>
   <div class="relative">
+    <div class="mb-1 flex items-center gap-1">
+      <button
+        type="button"
+        class="rounded px-2 py-0.5 text-xs font-medium transition-colors"
+        :class="!previewing ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'"
+        @click="previewing = false"
+      >
+        Write
+      </button>
+      <button
+        type="button"
+        class="rounded px-2 py-0.5 text-xs font-medium transition-colors"
+        :class="previewing ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'"
+        :disabled="!modelValue.trim()"
+        @click="previewing = true"
+      >
+        Preview
+      </button>
+      <span class="ml-auto text-[11px] text-muted-foreground">Markdown supported</span>
+    </div>
+
+    <div
+      v-if="previewing"
+      class="min-h-[4.5rem] rounded-md border border-input bg-background px-3 py-2"
+    >
+      <CommentBody :body="modelValue" />
+    </div>
     <textarea
+      v-else
       ref="textareaRef"
-      class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
       :rows="rows"
       :placeholder="placeholder"
       :value="modelValue"

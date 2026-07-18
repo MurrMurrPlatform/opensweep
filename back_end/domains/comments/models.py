@@ -35,6 +35,14 @@ class Comment(AsyncStructuredNode):
     # Denormalized data-item refs parsed from `@[Label](type:uid)` tokens.
     mentions = JSONProperty(default=[])  # [{type, uid, label}]
 
+    # Reply threading (one level): uid of the top-level comment this replies
+    # to. "" = top-level. Replies-to-replies flatten onto the root parent.
+    parent_comment_uid = StringProperty(default="", index=True)
+    # Machine metadata for platform-authored comments — e.g. thread-question
+    # mirrors: {kind: "thread_question", thread_uid, question_uid, options,
+    # status: open|answered}. Drives quick-reply chips in the UI.
+    meta = JSONProperty(default={})
+
     created_at = DateTimeProperty(default_now=True)
 
 
