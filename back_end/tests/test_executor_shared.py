@@ -224,7 +224,7 @@ def test_extract_envelope_requires_tool_calls_key():
 def _req(**overrides):
     kwargs = dict(
         run_uid="r",
-        investigation_uid="i",
+        scheduled_agent_uid="i",
         repository_uid="repo",
         repository_local_path=None,
         intent="x",

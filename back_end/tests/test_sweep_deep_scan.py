@@ -11,7 +11,7 @@ base resolves to the in-code fallback, the org overlay to none.
 
 import inspect
 
-from domains.runs.services.playbooks import playbook_for_job_type
+from domains.agents.services.registry import PRODUCES_TO_PLAYBOOK
 from domains.runs.services.sweep import (
     DeepScanResult,
     _deep_scan_intent,
@@ -24,7 +24,7 @@ def test_run_deep_scan_signature():
     assert {
         "repository_uid",
         "triggered_by",
-        "agent_prompt_uid",
+        "agent_uid",
         "custom_intent",
         "max_findings",
         "run_policy_uid",
@@ -37,15 +37,15 @@ def test_deep_scan_result_defaults():
     assert result.errors == []
 
 
-def test_deep_scan_job_type_maps_to_ask_playbook():
+def test_deep_scan_produces_analysis_under_the_ask_playbook():
     # "ask" is the playbook that gets analyzer candidates (§E) and a Checked
     # stamp — both wanted for a deep scan. The "deep-scan" key exists only in
-    # AGENT_PLAYBOOKS (instruction base + org overlay), not as a run playbook.
-    assert playbook_for_job_type("deep-scan") == "ask"
+    # AGENT_KEYS (instruction base + org override), not as a run playbook.
+    assert PRODUCES_TO_PLAYBOOK["analysis"] == "ask"
 
 
 async def test_intent_carries_the_phases():
-    intent = await _deep_scan_intent()
+    intent = (await _deep_scan_intent()).text
     assert "Survey & plan" in intent
     assert "Sweep area by area" in intent
     assert "Baseline" in intent
@@ -56,7 +56,7 @@ async def test_intent_carries_the_phases():
 async def test_intent_directs_analysis_authoring_tools():
     # The deep-scan prompt must tell the agent to build the Analysis via the
     # authoring tools — that's what makes the run produce a first-class report.
-    intent = await _deep_scan_intent()
+    intent = (await _deep_scan_intent()).text
     for tool in ("upsert_analysis", "set_analysis_section", "add_analysis_note", "ask_question"):
         assert tool in intent, f"deep-scan prompt should mention {tool}"
     # Staged implementation plan + top changes sections are called out.
@@ -64,10 +64,10 @@ async def test_intent_directs_analysis_authoring_tools():
 
 
 async def test_focus_and_budget_augment_rather_than_replace_instructions():
-    intent = await _deep_scan_intent(
+    intent = (await _deep_scan_intent(
         focus="weight toward security and the multi-tenancy boundaries",
         budget_line="File at most 25 findings across the whole scan.",
-    )
+    )).text
     # Regression guard: the instructions must survive alongside the
     # focus/budget — they ride in the structural slot, never custom_intent.
     assert "Sweep area by area" in intent
@@ -79,10 +79,10 @@ async def test_explicit_prompt_override_keeps_the_structural_contract():
     # An explicit prompt body replaces the instructions layer (power-user
     # override), but scope + focus + the Analysis authoring contract still
     # ride along in the structural slot.
-    intent = await _deep_scan_intent(
+    intent = (await _deep_scan_intent(
         prompt_body="Only look at the payment code.",
         focus="ignore tests",
-    )
+    )).text
     assert "Only look at the payment code." in intent
     assert "whole repository" in intent.lower()
     assert "ignore tests" in intent

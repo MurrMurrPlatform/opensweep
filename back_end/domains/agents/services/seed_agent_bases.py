@@ -1,8 +1,8 @@
-"""Seeded per-playbook platform base prompts — the *task instructions* layer.
+"""Seeded per-key system base Agents — the *task instructions* layer.
 
-One enabled AgentPrompt per playbook, identified by source="platform" +
-source_url="opensweep://agent/<playbook>". These bodies are the editable task
-instructions of each agent — the layer an org overlay appends to (or, in
+One enabled system Agent per key, identified by provenance="system" +
+source_url="opensweep://agent/<key>". These bodies are the editable task
+instructions of each agent — the layer an org override appends to (or, in
 replace mode, substitutes). They were extracted from the per-playbook
 default-intent code constants; everything structural (checkout steps, ledger
 calls, verdict rules, write-gate rules, framing header, look-before-write

@@ -20,7 +20,7 @@ from domains.executors.base import DispatchRequest
 def _req(repository_uid="repo-own", run_uid="run-1"):
     return DispatchRequest(
         run_uid=run_uid,
-        investigation_uid="inv-1",
+        scheduled_agent_uid="inv-1",
         repository_uid=repository_uid,
         repository_local_path=None,
         intent="x",
