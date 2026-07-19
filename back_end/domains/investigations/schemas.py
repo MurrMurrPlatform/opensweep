@@ -151,6 +151,8 @@ class InvestigationDTO(BaseModel):
     @field_validator("effort", mode="before")
     @classmethod
     def _normalize_effort(cls, v):
+        if v is None:
+            return v
         return normalize_effort(v if isinstance(v, str) else (v.value if v else ""))
 
 
@@ -171,6 +173,8 @@ class CreateInvestigationRequest(BaseModel):
     @field_validator("effort", mode="before")
     @classmethod
     def _normalize_effort(cls, v):
+        if v is None:
+            return v
         return normalize_effort(v if isinstance(v, str) else (v.value if v else ""))
 
 
@@ -189,6 +193,8 @@ class UpdateInvestigationRequest(BaseModel):
     @field_validator("effort", mode="before")
     @classmethod
     def _normalize_effort(cls, v):
+        if v is None:
+            return v
         return normalize_effort(v if isinstance(v, str) else (v.value if v else ""))
 
 

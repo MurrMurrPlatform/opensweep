@@ -40,13 +40,15 @@ from infrastructure.audit import write_audit
 # because normalize_effort maps the legacy "quick" workflow depth to SHORT.
 REVIEW_DEPTH_VARIANTS = {"short": "review-quick-gate", "deep": "review-adversarial"}
 
-_DEPTHS = ("quick", "normal", "deep")
+_DEPTHS = ("short", "normal", "deep")
+
 
 def depth_block(depth: str, max_findings: int | None = None) -> str:
     """The intent's budget/stance paragraph. `max_findings` is the numeric
-    knob: it overrides quick's default cap of 5 and puts a cap on
+    knob: it overrides short's default cap of 5 and puts a cap on
     normal/deep, which are otherwise uncapped."""
-    if depth == "quick":
+    depth = normalize_effort(depth).value
+    if depth == "short":
         cap = max_findings or 5
         return (
             f"Depth: QUICK — precision over recall. File at most {cap} findings, only issues\n"
@@ -98,7 +100,7 @@ def build_review_intent(
     return (
         f"Review pull request #{pr.github_number} (\"{pr.title}\") and finish with a verdict.\n"
         "\n"
-        f"## Depth\n{depth_block(depth if depth in _DEPTHS else 'normal', max_findings)}\n"
+        f"## Depth\n{depth_block(depth, max_findings)}\n"
         "\n"
         "## Setup\n"
         f"1. `git checkout {pr.head_ref}` (branch may already be checked out).\n"

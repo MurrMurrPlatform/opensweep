@@ -3,7 +3,11 @@ wall sentinel 0 = explicitly unlimited."""
 
 from domains.executors.base import DispatchRequest
 from domains.executors._shared import resolve_wall_ceiling
-from domains.investigations.schemas import InvestigationEffort, normalize_effort
+from domains.investigations.schemas import (
+    InvestigationEffort,
+    UpdateInvestigationRequest,
+    normalize_effort,
+)
 from domains.run_policies.services.effort import _EFFORT_POLICIES
 from domains.run_policies.services.system_default import _DEFAULTS
 
@@ -15,6 +19,18 @@ def test_normalize_effort_accepts_legacy_quick():
     assert normalize_effort("unlimited") is InvestigationEffort.UNLIMITED
     assert normalize_effort("") is InvestigationEffort.NORMAL
     assert normalize_effort("garbage") is InvestigationEffort.NORMAL
+
+
+def test_update_request_preserves_none_effort():
+    """PATCH omitting effort must leave it as None — not coerce to NORMAL."""
+    req = UpdateInvestigationRequest()
+    assert req.effort is None
+
+
+def test_update_request_normalizes_quick_to_short():
+    """Legacy 'quick' in a PATCH body must normalize to SHORT, not fall through."""
+    req = UpdateInvestigationRequest(effort="quick")
+    assert req.effort is InvestigationEffort.SHORT
 
 
 def test_four_effort_tiers_have_policies():
