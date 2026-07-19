@@ -26,6 +26,7 @@ from domains.investigations.schemas import (
     CreateRunRequest,
     Playbook,
     RunDTO,
+    RunHandoffDTO,
     RunMessageResult,
     RunStatus,
     SendRunMessageRequest,
@@ -539,6 +540,46 @@ async def end_run(uid: str, user: UserDTO = Depends(require_role("maintainer")))
     await require_repo_in_org(existing.repository_uid, user.org_uid)
     run = await service.end_run(uid, actor_uid=user.uid)
     return run_to_dto(run)
+
+
+@router.post("/{uid}/handoff", response_model=RunHandoffDTO, operation_id="opensweep_run_handoff")
+async def handoff_run(uid: str, user: UserDTO = Depends(require_role("maintainer"))):
+    """Hand the conversation to the user's local terminal: write the
+    OPENSWEEP_HANDOFF.md brief into the live workspace and return the
+    one-paste command (resume the CLI session when possible, seed a fresh
+    one otherwise). The run stays awaiting_input — takeover is recorded on
+    the timeline, not enforced as a lock; local commits land in the same
+    working copy the next platform turn reads."""
+    from domains.investigations.services.handoff import prepare_handoff
+    from infrastructure.audit import write_audit
+
+    service = TurnService()
+    run = await service.get_run(uid)
+    await require_repo_in_org(run.repository_uid, user.org_uid)
+    dto = await prepare_handoff(run)
+    if dto.mode != "unavailable":
+        append_event(
+            uid,
+            "system",
+            kind="terminal_takeover",
+            text="conversation handed to a local terminal",
+        )
+        if getattr(run, "thread_uid", "") or "":
+            try:
+                from domains.threads.services.thread_service import ThreadService
+
+                svc = ThreadService()
+                thread = await svc.get_node(run.thread_uid)
+                await svc.record_event(thread, "terminal_takeover", run_uid=uid, by=user.uid)
+            except Exception as exc:  # noqa: BLE001 — timeline is best-effort
+                logger.warning(
+                    f"thread terminal_takeover event failed for run {uid}: {exc}",
+                    extra={"tag": "runs"},
+                )
+        await write_audit(
+            kind="run.handoff", subject_uid=uid, subject_type="Run", actor_uid=user.uid
+        )
+    return dto
 
 
 @router.post(
