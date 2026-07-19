@@ -445,6 +445,13 @@ async def _envelope_target_repository_uid(name: str, args: dict[str, Any]) -> st
     return (node.repository_uid or "") if node else ""
 
 
+async def _completed_via_mcp(run_uid: str) -> bool:
+    """True when the agent already finished deliberately — complete_run stamps
+    completed_at on the Run through the MCP bridge."""
+    run = await Run.nodes.get_or_none(uid=run_uid)
+    return bool(run is not None and run.completed_at)
+
+
 async def execute_envelope_tool_calls(
     *,
     calls: Any,

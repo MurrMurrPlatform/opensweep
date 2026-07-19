@@ -26,6 +26,7 @@ from typing import Any
 from config import settings
 from domains.executors._shared import (
     StreamRecorder,
+    _completed_via_mcp,
     budget_briefing,
     ceiling_warnings,
     execute_envelope_tool_calls,
@@ -592,15 +593,6 @@ def build_continuation_argv(
     if not replaced:
         return None
     return [*out, "--resume", session_id]
-
-
-async def _completed_via_mcp(run_uid: str) -> bool:
-    """True when the agent already finished deliberately — complete_run stamps
-    completed_at on the Run through the MCP bridge."""
-    from domains.investigations.models import Run
-
-    run = await Run.nodes.get_or_none(uid=run_uid)
-    return bool(run is not None and run.completed_at)
 
 
 async def _persist_session_id(run_uid: str, session_id: str) -> None:
