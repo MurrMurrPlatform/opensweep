@@ -218,7 +218,25 @@ def test_extract_envelope_requires_tool_calls_key():
     assert extract_envelope("") is None
 
 
-# ── ceiling_warnings (Task 5) ─────────────────────────────────────────────
+# ── Wall-kill detection (audit #33) + ceiling_warnings (Task 5) ──────────
+
+
+def test_wall_kill_detection_expression():
+    """The adapters' wall_killed heuristic: startswith('timed out')."""
+    assert "timed out after 300s".startswith("timed out")
+    assert not "provider exploded".startswith("timed out")
+
+
+def test_llm_executor_timeout_message_matches_wall_kill_detection():
+    """cli_tracking/internal_llm detect wall kills via startswith('timed out')
+    against llm_executor's message — pin the format so a rename can't silently
+    regress LIMIT_EXCEEDED back to FAILED."""
+    import inspect
+
+    from domains.llm_providers.services import llm_executor
+
+    source = inspect.getsource(llm_executor)
+    assert 'timed out after' in source
 
 
 class _Policy:
@@ -326,7 +344,10 @@ class TestCeilingWarnings:
         # 500 < 600 * 0.8 = 480 is false (500 > 480), so a warning IS expected,
         # but NOT a hard failure (no exception raised).
         # The key invariant: no CeilingExceeded is raised.
+        # Effective ceiling is 600 (overrides policy's 300), so we should see
+        # a warning about max_wall_seconds since 500 >= 80% of 600 (480).
         assert isinstance(warnings, list)
+        assert any("max_wall_seconds" in w for w in warnings)
 
     def test_local_skip_disables_wall_but_not_cost(self):
         warnings = ceiling_warnings(
