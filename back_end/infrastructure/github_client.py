@@ -146,6 +146,30 @@ class GitHubClient:
             json={"head": head, "base": base, "title": title, "body": body, "draft": draft},
         )
 
+    async def mark_pull_request_ready(self, owner: str, repo: str, number: int) -> None:
+        """Flip a draft PR to ready-for-review. Draft state is GraphQL-only
+        on GitHub (REST cannot un-draft), so: REST fetch for the node_id,
+        then the markPullRequestReadyForReview mutation. No-op when the PR
+        is already ready."""
+        pr = await self.get_pull_request(owner, repo, number)
+        if not pr.get("draft"):
+            return
+        node_id = str(pr.get("node_id") or "")
+        if not node_id:
+            raise RuntimeError(f"PR {owner}/{repo}#{number} payload has no node_id")
+        mutation = (
+            "mutation($id: ID!) {"
+            " markPullRequestReadyForReview(input: {pullRequestId: $id})"
+            " { pullRequest { isDraft } } }"
+        )
+        data = await self._post("/graphql", json={"query": mutation, "variables": {"id": node_id}})
+        errors = data.get("errors") or []
+        if errors:
+            raise RuntimeError(
+                f"markPullRequestReadyForReview failed for {owner}/{repo}#{number}: "
+                f"{errors[0].get('message', 'unknown GraphQL error')}"
+            )
+
     async def create_commit_status(
         self,
         owner: str,

@@ -63,6 +63,10 @@ class GitProviderClient(Protocol):
         draft: bool = False,
     ) -> dict[str, Any]: ...
 
+    async def mark_pull_request_ready(self, owner: str, repo: str, number: int) -> None:
+        """Flip a draft PR to ready-for-review; no-op when already ready."""
+        ...
+
     async def create_commit_status(
         self,
         owner: str,
