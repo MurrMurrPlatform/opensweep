@@ -160,6 +160,10 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             model=provider.model or "",
             template=template,
         )
+        argv = with_turn_cap(
+            argv,
+            int(req.policy.max_tool_turns) if (req.policy and req.policy.max_tool_turns) else None,
+        )
         env = claude_env(run_uid=req.run_uid, oauth_token=provider_secret(provider))
         await record_input(
             req.run_uid,
@@ -431,6 +435,14 @@ def ensure_stream_json_flags(argv: list[str]) -> list[str]:
         if "--include-partial-messages" not in argv:
             argv.append("--include-partial-messages")
     return argv
+
+
+def with_turn_cap(argv: list[str], max_turns: int | None) -> list[str]:
+    """Delegate the policy's turn ceiling to the CLI (`--max-turns` stops the
+    loop cleanly between turns). An operator-set flag in the template wins."""
+    if not max_turns or max_turns <= 0 or "--max-turns" in argv:
+        return list(argv)
+    return [*argv, "--max-turns", str(int(max_turns))]
 
 
 # Shared between the read and write prompts: MCP servers can still be
