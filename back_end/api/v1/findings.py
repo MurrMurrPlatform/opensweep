@@ -19,14 +19,14 @@ from domains.findings.services.finding_service import (
     FindingService,
     finding_to_dto,
 )
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
-    InvestigationEffort,
+from domains.runs.models import Run
+from domains.runs.schemas import (
+    Effort,
     RunDTO,
     RunTrigger,
 )
-from domains.investigations.services.turn_service import run_to_dto
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.turn_service import run_to_dto
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
 from domains.run_policies.services.effort import ensure_policy_for_effort
 from domains.tenancy import org_repo_uids, require_repo_in_org
 from domains.users.schemas import UserDTO
@@ -122,7 +122,7 @@ async def trigger_ratchet(
         trigger_implement_run,
     )
     from domains.findings.models import Finding
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
     from domains.tickets.models import Ticket
 
     await require_repo_in_org(req.repository_uid, user.org_uid)
@@ -189,7 +189,7 @@ async def trigger_ratchet(
     return {
         "ticket_uid": ticket.uid,
         "run_uid": run.uid,
-        "investigation_uid": run.investigation_uid,
+        "scheduled_agent_uid": run.scheduled_agent_uid,
         "finding_count": len(findings),
     }
 
@@ -378,7 +378,7 @@ def _build_finding_refine_intent(f, false_positive_policy: str) -> str:
     operation_id="opensweep_refine_finding",
 )
 async def refine_finding(uid: str, user: UserDTO = Depends(require_role("maintainer"))):
-    from domains.agent_overlays.services.composition import compose_playbook_intent
+    from domains.agents.services.composition import compose_agent_intent
     from domains.organizations.services.settings import get_settings_for_repo
     from domains.repositories.services.workflow import stage_prompt_body
 
@@ -386,16 +386,16 @@ async def refine_finding(uid: str, user: UserDTO = Depends(require_role("maintai
     await require_repo_in_org(f.repository_uid, user.org_uid)
     settings = await get_settings_for_repo(f.repository_uid)
     guidance = await stage_prompt_body(f.repository_uid, "refine")
-    composed = await compose_playbook_intent(
+    composed = await compose_agent_intent(
         repository_uid=f.repository_uid,
-        playbook="refine",
+        agent_key="refine",
         stage="refine",
         repo_guidance=guidance or "",
         structural=_build_finding_refine_intent(f, settings.refine_false_positive_policy),
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="finding.refine.requested",
@@ -433,22 +433,22 @@ async def refine_finding(uid: str, user: UserDTO = Depends(require_role("maintai
     operation_id="opensweep_verify_finding",
 )
 async def verify_finding(uid: str, user: UserDTO = Depends(require_role("maintainer"))):
-    from domains.agent_overlays.services.composition import compose_playbook_intent
+    from domains.agents.services.composition import compose_agent_intent
     from domains.repositories.services.workflow import stage_prompt_body
 
     f = await FindingService().get_node(uid)
     await require_repo_in_org(f.repository_uid, user.org_uid)
     guidance = await stage_prompt_body(f.repository_uid, "verify")
-    composed = await compose_playbook_intent(
+    composed = await compose_agent_intent(
         repository_uid=f.repository_uid,
-        playbook="verify",
+        agent_key="verify",
         stage="verify",
         repo_guidance=guidance or "",
         structural=_build_verification_intent(f),
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="finding.verify.requested",

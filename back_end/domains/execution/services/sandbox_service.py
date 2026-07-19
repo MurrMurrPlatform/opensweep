@@ -318,9 +318,9 @@ class SandboxService:
 
     async def _notify_runs_workspace_expired(self, sandbox_uid: str, *, now: datetime) -> None:
         # Local import: investigations already imports the execution domain.
-        from domains.investigations.models import Run
-        from domains.investigations.schemas import RunStatus
-        from domains.investigations.services.run_events import append_event
+        from domains.runs.models import Run
+        from domains.runs.schemas import RunStatus
+        from domains.runs.services.run_events import append_event
 
         for run in await Run.nodes.filter(sandbox_uid=sandbox_uid):
             run.sandbox_uid = ""

@@ -1,7 +1,7 @@
 """Thread lifecycle hooks — called from delivery finalizers and webhooks.
 
 Hook failures never corrupt the host flow (logged, not raised), mirroring
-domains/investigations/services/playbooks.py.
+domains/runs/services/playbooks.py.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ async def maybe_ready_and_review_for_thread(thread_uid: str) -> None:
             latest_verdict_for,
         )
         from domains.delivery.services.review_run_service import trigger_review_run
-        from domains.investigations.schemas import RunTrigger
+        from domains.runs.schemas import RunTrigger
         from domains.repositories.models import Repository
         from domains.repositories.services.workflow import stage_auto
         from domains.threads.models import Thread

@@ -28,8 +28,8 @@ from domains.executors._shared import (
 )
 from domains.executors.base import AdapterRegistry, DispatchRequest, DispatchResult, ExecutorAdapter
 from domains.executors.quota import detect_quota_exhaustion
-from domains.investigations.schemas import Executor, RunStatus
-from domains.investigations.services.run_events import append_event
+from domains.runs.schemas import Executor, RunStatus
+from domains.runs.services.run_events import append_event
 from domains.llm_providers.services.llm_executor import (
     invoke as invoke_provider,
 )

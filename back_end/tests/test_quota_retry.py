@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from domains.investigations.services.quota_retry import (
+from domains.runs.services.quota_retry import (
     RetryAction,
     decide_retry,
     next_retry_at,

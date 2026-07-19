@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from domains.investigations.services.audit_selection import PageInfo, rank_targets
+from domains.runs.services.audit_selection import PageInfo, rank_targets
 
 NOW = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
 

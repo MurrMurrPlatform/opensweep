@@ -6,7 +6,7 @@ narration is executor-agnostic (input is the normalized event, not executor
 output).
 """
 
-from domains.investigations.services.narration import (
+from domains.runs.services.narration import (
     narrate_tool_use,
     narration_for_event,
 )
@@ -44,7 +44,7 @@ def test_narration_only_for_tool_use():
 
 
 def test_append_event_emits_narration_line(tmp_path, monkeypatch):
-    import domains.investigations.services.run_events as re_mod
+    import domains.runs.services.run_events as re_mod
 
     monkeypatch.setattr(re_mod.settings, "ARTIFACT_STORE_ROOT", str(tmp_path), raising=False)
     re_mod.append_event("run-x", "tool_use", turn=1, name="Read", input={"file_path": "a.py"})

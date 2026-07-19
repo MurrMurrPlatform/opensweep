@@ -1,6 +1,6 @@
 """Pure tests for the terminal-handoff helpers (no Neo4j, no filesystem)."""
 
-from domains.investigations.services.handoff import (
+from domains.runs.services.handoff import (
     HANDOFF_FILENAME,
     build_resume_command,
     build_seeded_command,
@@ -53,7 +53,7 @@ def test_resume_command_copies_session_into_host_slug_then_resumes():
 
 
 def test_shell_path_quotes_non_tilde_paths_verbatim():
-    from domains.investigations.services.handoff import _shell_path
+    from domains.runs.services.handoff import _shell_path
 
     assert _shell_path("/srv/sand boxes/x") == '"/srv/sand boxes/x"'
     assert _shell_path("~/.opensweep/sandboxes/x") == '"$HOME/.opensweep/sandboxes/x"'

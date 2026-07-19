@@ -8,15 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user, require_role
-from domains.agent_prompts.services.seed_variants import variant_prompt_body
+from domains.agents.services.seed_variants import variant_prompt_body
 from domains.findings.schemas import FindingDTO
-from domains.investigations.schemas import (
-    InvestigationEffort,
+from domains.runs.schemas import (
+    Effort,
     RunDTO,
     RunTrigger,
 )
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
-from domains.investigations.services.turn_service import run_to_dto
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.turn_service import run_to_dto
 from domains.news.schemas import (
     ConvertNewsRequest,
     CreateNewsItemRequest,
@@ -163,18 +163,18 @@ async def trigger_news_scan(
     await require_repo_in_org(req.repository_uid, user.org_uid)
     # Specialized ask run: the news-scout template IS the instructions
     # (custom_intent) — org append guidance and framing still stack.
-    from domains.agent_overlays.services.composition import compose_playbook_intent
+    from domains.agents.services.composition import compose_agent_intent
 
-    composed = await compose_playbook_intent(
+    composed = await compose_agent_intent(
         repository_uid=req.repository_uid,
-        playbook="ask",
+        agent_key="ask",
         stage="ask",
         repo_guidance="",
         custom_intent=await _build_news_scan_intent(req.repository_uid),
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="news.scan.requested",
@@ -212,18 +212,18 @@ async def trigger_news_doc_proposal(
     await require_repo_in_org(req.repository_uid, user.org_uid)
     # Specialized document run: the doc-proposal template IS the
     # instructions (custom_intent) — org append guidance still stacks.
-    from domains.agent_overlays.services.composition import compose_playbook_intent
+    from domains.agents.services.composition import compose_agent_intent
 
-    composed = await compose_playbook_intent(
+    composed = await compose_agent_intent(
         repository_uid=req.repository_uid,
-        playbook="document",
+        agent_key="document",
         stage="document",
         repo_guidance="",
         custom_intent=_DOC_PROPOSAL_INTENT,
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="news.doc_proposal.requested",

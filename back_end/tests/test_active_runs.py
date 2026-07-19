@@ -3,7 +3,7 @@ runs carry their entity links directly; no Investigation join)."""
 
 from types import SimpleNamespace
 
-from domains.investigations.services.active_runs import (
+from domains.runs.services.active_runs import (
     ACTIVE_RUN_STATUSES,
     WRITE_PLAYBOOKS,
     blocking_run,
@@ -20,7 +20,7 @@ def _run(
     linked_ticket_uid="",
     linked_finding_uid="",
     playbook="ask",
-    investigation_uid="",
+    scheduled_agent_uid="",
 ):
     return SimpleNamespace(
         uid=uid,
@@ -30,7 +30,7 @@ def _run(
         linked_ticket_uid=linked_ticket_uid,
         linked_finding_uid=linked_finding_uid,
         playbook=playbook,
-        investigation_uid=investigation_uid,
+        scheduled_agent_uid=scheduled_agent_uid,
     )
 
 
@@ -133,12 +133,12 @@ def test_read_runs_overlap_writes_and_each_other():
 
 
 def test_conflict_detail_shape_lets_the_ui_link_the_run():
-    run = _run(uid="r1", investigation_uid="i1")
+    run = _run(uid="r1", scheduled_agent_uid="i1")
     detail = conflict_detail("a review run is already in progress for this PR", run)
     assert detail == {
         "message": "a review run is already in progress for this PR",
         "run_uid": "r1",
-        "investigation_uid": "i1",
+        "scheduled_agent_uid": "i1",
     }
     assert all(isinstance(v, str) for v in detail.values())
 

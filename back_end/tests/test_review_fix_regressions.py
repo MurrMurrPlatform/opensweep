@@ -100,7 +100,7 @@ def test_refresh_reuse_revokes_the_whole_family(monkeypatch):
 
 
 def test_run_accepts_message_gates_on_status(monkeypatch):
-    import domains.investigations.models as run_models
+    import domains.runs.models as run_models
     from domains.threads.services import thread_run
 
     def _with_run(status):

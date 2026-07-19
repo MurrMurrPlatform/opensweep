@@ -3,45 +3,38 @@ wall sentinel 0 = explicitly unlimited."""
 
 from domains.executors.base import DispatchRequest
 from domains.executors._shared import resolve_wall_ceiling
-from domains.investigations.schemas import (
-    InvestigationEffort,
-    UpdateInvestigationRequest,
-    normalize_effort,
-)
+from domains.runs.schemas import Effort, normalize_effort
 from domains.run_policies.services.effort import _EFFORT_POLICIES
 from domains.run_policies.services.system_default import _DEFAULTS
 
 
 def test_normalize_effort_accepts_legacy_quick():
-    assert normalize_effort("quick") is InvestigationEffort.SHORT
-    assert normalize_effort("short") is InvestigationEffort.SHORT
-    assert normalize_effort("deep") is InvestigationEffort.DEEP
-    assert normalize_effort("unlimited") is InvestigationEffort.UNLIMITED
-    assert normalize_effort("") is InvestigationEffort.NORMAL
-    assert normalize_effort("garbage") is InvestigationEffort.NORMAL
+    assert normalize_effort("quick") is Effort.SHORT
+    assert normalize_effort("short") is Effort.SHORT
+    assert normalize_effort("deep") is Effort.DEEP
+    assert normalize_effort("unlimited") is Effort.UNLIMITED
+    assert normalize_effort("") is Effort.NORMAL
+    assert normalize_effort("garbage") is Effort.NORMAL
 
 
-def test_update_request_preserves_none_effort():
-    """PATCH omitting effort must leave it as None — not coerce to NORMAL."""
-    req = UpdateInvestigationRequest()
-    assert req.effort is None
-
-
-def test_update_request_normalizes_quick_to_short():
-    """Legacy 'quick' in a PATCH body must normalize to SHORT, not fall through."""
-    req = UpdateInvestigationRequest(effort="quick")
-    assert req.effort is InvestigationEffort.SHORT
+def test_legacy_seed_effort_values_normalize():
+    """Agents store default_effort as free strings (seeds use 'quick'/'light');
+    dispatch must normalize instead of raising via a raw Effort() call."""
+    assert normalize_effort("light") is Effort.SHORT
+    assert normalize_effort("small") is Effort.SHORT
+    assert normalize_effort("large") is Effort.DEEP
+    assert normalize_effort("quick") is Effort.SHORT
 
 
 def test_four_effort_tiers_have_policies():
     assert set(_EFFORT_POLICIES) == {
-        InvestigationEffort.SHORT,
-        InvestigationEffort.NORMAL,
-        InvestigationEffort.DEEP,
-        InvestigationEffort.UNLIMITED,
+        Effort.SHORT,
+        Effort.NORMAL,
+        Effort.DEEP,
+        Effort.UNLIMITED,
     }
-    assert _EFFORT_POLICIES[InvestigationEffort.UNLIMITED]["max_wall_seconds"] == 0
-    assert _EFFORT_POLICIES[InvestigationEffort.UNLIMITED]["max_tool_turns"] is None
+    assert _EFFORT_POLICIES[Effort.UNLIMITED]["max_wall_seconds"] == 0
+    assert _EFFORT_POLICIES[Effort.UNLIMITED]["max_tool_turns"] is None
 
 
 def test_system_default_is_unlimited():
@@ -57,7 +50,7 @@ class _P:
 
 def _req(policy):
     return DispatchRequest(
-        run_uid="r", investigation_uid="i", repository_uid="repo",
+        run_uid="r", scheduled_agent_uid="", repository_uid="repo",
         repository_local_path=None, intent="x", policy=policy,
     )
 
@@ -76,35 +69,35 @@ def test_wall_unset_falls_back_to_system_default():
 
 
 # Legacy "quick" must normalize at every API boundary that types the field as
-# InvestigationEffort — otherwise old clients / stored payloads 422 (the enum
+# Effort — otherwise old clients / stored payloads 422 (the enum
 # no longer has a "quick" member).
 
 
 def test_trigger_review_request_normalizes_quick_depth():
     from api.v1.delivery import TriggerReviewRequest
 
-    assert TriggerReviewRequest(depth="quick").depth is InvestigationEffort.SHORT
+    assert TriggerReviewRequest(depth="quick").depth is Effort.SHORT
 
 
 def test_trigger_review_request_defaults_depth_to_normal():
     from api.v1.delivery import TriggerReviewRequest
 
-    assert TriggerReviewRequest().depth is InvestigationEffort.NORMAL
+    assert TriggerReviewRequest().depth is Effort.NORMAL
 
 
 def test_audit_request_normalizes_quick_effort():
     from api.v1.sweep import AuditRequest
 
-    assert AuditRequest(effort="quick").effort is InvestigationEffort.SHORT
+    assert AuditRequest(effort="quick").effort is Effort.SHORT
 
 
 def test_deep_scan_request_normalizes_quick_effort():
     from api.v1.sweep import DeepScanRequest
 
-    assert DeepScanRequest(effort="quick").effort is InvestigationEffort.SHORT
+    assert DeepScanRequest(effort="quick").effort is Effort.SHORT
 
 
 def test_deep_scan_request_defaults_effort_to_deep():
     from api.v1.sweep import DeepScanRequest
 
-    assert DeepScanRequest().effort is InvestigationEffort.DEEP
+    assert DeepScanRequest().effort is Effort.DEEP

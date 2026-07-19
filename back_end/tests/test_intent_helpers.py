@@ -1,6 +1,6 @@
 """Tests for the shared intent helpers + look-before-write footer."""
 
-from domains.investigations.services._intent_helpers import (
+from domains.runs.services._intent_helpers import (
     OPENSWEEP_FRAMING_HEADER,
     LOOK_BEFORE_WRITE_FOOTER,
     build_intent,

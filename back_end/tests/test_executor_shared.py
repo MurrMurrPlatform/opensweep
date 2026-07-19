@@ -270,7 +270,7 @@ def test_ceiling_warnings_no_policy_returns_empty():
 def _req(**overrides):
     kwargs = dict(
         run_uid="r",
-        investigation_uid="i",
+        scheduled_agent_uid="i",
         repository_uid="repo",
         repository_local_path=None,
         intent="x",

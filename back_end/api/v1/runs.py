@@ -20,8 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user, require_role
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
+from domains.runs.models import Run
+from domains.runs.schemas import (
     ClientWsMessage,
     CreateRunRequest,
     Playbook,
@@ -31,18 +31,18 @@ from domains.investigations.schemas import (
     RunStatus,
     SendRunMessageRequest,
 )
-from domains.investigations.services.active_runs import active_runs_for
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
-from domains.investigations.services.run_changes import read_changes
-from domains.investigations.services.run_events import (
+from domains.runs.services.active_runs import active_runs_for
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.run_changes import read_changes
+from domains.runs.services.run_events import (
     append_event,
     read_events,
     read_events_from,
     run_events_channel,
 )
-from domains.investigations.services.run_reconciliation import reconcile_stale_runs
-from domains.investigations.services.turn_service import TurnService, run_to_dto
-from domains.investigations.services.workspace import (
+from domains.runs.services.run_reconciliation import reconcile_stale_runs
+from domains.runs.services.turn_service import TurnService, run_to_dto
+from domains.runs.services.workspace import (
     WorkspaceError,
     recreate_workspace,
 )
@@ -66,7 +66,7 @@ async def create_run(req: CreateRunRequest, user: UserDTO = Depends(require_role
     - playbook=ask: dispatches through the executor adapter (findings machinery).
     - playbook=chat: a conversation-only run — a discovery workspace is
       cloned in the background; the first message (req.prompt, optional) runs
-      as turn one. No Investigation is created (V3 §8).
+      as turn one (V3 §8).
     """
     if req.surface not in {"runs", "chat"}:
         raise HTTPException(status_code=422, detail=f"unknown surface {req.surface!r}")
@@ -86,11 +86,11 @@ async def create_run(req: CreateRunRequest, user: UserDTO = Depends(require_role
     if req.playbook == Playbook.ASK:
         # Org-agent-overlays composition: the user's prompt (custom_intent)
         # or the platform ask instructions, with the org overlay applied.
-        from domains.agent_overlays.services.composition import compose_playbook_intent
+        from domains.agents.services.composition import compose_agent_intent
 
-        composed = await compose_playbook_intent(
+        composed = await compose_agent_intent(
             repository_uid=req.repository_uid,
-            playbook="ask",
+            agent_key="ask",
             stage="ask",
             repo_guidance="",
             custom_intent=(req.prompt or "").strip() or None,
@@ -136,10 +136,10 @@ async def _repo_from_context(context: dict[str, str] | None) -> str | None:
 
 
 async def _create_chat_run(req: CreateRunRequest, *, actor_uid: str, org_uid: str) -> Run:
-    from domains.investigations.services import workspace as workspace_service
+    from domains.runs.services import workspace as workspace_service
     from domains.llm_providers.services.llm_provider_service import select_provider
     from domains.execution.services.sandbox_service import SandboxService
-    from domains.investigations.services.lifecycle import _executor_for_provider
+    from domains.runs.services.lifecycle import _executor_for_provider
     from domains.repositories.services.repository_service import repository_to_dto
 
     repository = await RepositoryService().get_repository(req.repository_uid, org_uid)
@@ -181,10 +181,10 @@ async def _create_chat_run(req: CreateRunRequest, *, actor_uid: str, org_uid: st
         target.setdefault("subject_type", context.get("subject_type", ""))
         target.setdefault("subject_uid", context.get("subject_uid", ""))
 
-    # Org agent overlay provenance (chat runs bypass trigger_run).
-    from domains.agent_overlays.services.overlay_service import active_overlay_provenance
+    # Agent provenance (chat runs bypass trigger_run).
+    from domains.agents.services.agent_service import active_agent_provenance
 
-    overlay_uid, overlay_rev = await active_overlay_provenance(org_uid, "chat")
+    agent_uid, agent_rev = await active_agent_provenance(org_uid, "chat")
 
     now = datetime.now(UTC)
     run = Run(
@@ -195,8 +195,8 @@ async def _create_chat_run(req: CreateRunRequest, *, actor_uid: str, org_uid: st
         executor=executor.value,
         execution_mode="analyze_only",
         provider_uid=(provider.uid or "").strip(),
-        overlay_uid=overlay_uid,
-        overlay_rev=overlay_rev,
+        agent_uid=agent_uid,
+        agent_rev=agent_rev,
         status=RunStatus.QUEUED.value,
         linked_pr_uid=req.linked_pr_uid or "",
         linked_ticket_uid=req.linked_ticket_uid or "",
@@ -215,7 +215,7 @@ async def _create_chat_run(req: CreateRunRequest, *, actor_uid: str, org_uid: st
 
     first_prompt = (req.prompt or "").strip()
     if first_prompt and req.surface == "chat":
-        from domains.investigations.services.chat_context import build_chat_preamble
+        from domains.runs.services.chat_context import build_chat_preamble
 
         preamble = await build_chat_preamble(context, org_uid=org_uid)
         first_prompt = f"{preamble}\n\n## The maintainer says\n{first_prompt}"
@@ -345,7 +345,7 @@ class ActiveRunDTO(BaseModel):
     show "already running" and deep-link the run."""
 
     run_uid: str
-    investigation_uid: str = ""
+    scheduled_agent_uid: str = ""
     title: str = ""
     playbook: str = ""
     status: str
@@ -382,7 +382,7 @@ async def list_active_runs(
     out = [
         ActiveRunDTO(
             run_uid=r.uid,
-            investigation_uid=r.investigation_uid or "",
+            scheduled_agent_uid=r.scheduled_agent_uid or "",
             title=r.title or "",
             playbook=r.playbook or "",
             status=r.status or "",
@@ -550,7 +550,7 @@ async def handoff_run(uid: str, user: UserDTO = Depends(require_role("maintainer
     one otherwise). The run stays awaiting_input — takeover is recorded on
     the timeline, not enforced as a lock; local commits land in the same
     working copy the next platform turn reads."""
-    from domains.investigations.services.handoff import prepare_handoff
+    from domains.runs.services.handoff import prepare_handoff
     from infrastructure.audit import write_audit
 
     service = TurnService()

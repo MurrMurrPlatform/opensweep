@@ -145,7 +145,8 @@ class TokenAuthMiddleware:
         "/api/v1/repositories",
         "/api/v1/findings",
         "/api/v1/freshness",
-        "/api/v1/investigations",
+        "/api/v1/agents",
+        "/api/v1/scheduled-agents",
         "/api/v1/docs",
         "/api/v1/memories",
         "/api/v1/run-policies",
@@ -407,7 +408,7 @@ async def lifespan(app: FastAPI):
         # Dispatch tasks are asyncio tasks inside THIS process — any run still
         # queued/running from a previous backend life died with it. Fail those
         # rows now so the UI and the 409 dispatch guard stop trusting them.
-        from domains.investigations.services.run_reconciliation import (
+        from domains.runs.services.run_reconciliation import (
             reconcile_orphaned_runs,
         )
         from infrastructure.process_role import BACKEND
@@ -447,7 +448,7 @@ def _include_routers(application: FastAPI):
 
     Primitives (KNOWLEDGE_V3):
       - repositories, docs       — where (the doc tree is the concept layer)
-      - investigations           — what to look for
+      - agents + scheduled-agents — what to look for, and when
       - freshness (checked)      — what was checked, when, at which revision
       - findings                 — what was found
       - docs + memories          — what's been learned
@@ -467,15 +468,14 @@ def _include_routers(application: FastAPI):
         "api.v1.freshness",
         "api.v1.workflow",
         "api.v1.artifacts",
-        "api.v1.investigations",
+        "api.v1.agents",
+        "api.v1.scheduled_agents",
         "api.v1.runs",
         "api.v1.docs",
         "api.v1.memories",
         "api.v1.run_policies",
         "api.v1.platform_tools",
         "api.v1.platform_read",
-        "api.v1.agent_prompts",
-        "api.v1.agent_overlays",
         "api.v1.audit",
         # Delivery — PR convergence ledger (PLATFORM_V2_DESIGN.md)
         "api.v1.delivery",

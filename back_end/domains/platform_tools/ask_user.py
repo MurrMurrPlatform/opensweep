@@ -89,7 +89,7 @@ async def ask_user(
         },
     )
     if executor and executor != "manual":
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
 
         run = await Run.nodes.get_or_none(uid=executor)
         if run is not None:

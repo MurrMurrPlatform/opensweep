@@ -23,7 +23,7 @@ def test_subject_types_cover_every_data_item():
         "pull_request",
         "news_item",
         "run",
-        "investigation",
+        "scheduled_agent",
         "doc",
     }
     assert {t.value for t in CommentSubjectType} == COMMENT_SUBJECT_TYPES

@@ -1,21 +1,21 @@
 """Pure tests for the two-stage sweep service.
 
-`run_generate_docs` and `run_audit` touch Neo4j (Doc, Investigation,
+`run_generate_docs` and `run_audit` touch Neo4j (Doc, ScheduledAgent,
 audit log) and the LLM dispatch path, so we exercise them indirectly:
-we assert the public surface, the job-type shape, and the estimate.
+we assert the public surface, the produces mapping, and the estimate.
 Neo4j-bound behavior lives in integration tests, not here.
 """
 
 import inspect
 
-from domains.investigations.services.job_types import get_job_type
-from domains.investigations.services.sweep import estimate_sweep_cost, run_audit
+from domains.agents.services.registry import PRODUCES_TO_PLAYBOOK
+from domains.agents.services.seed_agent_bases import _AGENT_BASES
+from domains.runs.services.sweep import estimate_sweep_cost, run_audit
 
 
-def test_generate_docs_job_type_exists():
-    jt = get_job_type("generate-docs")
-    assert jt is not None
-    assert "propose_doc_edit" in jt.intent
+def test_generate_docs_agent_produces_the_doc_tree():
+    assert _AGENT_BASES["generate-docs"]["produces"] == "doc-tree"
+    assert PRODUCES_TO_PLAYBOOK["doc-tree"] == "ask"
 
 
 def test_run_audit_has_no_concern_taxonomy_parameter():

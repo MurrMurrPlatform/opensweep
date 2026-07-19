@@ -41,22 +41,22 @@ def test_normalize_fills_all_stages_with_defaults():
     config = _normalize(None)
     assert set(config) == set(STAGES)
     # Auto reviews fire on every push — the stage default is precision (quick).
-    assert config["review"] == {"agent_prompt_uid": "", "auto": True, "depth": "quick", **_NO_OVERRIDES}
-    assert config["fix"] == {"agent_prompt_uid": "", "auto": False, "depth": "normal", **_NO_OVERRIDES}
-    assert config["ask"] == {"agent_prompt_uid": "", "auto": False, "depth": "normal", **_NO_OVERRIDES}
-    assert config["verify"] == {"agent_prompt_uid": "", "auto": False, "depth": "normal", **_NO_OVERRIDES}
+    assert config["review"] == {"agent_uid": "", "auto": True, "depth": "quick", **_NO_OVERRIDES}
+    assert config["fix"] == {"agent_uid": "", "auto": False, "depth": "normal", **_NO_OVERRIDES}
+    assert config["ask"] == {"agent_uid": "", "auto": False, "depth": "normal", **_NO_OVERRIDES}
+    assert config["verify"] == {"agent_uid": "", "auto": False, "depth": "normal", **_NO_OVERRIDES}
 
 
 def test_normalize_preserves_explicit_values_and_drops_junk():
     config = _normalize(
         {
-            "review": {"agent_prompt_uid": "p1", "auto": False, "junk": 1, "depth": "deep"},
-            "document": {"agent_prompt_uid": "p2"},
+            "review": {"agent_uid": "p1", "auto": False, "junk": 1, "depth": "deep"},
+            "document": {"agent_uid": "p2"},
             "ask": {"depth": "bogus"},
         }
     )
-    assert config["review"] == {"agent_prompt_uid": "p1", "auto": False, "depth": "deep", **_NO_OVERRIDES}
-    assert config["document"] == {"agent_prompt_uid": "p2", "auto": False, "depth": "normal", **_NO_OVERRIDES}
+    assert config["review"] == {"agent_uid": "p1", "auto": False, "depth": "deep", **_NO_OVERRIDES}
+    assert config["document"] == {"agent_uid": "p2", "auto": False, "depth": "normal", **_NO_OVERRIDES}
     # Junk depth falls back to the stage default, never leaks through.
     assert config["ask"]["depth"] == "normal"
     assert "junk" not in config["review"]

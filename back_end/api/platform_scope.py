@@ -23,7 +23,7 @@ def _run_token_uid(connection: HTTPConnection) -> str:
 
 
 async def _run_repository_uid(run_uid: str) -> str:
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
 
     run = await Run.nodes.get_or_none(uid=run_uid)
     return run.repository_uid if run else ""

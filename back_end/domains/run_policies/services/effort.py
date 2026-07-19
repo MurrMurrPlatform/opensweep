@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from domains.investigations.schemas import InvestigationEffort
+from domains.runs.schemas import Effort
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.services.system_default import ensure_system_default
 
 # max_wall_seconds: 0 = explicitly no wall guard (see resolve_wall_ceiling);
 # None on any other ceiling = no ceiling.
-_EFFORT_POLICIES: dict[InvestigationEffort, dict] = {
-    InvestigationEffort.SHORT: {
+_EFFORT_POLICIES: dict[Effort, dict] = {
+    Effort.SHORT: {
         "name": "opensweep-short",
         "description": "Short run: quick, bounded checks.",
         "max_dollars": 2.0,
@@ -20,7 +20,7 @@ _EFFORT_POLICIES: dict[InvestigationEffort, dict] = {
         "max_tool_turns": 50,
         "max_files_touched": 25,
     },
-    InvestigationEffort.NORMAL: {
+    Effort.NORMAL: {
         "name": "opensweep-normal",
         "description": "Normal run: standard investigation ceilings.",
         "max_dollars": 20.0,
@@ -28,7 +28,7 @@ _EFFORT_POLICIES: dict[InvestigationEffort, dict] = {
         "max_tool_turns": 200,
         "max_files_touched": 100,
     },
-    InvestigationEffort.DEEP: {
+    Effort.DEEP: {
         "name": "opensweep-deep",
         "description": "Deep run: whole-repo audits, generous ceilings.",
         "max_dollars": 50.0,
@@ -36,7 +36,7 @@ _EFFORT_POLICIES: dict[InvestigationEffort, dict] = {
         "max_tool_turns": 3000,
         "max_files_touched": 10000,
     },
-    InvestigationEffort.UNLIMITED: {
+    Effort.UNLIMITED: {
         "name": "opensweep-unlimited",
         "description": "Unlimited run: no ceilings — stop it from the UI.",
         "max_dollars": None,
@@ -48,19 +48,19 @@ _EFFORT_POLICIES: dict[InvestigationEffort, dict] = {
 
 # Old seeded rows (by name) whose values exactly match the legacy seed were
 # never human-tuned: rename + roll them forward to the current tier config.
-_LEGACY_POLICIES: dict[str, tuple[dict, InvestigationEffort]] = {
+_LEGACY_POLICIES: dict[str, tuple[dict, Effort]] = {
     "opensweep-effort-quick": (
         {"max_dollars": 0.25, "max_wall_seconds": 120, "max_tool_turns": 20, "max_files_touched": 25},
-        InvestigationEffort.SHORT,
+        Effort.SHORT,
     ),
     "opensweep-effort-deep": (
         {"max_dollars": 25.0, "max_wall_seconds": 7200, "max_tool_turns": 1500, "max_files_touched": 10000},
-        InvestigationEffort.DEEP,
+        Effort.DEEP,
     ),
 }
 
 
-async def ensure_policy_for_effort(effort: InvestigationEffort) -> RunPolicy:
+async def ensure_policy_for_effort(effort: Effort) -> RunPolicy:
     config = _EFFORT_POLICIES[effort]
     migrated = await _migrate_legacy_policy(effort)
     if migrated is not None:
@@ -96,7 +96,7 @@ async def ensure_policy_for_effort(effort: InvestigationEffort) -> RunPolicy:
     return policy
 
 
-async def _migrate_legacy_policy(effort: InvestigationEffort) -> RunPolicy | None:
+async def _migrate_legacy_policy(effort: Effort) -> RunPolicy | None:
     """Rename an untouched legacy effort policy in place (uid — and therefore
     every Investigation.run_policy_uid reference — is preserved)."""
     for legacy_name, (legacy_values, target) in _LEGACY_POLICIES.items():

@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from domains.executors.base import DispatchRequest
-from domains.investigations.models import Run
-from domains.investigations.services.run_events import append_event, preview
+from domains.runs.models import Run
+from domains.runs.services.run_events import append_event, preview
 from domains.llm_providers.models import LLMProvider
 from domains.llm_providers.services.llm_executor import is_local_provider_kind
 from domains.llm_providers.services.llm_provider_service import (

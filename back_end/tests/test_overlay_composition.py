@@ -15,7 +15,7 @@ scope, or the footer.
 
 import pytest
 
-from domains.investigations.services._intent_helpers import (
+from domains.runs.services._intent_helpers import (
     LOOK_BEFORE_WRITE_FOOTER,
     OPENSWEEP_FRAMING_HEADER,
     ORG_GUIDANCE_HEADING,

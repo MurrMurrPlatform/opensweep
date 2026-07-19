@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from config import settings
-from domains.investigations.services import run_changes
-from domains.investigations.services.run_changes import (
+from domains.runs.services import run_changes
+from domains.runs.services.run_changes import (
     changes_path,
     compute_changes,
     read_changes,

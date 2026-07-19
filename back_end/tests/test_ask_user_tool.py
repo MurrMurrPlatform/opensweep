@@ -65,7 +65,7 @@ def wired(monkeypatch):
 
     monkeypatch.setattr(thread_service, "resolve_thread", _resolve)
 
-    from domains.investigations import models as inv_models
+    from domains.runs import models as inv_models
 
     class _Nodes:
         async def get_or_none(self, *, uid):

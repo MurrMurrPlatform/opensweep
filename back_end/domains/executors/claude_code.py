@@ -48,13 +48,13 @@ from domains.executors.mcp_bridge import (
 )
 from domains.executors.quota import detect_quota_exhaustion
 from domains.executors.stream_events import ClaudeStreamTranslator, stream_event_delta
-from domains.investigations.schemas import (
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
     RunStatus,
 )
-from domains.investigations.services.run_events import append_event, publish_delta
-from domains.investigations.services.turn_cli import extract_claude_meta
+from domains.runs.services.run_events import append_event, publish_delta
+from domains.runs.services.turn_cli import extract_claude_meta
 from domains.llm_providers.schemas import effective_cli_template
 from domains.llm_providers.services.credentials import provider_secret
 from domains.llm_providers.services.llm_executor import with_model_flag
@@ -623,7 +623,7 @@ def build_continuation_argv(
 async def _persist_session_id(run_uid: str, session_id: str) -> None:
     """The UI's follow-up turns (turn_service) resume Run.cli_session_id —
     recording it here keeps executor runs continuable from the UI."""
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
 
     run = await Run.nodes.get_or_none(uid=run_uid)
     if run is not None and session_id:

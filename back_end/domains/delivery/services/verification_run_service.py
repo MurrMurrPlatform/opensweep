@@ -36,9 +36,9 @@ from domains.delivery.services.pull_request_service import (
 from domains.delivery.services.resolution_service import ensure_merge_policy
 from domains.delivery.services.run_dispatch import dispatch_serialized
 from domains.findings.models import Finding
-from domains.investigations.models import Run
-from domains.investigations.schemas import Executor, InvestigationEffort, RunTrigger
-from domains.investigations.services.lifecycle import trigger_run
+from domains.runs.models import Run
+from domains.runs.schemas import Executor, Effort, RunTrigger
+from domains.runs.services.lifecycle import trigger_run
 from domains.repositories.models import Repository
 from domains.repositories.services.workflow import guidance_section, stage_prompt_body
 from domains.run_policies.services.effort import ensure_policy_for_effort
@@ -161,17 +161,17 @@ async def trigger_verification_run(
         if not findings:
             raise HTTPException(status_code=409, detail="verdict has no findings to verify")
 
-        run_policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+        run_policy = await ensure_policy_for_effort(Effort.NORMAL)
         guidance = await stage_prompt_body(pr.repository_uid, "verify")
 
         # Org-agent-overlays composition: header + platform verify
         # instructions (org overlay applied) + repo verify guidance stack
         # around the structural skeptic contract.
-        from domains.agent_overlays.services.composition import compose_playbook_intent
+        from domains.agents.services.composition import compose_agent_intent
 
-        composed = await compose_playbook_intent(
+        composed = await compose_agent_intent(
             repository_uid=pr.repository_uid,
-            playbook="verify",
+            agent_key="verify",
             stage="verify",
             repo_guidance=guidance or "",
             structural=build_verification_intent(pr, verdict, findings),

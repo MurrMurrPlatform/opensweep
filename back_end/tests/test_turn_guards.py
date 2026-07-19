@@ -8,7 +8,7 @@ run still 409s.
 import pytest
 from fastapi import HTTPException
 
-from domains.investigations.services.turn_service import ensure_can_send
+from domains.runs.services.turn_service import ensure_can_send
 
 
 def _detail(exc_info) -> str:
@@ -55,7 +55,7 @@ def test_paused_quota_409s_with_resume_hint():
 
 
 def test_follow_up_turn_consumes_needs_input():
-    from domains.investigations.services.turn_service import consume_needs_input
+    from domains.runs.services.turn_service import consume_needs_input
 
     # The user replying IS the input the run was waiting on — the flag set by
     # ask_user must not survive into the next turn.

@@ -33,8 +33,8 @@ async def run_accepts_message(run_uid: str) -> bool:
     the background and be silently lost)."""
     from fastapi import HTTPException
 
-    from domains.investigations.models import Run
-    from domains.investigations.services.turn_service import ensure_can_send
+    from domains.runs.models import Run
+    from domains.runs.services.turn_service import ensure_can_send
 
     run = await Run.nodes.get_or_none(uid=run_uid)
     if run is None:
@@ -109,7 +109,7 @@ def send_message_turn(run_uid: str, text: str) -> None:
     api/v1/runs.py). Live watchers stream it over the existing WS tailer."""
 
     async def _consume() -> None:
-        from domains.investigations.services.turn_service import TurnService
+        from domains.runs.services.turn_service import TurnService
 
         try:
             async for _ in TurnService().run_turn(run_uid, text):

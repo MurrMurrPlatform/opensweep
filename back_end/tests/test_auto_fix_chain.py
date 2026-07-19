@@ -15,7 +15,7 @@ from domains.delivery.models import (
     VERIFICATION_RESULTS,
 )
 from domains.delivery.services.fix_run_service import maybe_auto_fix_for_pr
-from domains.investigations.services.playbooks import _continue_review_chain
+from domains.runs.services.playbooks import _continue_review_chain
 
 
 def test_state_vocabulary_covers_the_skeptic_pass():

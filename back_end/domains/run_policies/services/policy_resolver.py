@@ -15,7 +15,7 @@ from typing import Optional
 
 from neomodel import adb
 
-from domains.investigations.schemas import Executor, RunTrigger
+from domains.runs.schemas import Executor, RunTrigger
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.services.system_default import (
     ensure_system_default,
@@ -56,7 +56,7 @@ async def resolve(
 ) -> ResolvedPolicy:
     """Resolve the effective RunPolicy, then validate routing + budgets.
 
-    Priority: explicit per-run override > Investigation default > system default.
+    Priority: explicit per-run override > per-stage workflow pin > system default.
     """
     chosen_uid = run_policy_uid or default_policy_uid
     if chosen_uid:

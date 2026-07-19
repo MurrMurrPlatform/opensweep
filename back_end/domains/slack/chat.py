@@ -14,8 +14,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from domains.investigations.models import Run
-from domains.investigations.schemas import Playbook, RunStatus
+from domains.runs.models import Run
+from domains.runs.schemas import Playbook, RunStatus
 from domains.slack.models import SlackConnection
 from logging_config import logger
 
@@ -93,12 +93,12 @@ async def _create_slack_chat_run(
     the caller already runs in a background task, so sequential prep keeps
     the first turn from racing the clone)."""
     from domains.execution.services.sandbox_service import SandboxService
-    from domains.investigations.services import workspace as workspace_service
-    from domains.investigations.services.lifecycle import (
+    from domains.runs.services import workspace as workspace_service
+    from domains.runs.services.lifecycle import (
         LifecycleError,
         _executor_for_provider,
     )
-    from domains.investigations.services.run_events import append_event
+    from domains.runs.services.run_events import append_event
     from domains.llm_providers.services.llm_provider_service import select_provider
     from domains.repositories.services.repository_service import RepositoryService
 
@@ -152,7 +152,7 @@ async def _create_slack_chat_run(
 
 async def _run_turn_collect(run_uid: str, prompt: str) -> str:
     """Execute one turn and return the assistant's full reply text."""
-    from domains.investigations.services.turn_service import TurnService
+    from domains.runs.services.turn_service import TurnService
 
     content = ""
     error = ""

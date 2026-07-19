@@ -60,11 +60,11 @@ async def _seed_system_run_policy(mode: SeedMode) -> SeedResult:
 async def _seed_ecc_prompts(mode: SeedMode) -> SeedResult:
     """Bootstrap the prompt library from ECC — only when it is empty. Network-
     and git-dependent, so failures are recorded, never raised."""
-    from domains.agent_prompts.models import AgentPrompt
-    from domains.agent_prompts.services.ecc_import import import_ecc
+    from domains.agents.models import Agent
+    from domains.agents.services.ecc_import import import_ecc
 
     res = SeedResult(name="ecc_prompts")
-    if await AgentPrompt.nodes.all():
+    if await Agent.nodes.filter(provenance="imported"):
         res.note = "library not empty — skipped"
         return res
     try:
@@ -78,31 +78,32 @@ async def _seed_ecc_prompts(mode: SeedMode) -> SeedResult:
 
 
 async def _seed_workflow_default_prompts(mode: SeedMode) -> SeedResult:
-    from domains.agent_prompts.services.seed_defaults import seed_workflow_default_prompts
+    from domains.agents.services.seed_defaults import seed_workflow_default_prompts
 
     return await seed_workflow_default_prompts(mode)
 
 
 async def _seed_variant_prompts(mode: SeedMode) -> SeedResult:
-    from domains.agent_prompts.services.seed_variants import seed_variant_prompts
+    from domains.agents.services.seed_variants import seed_variant_prompts
 
     return await seed_variant_prompts(mode)
 
 
 async def _seed_agent_base_prompts(mode: SeedMode) -> SeedResult:
-    from domains.agent_prompts.services.seed_agent_bases import seed_agent_base_prompts
+    from domains.agents.services.seed_agent_bases import seed_agent_base_prompts
 
     return await seed_agent_base_prompts(mode)
 
 
 async def _seed_per_repo(mode: SeedMode) -> SeedResult:
     """Per repository: one pinned conventions Doc page and the on-event
-    "keep docs current" / "audit stale" Investigations. All idempotent."""
-    from domains.docs.services.doc_service import seed_conventions_doc
-    from domains.investigations.services.seeding import (
-        seed_audit_stale_investigation,
-        seed_keep_docs_current_investigation,
+    "keep docs current" / "audit stale" ScheduledAgent bindings. All
+    idempotent."""
+    from domains.agents.services.scheduled_agent_service import (
+        seed_audit_stale,
+        seed_keep_docs_current,
     )
+    from domains.docs.services.doc_service import seed_conventions_doc
     from domains.repositories.models import Repository
 
     res = SeedResult(name="per_repo")
@@ -110,9 +111,9 @@ async def _seed_per_repo(mode: SeedMode) -> SeedResult:
     for repo in await Repository.nodes.all():
         if await seed_conventions_doc(repo.uid) is not None:
             conventions += 1
-        if await seed_keep_docs_current_investigation(repo.uid) is not None:
+        if await seed_keep_docs_current(repo.uid) is not None:
             keep_docs += 1
-        if await seed_audit_stale_investigation(repo.uid) is not None:
+        if await seed_audit_stale(repo.uid) is not None:
             audit_stale += 1
     res.created = conventions + keep_docs + audit_stale
     res.note = (

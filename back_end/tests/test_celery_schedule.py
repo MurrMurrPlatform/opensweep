@@ -3,7 +3,7 @@ time limits (a resumed CLI run must not run inside the global 600/900s box).
 """
 
 import celery_app
-import domains.investigations.tasks.resume_paused as resume_paused_module  # noqa: F401 — registers tasks
+import domains.runs.tasks.resume_paused as resume_paused_module  # noqa: F401 — registers tasks
 from celery_app import app
 
 
@@ -16,13 +16,13 @@ def test_sandbox_cleanup_is_scheduled_every_30_minutes():
 
 
 def test_resume_beat_entry_still_scheduled():
-    entry = app.conf.beat_schedule.get("investigation-resume-paused-runs")
+    entry = app.conf.beat_schedule.get("run-resume-paused")
     assert entry is not None
-    assert entry["task"] == "opensweep.investigations.resume_paused_runs"
+    assert entry["task"] == "opensweep.runs.resume_paused_runs"
 
 
 def test_resume_run_task_registered_with_long_limits():
-    task = app.tasks.get("opensweep.investigations.resume_run")
+    task = app.tasks.get("opensweep.runs.resume_run")
     assert task is not None, "per-run resume task missing — beat tick would redispatch inline"
     assert task.soft_time_limit == 3600
     assert task.time_limit == 3900
@@ -34,4 +34,4 @@ def test_global_limits_unchanged_for_ticks():
 
 
 def test_beat_scan_task_registered():
-    assert app.tasks.get("opensweep.investigations.resume_paused_runs") is not None
+    assert app.tasks.get("opensweep.runs.resume_paused_runs") is not None

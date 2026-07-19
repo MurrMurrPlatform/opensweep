@@ -22,7 +22,7 @@ class _Nodes:
 
 def _with_fakes(monkeypatch, *, threads_nodes, run=None):
     monkeypatch.setattr(ts, "Thread", SimpleNamespace(nodes=threads_nodes))
-    import domains.investigations.models as run_models
+    import domains.runs.models as run_models
 
     class _RunNodes:
         async def get_or_none(self, **kw):

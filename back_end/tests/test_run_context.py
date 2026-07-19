@@ -4,7 +4,7 @@ without them leaves the agent unable to touch the ledger it is discussing."""
 
 from types import SimpleNamespace
 
-from domains.investigations.services.run_context import render_run_context
+from domains.runs.services.run_context import render_run_context
 
 
 def test_empty_briefing_still_renders_the_chat_framing():

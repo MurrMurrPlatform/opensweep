@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from domains.investigations.schemas import (
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
     RunStatus,
@@ -32,7 +32,7 @@ class DispatchRequest:
     """Everything an adapter needs to run."""
 
     run_uid: str
-    investigation_uid: str
+    scheduled_agent_uid: str
     repository_uid: str
     repository_local_path: str | None
     intent: str

@@ -37,7 +37,7 @@ from domains.delivery.services.resolution_service import (
     resolution_to_dto,
 )
 from domains.findings.models import Finding
-from domains.investigations.schemas import InvestigationEffort, normalize_effort
+from domains.runs.schemas import Effort, normalize_effort
 from domains.users.schemas import UserDTO
 
 router = APIRouter(prefix="/api/v1/delivery", tags=["delivery"])
@@ -159,7 +159,7 @@ async def recompute_convergence(uid: str, user: UserDTO = Depends(require_role("
 class TriggerReviewRequest(BaseModel):
     # Recall/precision dial: quick = top-5 blocking-only, deep = exhaustive
     # multi-lens. Applies to this run only; auto reviews use the workflow config.
-    depth: InvestigationEffort = InvestigationEffort.NORMAL
+    depth: Effort = Effort.NORMAL
     # Force a full base...head review even when a prior verdict would allow
     # an incremental one.
     full: bool = False
@@ -185,7 +185,7 @@ async def trigger_review(
 ) -> dict:
     """Dispatch a read-only review run that ends with a SHA-bound verdict (§6)."""
     from domains.delivery.services.review_run_service import trigger_review_run
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
 
     pr = await PullRequestService().get_node(uid)
     await require_repo_in_org(pr.repository_uid, user.org_uid)
@@ -197,7 +197,7 @@ async def trigger_review(
         run = await trigger_review_run(
             pr,
             triggered_by=user.uid,
-            depth=req.depth if req else InvestigationEffort.NORMAL,
+            depth=req.depth if req else Effort.NORMAL,
             force_full=bool(req.full) if req else False,
             max_findings=req.max_findings if req else None,
         )
@@ -205,7 +205,7 @@ async def trigger_review(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "run_uid": run.uid,
-        "investigation_uid": run.investigation_uid,
+        "scheduled_agent_uid": run.scheduled_agent_uid,
         "head_sha": pr.head_sha,
         "depth": (run.target or {}).get("depth", ""),
         "incremental_from": (run.target or {}).get("prior_verdict_sha", ""),
@@ -231,7 +231,7 @@ async def trigger_fix(
     required). The agent commits in a write sandbox; the platform gate
     validates and pushes to the SAME branch."""
     from domains.delivery.services.fix_run_service import trigger_fix_run
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
 
     pr = await PullRequestService().get_node(uid)
     await require_repo_in_org(pr.repository_uid, user.org_uid)
@@ -245,7 +245,7 @@ async def trigger_fix(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "run_uid": run.uid,
-        "investigation_uid": run.investigation_uid,
+        "scheduled_agent_uid": run.scheduled_agent_uid,
         "fix_round": int(pr.fix_rounds or 0),
         "head_ref": pr.head_ref,
     }

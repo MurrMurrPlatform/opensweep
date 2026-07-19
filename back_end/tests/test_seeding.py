@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import domains.agent_prompts.services.platform_prompts as pp
-from domains.agent_prompts.services.platform_prompts import (
+import domains.agents.services.platform_prompts as pp
+from domains.agents.services.platform_prompts import (
     _checksum,
     _current_values,
     upsert_platform_prompt,
@@ -69,23 +69,23 @@ def test_every_seeder_has_a_known_group():
 # ── in-memory fake for the prompt upsert ────────────────────────────────────
 
 
-class _FakePrompt:
-    """Minimal stand-in for AgentPrompt with the fields the upsert touches."""
+class _FakeAgent:
+    """Minimal stand-in for Agent with the fields the upsert touches."""
 
-    saved: list["_FakePrompt"] = []
+    saved: list["_FakeAgent"] = []
 
     def __init__(self, **kw):
         self.__dict__.update(
-            uid=None, source="", source_url="", enabled=True,
-            title="", description="", body="", default_job_type="audit",
-            default_scope="repository", default_effort="normal", tags=[],
-            seed_checksum="",
+            uid=None, org_uid="", title="", description="", prompt="",
+            produces="findings", default_effort="normal", default_executor="",
+            tags=[], provenance="", source_url="", source_commit="",
+            seed_checksum="", rev=0, enabled=True,
         )
         self.__dict__.update(kw)
 
     async def save(self):
-        if self not in _FakePrompt.saved:
-            _FakePrompt.saved.append(self)
+        if self not in _FakeAgent.saved:
+            _FakeAgent.saved.append(self)
         return self
 
 
@@ -95,12 +95,12 @@ async def _no_existing(**kw):
 
 @pytest.fixture(autouse=True)
 def _fake_prompt_model(monkeypatch):
-    _FakePrompt.saved = []
+    _FakeAgent.saved = []
     # Lookup path returns nothing; tests that exercise existing rows pass
     # `existing=` directly instead.
-    _FakePrompt.nodes = SimpleNamespace(filter=lambda **kw: _no_existing(**kw))
-    monkeypatch.setattr(pp, "AgentPrompt", _FakePrompt)
-    return _FakePrompt
+    _FakeAgent.nodes = SimpleNamespace(filter=lambda **kw: _no_existing(**kw))
+    monkeypatch.setattr(pp, "Agent", _FakeAgent)
+    return _FakeAgent
 
 
 def _spec(body="B1", tags=("x",)):
@@ -108,14 +108,13 @@ def _spec(body="B1", tags=("x",)):
         "title": "T",
         "description": "D",
         "body": body,
-        "default_job_type": "audit",
         "tags": list(tags),
     }
 
 
 def _existing(body="B1", seed_checksum=""):
-    row = _FakePrompt(source="platform", source_url=URL, body=body, title="T",
-                      description="D", default_job_type="audit", tags=["x"])
+    row = _FakeAgent(provenance="system", source_url=URL, prompt=body, title="T",
+                     description="D", tags=["x"])
     row.seed_checksum = seed_checksum
     return row
 
@@ -123,8 +122,8 @@ def _existing(body="B1", seed_checksum=""):
 async def test_create_stamps_checksum():
     action = await upsert_platform_prompt(_spec(), URL, SeedMode.SYNC)
     assert action == "created"
-    row = _FakePrompt.saved[-1]
-    assert row.source == "platform" and row.body == "B1"
+    row = _FakeAgent.saved[-1]
+    assert row.provenance == "system" and row.prompt == "B1"
     assert row.seed_checksum == _checksum(pp._normalized(_spec()))
 
 
@@ -132,7 +131,7 @@ async def test_upsert_never_touches_existing():
     row = _existing(body="edited-by-user", seed_checksum="whatever")
     action = await upsert_platform_prompt(_spec(body="B2"), URL, SeedMode.UPSERT, existing=row)
     assert action == "unchanged"
-    assert row.body == "edited-by-user"  # untouched
+    assert row.prompt == "edited-by-user"  # untouched
 
 
 async def test_sync_rolls_forward_an_untouched_tracked_row():
@@ -140,7 +139,7 @@ async def test_sync_rolls_forward_an_untouched_tracked_row():
     row.seed_checksum = _checksum(_current_values(row))  # tracked, unedited
     action = await upsert_platform_prompt(_spec(body="B2"), URL, SeedMode.SYNC, existing=row)
     assert action == "updated"
-    assert row.body == "B2"
+    assert row.prompt == "B2"
     assert row.seed_checksum == _checksum(pp._normalized(_spec(body="B2")))
 
 
@@ -150,7 +149,7 @@ async def test_sync_preserves_a_user_edited_row():
     row.seed_checksum = content_hash("old", "shipped", "content")
     action = await upsert_platform_prompt(_spec(body="B2"), URL, SeedMode.SYNC, existing=row)
     assert action == "preserved"
-    assert row.body == "user-edited"
+    assert row.prompt == "user-edited"
 
 
 async def test_force_overwrites_even_a_user_edited_row():
@@ -158,7 +157,7 @@ async def test_force_overwrites_even_a_user_edited_row():
     row.seed_checksum = content_hash("anything")
     action = await upsert_platform_prompt(_spec(body="B2"), URL, SeedMode.FORCE, existing=row)
     assert action == "updated"
-    assert row.body == "B2"
+    assert row.prompt == "B2"
 
 
 async def test_force_overwrites_a_user_edit_whose_stored_checksum_is_stale():
@@ -170,7 +169,7 @@ async def test_force_overwrites_a_user_edit_whose_stored_checksum_is_stale():
     row.seed_checksum = shipped  # stale: predates the user's edit
     action = await upsert_platform_prompt(_spec(body="B2"), URL, SeedMode.FORCE, existing=row)
     assert action == "updated"
-    assert row.body == "B2"
+    assert row.prompt == "B2"
 
 
 async def test_sync_adopts_a_legacy_row_only_when_it_matches_shipped():
@@ -187,7 +186,7 @@ async def test_sync_preserves_a_legacy_row_that_differs_from_shipped():
     row = _existing(body="something-else", seed_checksum="")
     action = await upsert_platform_prompt(_spec(body="B2"), URL, SeedMode.SYNC, existing=row)
     assert action == "preserved"
-    assert row.body == "something-else"
+    assert row.prompt == "something-else"
     assert row.seed_checksum == ""
 
 

@@ -132,8 +132,8 @@ async def propose_ticket_groups(
     """Dispatch a read-only run that analyzes ungrouped backlog/todo tickets
     and proposes groupings via `opensweep_platform_propose_ticket_group`. Every
     proposal is human-approved before anything changes."""
-    from domains.investigations.schemas import InvestigationEffort, RunTrigger
-    from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+    from domains.runs.schemas import Effort, RunTrigger
+    from domains.runs.services.lifecycle import LifecycleError, trigger_run
     from domains.run_policies.services.effort import ensure_policy_for_effort
     from infrastructure.audit import write_audit
 
@@ -153,18 +153,18 @@ async def propose_ticket_groups(
     # Specialized refine run: the grouping template IS the instructions
     # (custom_intent), so a replace overlay never displaces it; org append
     # guidance and the framing header/footer still stack.
-    from domains.agent_overlays.services.composition import compose_playbook_intent
+    from domains.agents.services.composition import compose_agent_intent
 
-    composed = await compose_playbook_intent(
+    composed = await compose_agent_intent(
         repository_uid=req.repository_uid,
-        playbook="refine",
+        agent_key="refine",
         stage="refine",
         repo_guidance="",
         custom_intent=_build_group_proposal_intent(candidates, req.repository_uid),
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
     await write_audit(
         kind="ticket_group.propose.requested",
         subject_uid=req.repository_uid,
@@ -187,7 +187,7 @@ async def propose_ticket_groups(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "run_uid": run.uid,
-        "investigation_uid": run.investigation_uid,
+        "scheduled_agent_uid": run.scheduled_agent_uid,
         "candidate_count": len(candidates),
     }
 
@@ -311,7 +311,7 @@ async def implement_ticket(uid: str, user: UserDTO = Depends(require_role("maint
     commits in a write sandbox; the platform validates, pushes, and opens a
     draft PR."""
     from domains.delivery.services.implement_run_service import trigger_implement_run
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
 
     ticket = await TicketService().get_node(uid)
     await require_repo_in_org(ticket.repository_uid, user.org_uid)
@@ -330,7 +330,7 @@ async def implement_ticket(uid: str, user: UserDTO = Depends(require_role("maint
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "run_uid": run.uid,
-        "investigation_uid": run.investigation_uid,
+        "scheduled_agent_uid": run.scheduled_agent_uid,
         "ticket_uid": uid,
     }
 
@@ -346,7 +346,7 @@ async def refine_ticket(uid: str, user: UserDTO = Depends(require_role("maintain
     ticket = await service.get_node(uid)
     await require_repo_in_org(ticket.repository_uid, user.org_uid)
     run = await dispatch_refine_run(ticket, actor_uid=user.uid, org_uid=user.org_uid)
-    return {"run_uid": run.uid, "investigation_uid": run.investigation_uid, "ticket_uid": uid}
+    return {"run_uid": run.uid, "scheduled_agent_uid": run.scheduled_agent_uid, "ticket_uid": uid}
 
 
 @router.delete("/{uid}", status_code=204, operation_id="opensweep_ticket_delete")

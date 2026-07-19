@@ -4,7 +4,7 @@ orphaning (startup sweeps)."""
 
 from datetime import datetime, timedelta, timezone
 
-from domains.investigations.services.run_reconciliation import is_orphan, stale_reason
+from domains.runs.services.run_reconciliation import is_orphan, stale_reason
 
 NOW = datetime(2026, 7, 11, 12, 0, 0, tzinfo=timezone.utc)
 

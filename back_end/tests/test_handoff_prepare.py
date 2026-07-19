@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from domains.investigations.services.handoff import HANDOFF_FILENAME, write_handoff_file
+from domains.runs.services.handoff import HANDOFF_FILENAME, write_handoff_file
 
 
 def _fake_sandbox(tmp_path: Path) -> Path:

@@ -6,8 +6,8 @@ import json
 from config import settings
 from domains.executors.claude_code import ensure_stream_json_flags
 from domains.executors.stream_events import ClaudeStreamTranslator, stream_event_delta
-from domains.investigations.services import run_events
-from domains.investigations.services.run_events import (
+from domains.runs.services import run_events
+from domains.runs.services.run_events import (
     append_event,
     events_path,
     read_events,
@@ -361,7 +361,7 @@ def test_transcript_route_is_mounted():
 
 
 def test_preview_structured_stays_json_parseable_when_truncating():
-    from domains.investigations.services.run_events import preview_structured
+    from domains.runs.services.run_events import preview_structured
 
     value = {"file_path": "a.py", "old_string": "x" * 50_000, "new_string": "y"}
     out = preview_structured(value, field_max=1_000)
@@ -373,7 +373,7 @@ def test_preview_structured_stays_json_parseable_when_truncating():
 
 
 def test_preview_structured_handles_nested_containers():
-    from domains.investigations.services.run_events import preview_structured
+    from domains.runs.services.run_events import preview_structured
 
     value = {"edits": [{"old_string": "a" * 100, "new_string": "b"}], "n": 3}
     parsed = json.loads(preview_structured(value, field_max=10))
@@ -383,7 +383,7 @@ def test_preview_structured_handles_nested_containers():
 
 
 def test_preview_structured_falls_back_when_total_budget_exceeded():
-    from domains.investigations.services.run_events import preview_structured
+    from domains.runs.services.run_events import preview_structured
 
     value = {f"k{i}": "v" * 100 for i in range(50)}
     out = preview_structured(value, field_max=200, total_max=500)
