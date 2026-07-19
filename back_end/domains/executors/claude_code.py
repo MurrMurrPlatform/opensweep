@@ -26,6 +26,7 @@ from typing import Any
 from config import settings
 from domains.executors._shared import (
     StreamRecorder,
+    budget_briefing,
     enforce_ceilings,
     exceeded_usage,
     execute_envelope_tool_calls,
@@ -133,7 +134,12 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         system_prompt = (
             _SYSTEM_PROMPT_WRITE if req.mode == ExecutionMode.IMPLEMENT else _SYSTEM_PROMPT
         )
-        instruction = self._build_instruction(req)
+
+        # Resolve wall ceiling FIRST so _build_instruction can include the
+        # budget briefing (which needs the actual ceiling value).
+        wall_ceiling = resolve_wall_ceiling(req, provider.kind)
+
+        instruction = self._build_instruction(req, wall_ceiling)
         rendered = (
             template
             .replace("{{system_prompt}}", system_prompt)
@@ -161,8 +167,6 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             instruction=instruction,
         )
         append_event(req.run_uid, "user_message", text=instruction)
-
-        wall_ceiling = resolve_wall_ceiling(req, provider.kind)
 
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
@@ -356,7 +360,7 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             outcome=trailer_outcome,
         )
 
-    def _build_instruction(self, req: DispatchRequest) -> str:
+    def _build_instruction(self, req: DispatchRequest, wall_ceiling: int | None = None) -> str:
         target_blob = json.dumps(req.target or {}, indent=2)
         ctx_blob = req.context or "(no additional context provided)"
         template = (
@@ -369,6 +373,7 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             context=ctx_blob,
             run_uid=req.run_uid,
             repository_uid=req.repository_uid,
+            budget=budget_briefing(req.policy, wall_ceiling),
         )
 
     def _parse_trailer(self, raw_stdout: str) -> tuple[str, dict[str, Any]]:
@@ -537,10 +542,12 @@ mode:           {mode}
 
 {context}
 
+{budget}
+
 # Instructions
 
 Use your native tools (Read/Glob/Grep/Bash; avoid Edit/Write) to investigate.
-Keep the investigation narrow enough to file results before the run ceiling.
+Work the intent to completion — do not stop early because the task is large.
 Whenever you find something worth recording, call a `opensweep-platform` tool to
 push it back into OpenSweep immediately. Use `create_finding` for
 bugs/gaps/improvements, `propose_*` tools for structural/doc proposals,
@@ -573,6 +580,8 @@ mode:           {mode}
 # Context
 
 {context}
+
+{budget}
 
 # Instructions
 

@@ -16,6 +16,7 @@ from typing import Any
 
 from domains.executors._shared import (
     StreamRecorder,
+    budget_briefing,
     enforce_ceilings,
     exceeded_usage,
     execute_envelope_tool_calls,
@@ -61,7 +62,7 @@ class _CLITrackingAdapter(ExecutorAdapter):
             provider.model = req.model_override
 
         timeout = resolve_wall_ceiling(req, provider.kind)
-        instruction = _instruction(req)
+        instruction = _instruction(req, timeout)
         # Both CLIs get the code-graph MCP server over the workspace clone —
         # opencode through its generated config, codex through `-c` argv
         # overrides (llm_executor) — under this same availability gate.
@@ -261,7 +262,7 @@ review.
 """
 
 
-def _instruction(req: DispatchRequest) -> str:
+def _instruction(req: DispatchRequest, wall_ceiling: int | None = None) -> str:
     return f"""# Run
 
 repository_uid: {req.repository_uid}
@@ -278,6 +279,8 @@ run_uid: {req.run_uid}
 ```
 
 {req.context or ""}
+
+{budget_briefing(req.policy, wall_ceiling)}
 
 Investigate only. Record bugs, gaps, and improvements through the final
 JSON tool_calls envelope; persist durable facts with write_memory.

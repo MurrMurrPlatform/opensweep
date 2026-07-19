@@ -94,6 +94,39 @@ def resolve_wall_ceiling(req: DispatchRequest, provider_kind: str) -> int | None
     return DEFAULT_MAX_WALL_SECONDS
 
 
+def budget_briefing(policy, wall_ceiling: int | None) -> str:
+    """Plain-text budget contract rendered into every instruction, for every
+    harness. Best practice is a budget the agent can SEE and pace against
+    (graceful wind-down) rather than a silent post-hoc verdict."""
+    limits: list[str] = []
+    if wall_ceiling:
+        limits.append(f"~{max(1, int(wall_ceiling // 60))} minutes of wall clock")
+    turns = getattr(policy, "max_tool_turns", None) if policy is not None else None
+    if turns:
+        limits.append(f"~{int(turns)} tool turns")
+    dollars = getattr(policy, "max_dollars", None) if policy is not None else None
+    if dollars:
+        limits.append(f"a ${float(dollars):.2f} spend ceiling (where metered)")
+    warn_pct = int(getattr(policy, "warn_at_pct", 80) or 80) if policy is not None else 80
+    if limits:
+        return (
+            "# Run budget\n\n"
+            f"This run has {', '.join(limits)}. Pace yourself against it:\n"
+            f"- Keep a running coverage checklist of areas done / remaining.\n"
+            f"- At roughly {warn_pct}% of budget, STOP opening new areas: file what\n"
+            "  you have, record what you skipped, and finish with `complete_run`.\n"
+            "- Never end the run without `complete_run` — an unfinished run gets\n"
+            "  resumed and told to continue."
+        )
+    return (
+        "# Run budget\n\n"
+        "This run has no fixed budget — work to full completion of the intent,\n"
+        "however long that takes. Keep a running coverage checklist, file results\n"
+        "as you go, and finish with `complete_run` only when the whole scope is\n"
+        "genuinely covered. Never end the run without `complete_run`."
+    )
+
+
 # ── Ceiling enforcement (audit #48) ──────────────────────────────────────
 
 
