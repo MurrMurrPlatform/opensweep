@@ -508,7 +508,7 @@ const inputText = computed(() => {
 
 /** runStatusVariant predates the shadcn Badge tones (danger/default gone). */
 const statusBadgeVariant = computed<BadgeVariants['variant']>(() => {
-  const v = runStatusVariant(run.value?.status || 'queued')
+  const v = runStatusVariant(run.value?.status || 'queued', run.value ?? undefined)
   if (v === 'danger') return 'destructive'
   if (v === 'default') return 'secondary'
   return v

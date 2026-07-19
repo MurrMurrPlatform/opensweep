@@ -199,7 +199,7 @@ const canSend = computed(
 const showWorking = computed(() => busy.value)
 const statusLabel = computed(() => (run.value ? runStatusLabel(run.value) : ''))
 const statusVariant = computed(() => {
-  const v = runStatusVariant(run.value?.status || 'queued')
+  const v = runStatusVariant(run.value?.status || 'queued', run.value ?? undefined)
   if (v === 'danger') return 'destructive' as const
   if (v === 'default') return 'secondary' as const
   return v
