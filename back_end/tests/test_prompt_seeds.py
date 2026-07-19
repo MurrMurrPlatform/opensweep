@@ -7,11 +7,11 @@ public good — a bloated guidance body crowds out the structural contract
 it is appended to).
 """
 
-from domains.agent_prompts.services.seed_defaults import (
+from domains.agents.services.seed_defaults import (
     _DEFAULTS,
     workflow_source_url,
 )
-from domains.agent_prompts.services.seed_variants import (
+from domains.agents.services.seed_variants import (
     _VARIANTS,
     variant_source_url,
 )

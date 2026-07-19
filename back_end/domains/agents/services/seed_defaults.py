@@ -1,6 +1,6 @@
 """Seeded workflow-default prompts — OpenSweep's own guidance, in the library.
 
-One enabled AgentPrompt per workflow stage, identified by
+One enabled Agent per workflow stage, identified by
 source="platform" + source_url="opensweep://workflow/<stage>". These are the
 prompts a repository's workflow config resolves to when the user hasn't
 picked one, so the *default guidance for every run type is itself a
@@ -16,8 +16,8 @@ left exactly as the user last edited it.
 
 from __future__ import annotations
 
-from domains.agent_prompts.models import AgentPrompt
-from domains.agent_prompts.services.platform_prompts import tally, upsert_platform_prompt
+from domains.agents.models import Agent
+from domains.agents.services.platform_prompts import tally, upsert_platform_prompt
 from infrastructure.seeding.base import SeedMode, SeedResult
 from logging_config import logger
 
@@ -30,7 +30,7 @@ _DEFAULTS: dict[str, dict] = {
     "ask": {
         "title": "OpenSweep default — Audit",
         "description": "Default guidance for ask/audit runs: high-signal findings only.",
-        "default_job_type": "audit",
+        "produces": "findings",
         "tags": ["opensweep-default", "audit"],
         "body": (
             "Audit the target and file high-signal Findings only:\n"
@@ -67,7 +67,7 @@ _DEFAULTS: dict[str, dict] = {
     "discover": {
         "title": "OpenSweep default — Generate documentation",
         "description": "Default guidance for generate-docs runs: propose the documentation page tree.",
-        "default_job_type": "generate-docs",
+        "produces": "doc-tree",
         "tags": ["opensweep-default", "generate-docs", "docs"],
         "body": (
             "Build this repository's documentation page tree.\n"
@@ -94,7 +94,7 @@ _DEFAULTS: dict[str, dict] = {
     "review": {
         "title": "OpenSweep default — PR review",
         "description": "Default review guidance appended to the structural review contract.",
-        "default_job_type": "audit",
+        "produces": "review-verdict",
         "tags": ["opensweep-default", "review", "code-review"],
         "body": (
             "Review the diff for, in priority order:\n"
@@ -124,7 +124,7 @@ _DEFAULTS: dict[str, dict] = {
     "fix": {
         "title": "OpenSweep default — Fix",
         "description": "Default fix guidance appended to the structural fix contract.",
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "tags": ["opensweep-default", "fix"],
         "body": (
             "Fix each finding with the smallest change that truly resolves it:\n"
@@ -150,7 +150,7 @@ _DEFAULTS: dict[str, dict] = {
     "implement": {
         "title": "OpenSweep default — Implement",
         "description": "Default implementation guidance appended to the structural implement contract.",
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "tags": ["opensweep-default", "implement"],
         "body": (
             "Implementation quality bar:\n"
@@ -171,7 +171,7 @@ _DEFAULTS: dict[str, dict] = {
     "verify": {
         "title": "OpenSweep default — Verify finding",
         "description": "Default verification guidance appended to the structural verify contract.",
-        "default_job_type": "audit",
+        "produces": "verification",
         "tags": ["opensweep-default", "verify"],
         "body": (
             "Verification discipline:\n"
@@ -191,7 +191,7 @@ _DEFAULTS: dict[str, dict] = {
     "document": {
         "title": "OpenSweep default — Update documentation",
         "description": "Default guidance for document runs: keep Docs and Memories true and small.",
-        "default_job_type": "document",
+        "produces": "documentation",
         "tags": ["opensweep-default", "document", "docs"],
         "body": (
             "Compare this repository's Documentation pages and Memories against the current\n"
@@ -221,8 +221,8 @@ async def seed_workflow_default_prompts(mode: SeedMode = SeedMode.UPSERT) -> See
     SeedResult (see upsert_platform_prompt for per-row actions)."""
     by_url = {
         (p.source_url or ""): p
-        for p in await AgentPrompt.nodes.all()
-        if (p.source or "") == "platform"
+        for p in await Agent.nodes.all()
+        if (p.provenance or "") == "system"
     }
     res = SeedResult(name="workflow_default_prompts")
     for stage, spec in _DEFAULTS.items():
@@ -241,7 +241,7 @@ async def default_prompt_uid_for_stage(stage: str) -> str:
     """Uid of the seeded (or user-edited) platform prompt for a stage;
     "" when it was deleted or disabled."""
     url = workflow_source_url(stage)
-    for p in await AgentPrompt.nodes.all():
-        if (p.source or "") == "platform" and (p.source_url or "") == url and p.enabled:
+    for p in await Agent.nodes.all():
+        if (p.provenance or "") == "system" and (p.source_url or "") == url and p.enabled:
             return p.uid
     return ""

@@ -1,4 +1,4 @@
-"""Celery beat tick — dispatch Runs for Investigations with due cron schedules."""
+"""Celery beat tick — dispatch Runs for ScheduledAgents with due cron triggers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from logging_config import logger
 
 @app.task(name="opensweep.agents.schedule_tick")
 def schedule_tick() -> dict:
-    from domains.runs.services.schedule_scanner import scan_and_dispatch
+    from domains.agents.services.schedule_scanner import scan_and_dispatch
     from infrastructure.celery_async import run_async_task
     from infrastructure.neomodel_config import configure_neomodel
 

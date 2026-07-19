@@ -154,7 +154,7 @@ async def _resolve_depth(
 async def _resolve_guidance(repository_uid: str, depth: Effort) -> str | None:
     """quick/deep use their seeded variant; normal (or a deleted/disabled
     variant) falls back to the repo's configured review-stage prompt."""
-    from domains.agent_prompts.services.seed_variants import variant_prompt_body
+    from domains.agents.services.seed_variants import variant_prompt_body
 
     slug = REVIEW_DEPTH_VARIANTS.get(depth.value)
     if slug:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from domains.agent_prompts.models import AgentPrompt
+from domains.agents.models import AgentPrompt
 
 OPENSWEEP_FRAMING_HEADER = """# Role
 

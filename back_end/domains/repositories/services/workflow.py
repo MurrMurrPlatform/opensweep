@@ -91,7 +91,7 @@ def _normalize(raw: dict | None) -> dict[str, dict[str, Any]]:
 async def get_workflow(repository_uid: str) -> dict[str, dict[str, Any]]:
     """The repo's stored config with defaults RESOLVED: stages without an
     explicit prompt point at the seeded platform prompt for that stage."""
-    from domains.agent_prompts.services.seed_defaults import (
+    from domains.agents.services.seed_defaults import (
         default_prompt_uid_for_stage,
     )
 
@@ -142,7 +142,7 @@ async def set_workflow(
     normalized = _normalize(config)
     # Referenced prompts must exist and be enabled — a silent dangling uid
     # would quietly fall back to hardcoded intents.
-    from domains.agent_prompts.models import AgentPrompt
+    from domains.agents.models import AgentPrompt
 
     for stage, entry in normalized.items():
         uid = entry["agent_prompt_uid"]

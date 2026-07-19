@@ -1,15 +1,19 @@
-"""Shared upsert for platform-seeded prompts (workflow defaults + variants).
+"""Shared upsert for platform-seeded system Agents (bases + stage defaults +
+variants).
 
-Both seed_defaults.py and seed_variants.py install `source="platform"` rows
-keyed by a stable `source_url`. This module is the single place that decides,
-per SeedMode, whether an existing row is created, refreshed, or preserved —
-so the two seeders can never drift in how they treat re-seeds.
+The three seeders install `provenance="system"` rows keyed by a stable
+`source_url`. This module is the single place that decides, per SeedMode,
+whether an existing row is created, refreshed, or preserved — so the
+seeders can never drift in how they treat re-seeds.
 
-Platform-owned fields (title, description, body, job type, scope, effort,
-tags) are hashed into `seed_checksum` on write. On a SYNC re-seed a row whose
+Platform-owned fields (title, description, prompt, produces, effort, tags)
+are hashed into `seed_checksum` on write. On a SYNC re-seed a row whose
 current content still hashes to its stored checksum is provably untouched
 since we last seeded it, so it is safe to roll forward to newly shipped
 content; any other row is a user edit and is preserved. See SeedMode.
+
+Seed specs keep a `body` key for the instructions text (it maps onto
+`Agent.prompt`).
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Optional
 from uuid import uuid4
 
-from domains.agent_prompts.models import AgentPrompt
+from domains.agents.models import Agent
 from infrastructure.seeding.base import SeedMode, SeedResult, content_hash
 
 
@@ -33,13 +37,12 @@ def tally(res: SeedResult, action: str) -> None:
         res.unchanged += 1
 
 # Fields the platform owns and a SYNC is allowed to roll forward. Anything not
-# listed (enabled, source, created_at, uid …) is never touched on re-seed.
+# listed (enabled, provenance, created_at, uid …) is never touched on re-seed.
 _OWNED_FIELDS = (
     "title",
     "description",
-    "body",
-    "default_job_type",
-    "default_scope",
+    "prompt",
+    "produces",
     "default_effort",
     "tags",
 )
@@ -51,9 +54,8 @@ def _normalized(spec: dict[str, Any]) -> dict[str, Any]:
     return {
         "title": spec.get("title", ""),
         "description": spec.get("description", ""),
-        "body": spec.get("body", ""),
-        "default_job_type": spec.get("default_job_type", "audit"),
-        "default_scope": spec.get("default_scope", "repository"),
+        "prompt": spec.get("body", spec.get("prompt", "")),
+        "produces": spec.get("produces", "findings"),
         "default_effort": spec.get("default_effort", "normal"),
         "tags": list(spec.get("tags", [])),
     }
@@ -63,9 +65,8 @@ def _checksum(values: dict[str, Any]) -> str:
     return content_hash(
         values["title"],
         values["description"],
-        values["body"],
-        values["default_job_type"],
-        values["default_scope"],
+        values["prompt"],
+        values["produces"],
         values["default_effort"],
         # tags order is meaningful to the hash but not to behavior; the specs
         # list them deterministically so this is stable.
@@ -73,7 +74,7 @@ def _checksum(values: dict[str, Any]) -> str:
     )
 
 
-def _apply(row: AgentPrompt, values: dict[str, Any]) -> None:
+def _apply(row: Agent, values: dict[str, Any]) -> None:
     for f in _OWNED_FIELDS:
         setattr(row, f, values[f])
     row.seed_checksum = _checksum(values)
@@ -84,9 +85,9 @@ async def upsert_platform_prompt(
     source_url: str,
     mode: SeedMode,
     *,
-    existing: Optional[AgentPrompt] = None,
+    existing: Optional[Agent] = None,
 ) -> str:
-    """Create or reconcile one platform prompt. Returns the action taken:
+    """Create or reconcile one system Agent. Returns the action taken:
     "created" | "updated" | "unchanged" | "preserved".
 
     `existing` lets the caller pass a row it already looked up (avoids an
@@ -97,14 +98,14 @@ async def upsert_platform_prompt(
 
     if existing is None:
         existing = next(
-            iter(await AgentPrompt.nodes.filter(source="platform", source_url=source_url)),
+            iter(await Agent.nodes.filter(provenance="system", source_url=source_url)),
             None,
         )
 
     if existing is None:
-        row = AgentPrompt(
+        row = Agent(
             uid=uuid4().hex,
-            source="platform",
+            provenance="system",
             source_url=source_url,
             enabled=True,
             **values,
@@ -135,10 +136,11 @@ async def upsert_platform_prompt(
     # SYNC: roll forward only rows we can prove the user hasn't edited.
     stored = existing.seed_checksum or ""
     if stored == "":
-        # Untracked (seeded before checksums, or hand-created). We can only
-        # adopt it as platform-owned when it already matches the shipped
-        # content — otherwise we cannot tell a stale default from a user edit,
-        # so we leave it and its empty checksum alone (preserved).
+        # Untracked (seeded before checksums, hand-created, or freshly
+        # migrated from the pre-Agent schema — m0008 clears checksums). We
+        # can only adopt it as platform-owned when it already matches the
+        # shipped content — otherwise we cannot tell a stale default from a
+        # user edit, so we leave it and its empty checksum alone (preserved).
         if current == shipped:
             existing.seed_checksum = shipped
             await existing.save()
@@ -153,13 +155,12 @@ async def upsert_platform_prompt(
     return "updated"
 
 
-def _current_values(row: AgentPrompt) -> dict[str, Any]:
+def _current_values(row: Agent) -> dict[str, Any]:
     return {
         "title": row.title or "",
         "description": row.description or "",
-        "body": row.body or "",
-        "default_job_type": row.default_job_type or "audit",
-        "default_scope": row.default_scope or "repository",
+        "prompt": row.prompt or "",
+        "produces": row.produces or "findings",
         "default_effort": row.default_effort or "normal",
         "tags": list(row.tags or []),
     }

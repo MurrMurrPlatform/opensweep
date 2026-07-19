@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import domains.agent_prompts.services.platform_prompts as pp
-from domains.agent_prompts.services.platform_prompts import (
+import domains.agents.services.platform_prompts as pp
+from domains.agents.services.platform_prompts import (
     _checksum,
     _current_values,
     upsert_platform_prompt,

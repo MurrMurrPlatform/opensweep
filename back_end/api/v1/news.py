@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user, require_role
-from domains.agent_prompts.services.seed_variants import variant_prompt_body
+from domains.agents.services.seed_variants import variant_prompt_body
 from domains.findings.schemas import FindingDTO
 from domains.runs.schemas import (
     Effort,

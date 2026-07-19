@@ -18,39 +18,18 @@ same body (`agent_base_fallback`), so a run never loses its instructions.
 
 from __future__ import annotations
 
-from domains.agent_prompts.models import AgentPrompt
-from domains.agent_prompts.services.platform_prompts import tally, upsert_platform_prompt
+from domains.agents.models import Agent
+from domains.agents.services.platform_prompts import tally, upsert_platform_prompt
+from domains.agents.services.registry import agent_source_url
 from infrastructure.seeding.base import SeedMode, SeedResult
 from logging_config import logger
-
-# Deterministic seeding/listing order. A superset of investigations
-# PLAYBOOKS: deep-scan and generate-docs are overlay-only agent keys — their
-# runs execute under the "ask" run playbook, but they carry their own
-# instruction bases so the Agents page can list and tune them.
-AGENT_PLAYBOOKS = (
-    "chat",
-    "ask",
-    "review",
-    "fix",
-    "implement",
-    "verify",
-    "document",
-    "refine",
-    "thread",
-    "deep-scan",
-    "generate-docs",
-)
-
-
-def agent_source_url(playbook: str) -> str:
-    return f"opensweep://agent/{playbook}"
 
 
 _AGENT_BASES: dict[str, dict] = {
     "chat": {
         "title": "OpenSweep agent — Chat",
         "description": "Task instructions for the chat playbook (platform chat widget).",
-        "default_job_type": "audit",
+        "produces": "answer",
         "tags": ["opensweep-agent-base", "chat"],
         "body": (
             "You are talking to a maintainer. Be direct, concrete, and grounded: answer\n"
@@ -65,7 +44,7 @@ _AGENT_BASES: dict[str, dict] = {
     "ask": {
         "title": "OpenSweep agent — Ask / audit",
         "description": "Task instructions for ask runs: investigate and file evidenced findings.",
-        "default_job_type": "audit",
+        "produces": "findings",
         "tags": ["opensweep-agent-base", "ask"],
         "body": (
             "Investigate the target and file a Finding for every concrete problem you can\n"
@@ -80,7 +59,7 @@ _AGENT_BASES: dict[str, dict] = {
     "review": {
         "title": "OpenSweep agent — PR review",
         "description": "Task instructions for review runs: judge the diff, file findings, end in a verdict.",
-        "default_job_type": "audit",
+        "produces": "review-verdict",
         "tags": ["opensweep-agent-base", "review"],
         "body": (
             "You are reviewing a pull request. Judge the diff for correctness, security,\n"
@@ -96,7 +75,7 @@ _AGENT_BASES: dict[str, dict] = {
     "fix": {
         "title": "OpenSweep agent — Fix",
         "description": "Task instructions for fix runs: resolve findings minimally in the write sandbox.",
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "tags": ["opensweep-agent-base", "fix"],
         "body": (
             "Fix each finding with the smallest change that truly resolves it: trace to\n"
@@ -111,7 +90,7 @@ _AGENT_BASES: dict[str, dict] = {
     "implement": {
         "title": "OpenSweep agent — Implement",
         "description": "Task instructions for implement runs: satisfy the ticket's acceptance criteria.",
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "tags": ["opensweep-agent-base", "implement"],
         "body": (
             "Implement the ticket's acceptance criteria minimally — no gold-plating, no\n"
@@ -127,7 +106,7 @@ _AGENT_BASES: dict[str, dict] = {
     "verify": {
         "title": "OpenSweep agent — Verify",
         "description": "Task instructions for verify runs: the skeptic pass over reported findings.",
-        "default_job_type": "audit",
+        "produces": "verification",
         "tags": ["opensweep-agent-base", "verify"],
         "body": (
             "You are the skeptic. Judge only the originally reported problem against the\n"
@@ -142,7 +121,7 @@ _AGENT_BASES: dict[str, dict] = {
     "document": {
         "title": "OpenSweep agent — Document",
         "description": "Task instructions for document runs: keep Docs and Memories true and small.",
-        "default_job_type": "document",
+        "produces": "documentation",
         "tags": ["opensweep-agent-base", "document"],
         "body": (
             "Compare the repository's Documentation pages and Memories against the\n"
@@ -157,7 +136,7 @@ _AGENT_BASES: dict[str, dict] = {
     "refine": {
         "title": "OpenSweep agent — Refine",
         "description": "Task instructions for refine runs: triage and enrich an item in place.",
-        "default_job_type": "audit",
+        "produces": "findings",
         "tags": ["opensweep-agent-base", "refine"],
         "body": (
             "Refine the target item in place: read the code it points at to judge whether\n"
@@ -175,7 +154,7 @@ _AGENT_BASES: dict[str, dict] = {
             "Task instructions for thread runs: one conversation carrying a ticket "
             "from planning through implementation and review fixes, staged by the platform."
         ),
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "tags": ["opensweep-agent-base", "thread"],
         "body": (
             "You carry one ticket through its whole life in ONE conversation: interrogate\n"
@@ -190,7 +169,7 @@ _AGENT_BASES: dict[str, dict] = {
     "deep-scan": {
         "title": "OpenSweep agent — Deep scan",
         "description": "Task instructions for deep-scan runs: whole-repo sweep authoring a full Analysis.",
-        "default_job_type": "audit",
+        "produces": "analysis",
         "tags": ["opensweep-agent-base", "deep-scan"],
         "body": (
             "Deep-scan this repository end to end and author a full Analysis report.\n"
@@ -271,7 +250,7 @@ _AGENT_BASES: dict[str, dict] = {
     "generate-docs": {
         "title": "OpenSweep agent — Generate docs",
         "description": "Task instructions for generate-docs runs: propose the documentation page tree.",
-        "default_job_type": "generate-docs",
+        "produces": "doc-tree",
         "tags": ["opensweep-agent-base", "generate-docs"],
         "body": (
             "Build this repository's documentation page tree. Documentation lives as\n"
@@ -308,49 +287,64 @@ _AGENT_BASES: dict[str, dict] = {
             "the Audit flow for that."
         ),
     },
+    "audit-stale": {
+        "title": "OpenSweep agent — Audit stale code",
+        "description": (
+            "Auto-selects the stalest / never-checked documentation pages and "
+            "dispatches one scoped audit per page. Bind it to a repository with "
+            "a cron trigger to keep coverage fresh."
+        ),
+        "produces": "findings",
+        "tags": ["opensweep-agent-base", "audit-stale"],
+        "body": (
+            "Automatically audit the documentation pages whose code has moved since "
+            "they were last checked (never-checked pages first). Each due tick "
+            "selects up to target.limit pages and dispatches one audit run scoped "
+            "to each page's watch_paths."
+        ),
+    },
 }
 
 
-def agent_base_fallback(playbook: str) -> str:
-    """The in-code copy of a playbook's task instructions — the last-resort
-    layer when the seeded row was deleted or disabled."""
-    return str(_AGENT_BASES.get(playbook, {}).get("body", ""))
+def agent_base_fallback(key: str) -> str:
+    """The in-code copy of a system agent's task instructions — the
+    last-resort layer when the seeded row was deleted or disabled."""
+    return str(_AGENT_BASES.get(key, {}).get("body", ""))
 
 
 async def seed_agent_base_prompts(mode: SeedMode = SeedMode.UPSERT) -> SeedResult:
-    """Ensure one platform base prompt exists per playbook. Idempotent; same
+    """Ensure one system base Agent exists per key. Idempotent; same
     SeedMode semantics as the workflow stage defaults."""
     by_url = {
-        (p.source_url or ""): p
-        for p in await AgentPrompt.nodes.all()
-        if (p.source or "") == "platform"
+        (a.source_url or ""): a
+        for a in await Agent.nodes.all()
+        if (a.provenance or "") == "system"
     }
     res = SeedResult(name="agent_base_prompts")
-    for playbook, spec in _AGENT_BASES.items():
-        url = agent_source_url(playbook)
+    for key, spec in _AGENT_BASES.items():
+        url = agent_source_url(key)
         action = await upsert_platform_prompt(spec, url, mode, existing=by_url.get(url))
         tally(res, action)
     if res.created or res.updated:
         logger.info(
-            f"Agent base prompts: +{res.created} created, {res.updated} synced",
+            f"Agent bases: +{res.created} created, {res.updated} synced",
             extra={"tag": "prompts"},
         )
     return res
 
 
-async def agent_base_prompt(playbook: str) -> AgentPrompt | None:
-    """The seeded (possibly admin-edited) platform base row for a playbook —
+async def agent_base_prompt(key: str) -> Agent | None:
+    """The seeded (possibly admin-edited) system base row for a key —
     enabled or not; None when it was deleted."""
-    url = agent_source_url(playbook)
-    for p in await AgentPrompt.nodes.filter(source="platform", source_url=url):
-        return p
-    return None
+    from domains.agents.services.registry import system_agent_by_url
+
+    return await system_agent_by_url(agent_source_url(key))
 
 
-async def agent_base_body(playbook: str) -> str | None:
-    """The ENABLED platform base body for a playbook; None when the row was
+async def agent_base_body(key: str) -> str | None:
+    """The ENABLED system base body for a key; None when the row was
     deleted or disabled (callers fall back to `agent_base_fallback`)."""
-    row = await agent_base_prompt(playbook)
+    row = await agent_base_prompt(key)
     if row is None or not row.enabled:
         return None
-    return row.body or ""
+    return row.prompt or ""

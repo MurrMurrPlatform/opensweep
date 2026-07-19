@@ -5,20 +5,20 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from api.dependencies import get_current_user, require_platform_admin
-from domains.agent_prompts.schemas import (
+from domains.agents.schemas import (
     AgentPromptDTO,
     CreateAgentPromptRequest,
     ImportEccResult,
     UpdateAgentPromptRequest,
 )
-from domains.agent_prompts.services.agent_prompt_service import (
+from domains.agents.services.agent_prompt_service import (
     create_prompt,
     delete_prompt,
     get_prompt,
     list_prompts,
     update_prompt,
 )
-from domains.agent_prompts.services.ecc_import import import_ecc
+from domains.agents.services.ecc_import import import_ecc
 from domains.users.schemas import UserDTO
 from infrastructure.audit import write_audit
 

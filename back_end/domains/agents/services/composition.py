@@ -1,20 +1,21 @@
-"""Layer resolution + intent composition for playbook runs.
+"""Layer resolution + intent composition for agent runs.
 
-The composed prompt (the cake — spec §Composition):
+The composed prompt (the cake — org-agent-overlays spec §Composition,
+carried over unchanged into the Agent model):
 
     OPENSWEEP_FRAMING_HEADER      code; always included
-    <platform instructions>       seeded opensweep://agent/<playbook> body
-                                  — or the org overlay body when mode=replace
-    ## Organization guidance      org overlay body when mode=append
+    <platform instructions>       the system Agent's prompt for the key
+                                  — or the org override body when mode=replace
+    ## Organization guidance      org override body when mode=append
     ## <Stage> guidance           per-repo workflow-config prompt (unchanged)
     # Scope / existing state      the run's structural contract + scope
     LOOK_BEFORE_WRITE_FOOTER      code; unconditional (chat has none)
 
-`build_intent` (investigations/_intent_helpers.py) does the pure assembly;
-this module resolves the async layers — platform base, org overlay, repo
+`build_intent` (runs/_intent_helpers.py) does the pure assembly; this
+module resolves the async layers — system agent body, org override, repo
 stage guidance — degrading ONE layer at a time with a log line. A dangling
-or disabled row never fails a run: missing overlay ⇒ platform base as-is;
-missing/disabled base ⇒ the in-code fallback instructions.
+or disabled row never fails a run: missing override ⇒ platform body as-is;
+missing/disabled system row ⇒ the in-code fallback instructions.
 """
 
 from __future__ import annotations
@@ -23,9 +24,11 @@ from dataclasses import dataclass
 
 from logging_config import logger
 
-# Playbook → workflow stage whose per-repo prompt stacks as repo guidance.
-# refine and chat have no workflow stage.
-_PLAYBOOK_STAGE = {
+# Agent key → workflow stage whose per-repo prompt stacks as repo guidance.
+# refine and chat have no workflow stage; deep-scan/generate-docs callers
+# pass their stage (or pre-resolved guidance) explicitly, exactly as they
+# did against the old overlay composition.
+_KEY_STAGE = {
     "ask": "ask",
     "review": "review",
     "fix": "fix",
@@ -46,20 +49,20 @@ PREVIEW_SCOPE_STUB = (
 @dataclass(frozen=True)
 class ComposedIntent:
     text: str
-    overlay_uid: str = ""
-    overlay_rev: int = 0
+    agent_uid: str = ""
+    agent_rev: int = 0
 
 
-async def _resolve_platform_base(playbook: str) -> str | None:
-    """Enabled seeded base body; None (→ in-code fallback) on miss/failure."""
+async def _resolve_platform_base(agent_key: str) -> str | None:
+    """Enabled system body; None (→ in-code fallback) on miss/failure."""
     try:
-        from domains.agents.services.seed_agent_bases import agent_base_body
+        from domains.agents.services.registry import agent_body_by_key
 
-        return await agent_base_body(playbook)
+        return await agent_body_by_key(agent_key)
     except Exception as exc:  # noqa: BLE001 — degrade to the in-code fallback
         logger.warning(
-            f"platform base resolution failed for {playbook}: {type(exc).__name__}: {exc}",
-            extra={"tag": "agent_overlays"},
+            f"system agent resolution failed for {agent_key}: {type(exc).__name__}: {exc}",
+            extra={"tag": "agents"},
         )
         return None
 
@@ -69,13 +72,32 @@ async def _resolve_org_uid(repository_uid: str) -> str:
         from domains.llm_providers.services.llm_provider_service import repository_org_uid
 
         return await repository_org_uid(repository_uid) or ""
-    except Exception as exc:  # noqa: BLE001 — no org ⇒ no overlay layer
+    except Exception as exc:  # noqa: BLE001 — no org ⇒ no override layer
         logger.warning(
             f"org resolution failed for repository {repository_uid}: "
             f"{type(exc).__name__}: {exc}",
-            extra={"tag": "agent_overlays"},
+            extra={"tag": "agents"},
         )
         return ""
+
+
+async def _resolve_override(org_uid: str, agent_key: str):
+    """(agent, active override revision | None) — never raises."""
+    try:
+        from domains.agents.services.agent_service import resolve_enabled_override
+        from domains.agents.services.registry import system_agent_by_key
+
+        agent = await system_agent_by_key(agent_key)
+        if agent is None:
+            return None, None
+        return agent, await resolve_enabled_override(org_uid, agent)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"override resolution failed ({org_uid}/{agent_key}): "
+            f"{type(exc).__name__}: {exc}",
+            extra={"tag": "agents"},
+        )
+        return None, None
 
 
 async def _resolve_repo_guidance_section(repository_uid: str, stage: str) -> str:
@@ -93,7 +115,7 @@ async def _resolve_repo_guidance_section(repository_uid: str, stage: str) -> str
         logger.warning(
             f"repo stage guidance resolution failed ({repository_uid}/{stage}): "
             f"{type(exc).__name__}: {exc}",
-            extra={"tag": "agent_overlays"},
+            extra={"tag": "agents"},
         )
         return ""
 
@@ -104,10 +126,10 @@ def _render_repo_guidance(stage: str, body: str) -> str:
     return guidance_section(stage or "stage", body)
 
 
-async def compose_playbook_intent(
+async def compose_agent_intent(
     *,
     repository_uid: str,
-    playbook: str,
+    agent_key: str,
     structural: str = "",
     custom_intent: str | None = None,
     prompt_body: str | None = None,
@@ -118,34 +140,38 @@ async def compose_playbook_intent(
     include_header: bool = True,
     org_uid: str | None = None,
 ) -> ComposedIntent:
-    """Compose a playbook run's first-turn intent with the org layers applied.
+    """Compose a run's first-turn intent with the org layers applied.
 
+    - `agent_key` — the system agent supplying the instructions layer
+      (usually the playbook name; deep-scan/generate-docs/audit-stale carry
+      their own bases).
     - `structural` — the run's code-owned per-run contract (setup steps,
       target listings, verdict/reporting rules); lands in the scope slot,
-      AFTER every guidance layer, so overlays can never displace it.
+      AFTER every guidance layer, so overrides can never displace it.
     - `custom_intent` — a run-specific instruction override (user prompt,
       specialized run template). Takes the instructions slot; a replace
-      overlay does NOT substitute it (org guidance still appends).
+      override does NOT substitute it (org guidance still appends).
+    - `prompt_body` — a resolved Agent prompt (e.g. a user agent's own
+      instructions); wins over the system base, loses to `custom_intent`.
     - `repo_guidance` — pre-resolved stage prompt body; None ⇒ resolve from
-      the workflow config for `stage` (default: the playbook's stage); "" ⇒
+      the workflow config for `stage` (default: the key's stage); "" ⇒
       no repo guidance layer.
-    - `include_footer` — default: every playbook except chat.
+    - `include_footer` — default: every key except chat.
 
     Never raises for layer-resolution reasons: each layer degrades
     independently and the run always gets a usable intent.
     """
-    from domains.agent_overlays.services.overlay_service import resolve_enabled_overlay
     from domains.agents.services.seed_agent_bases import agent_base_fallback
     from domains.runs.services._intent_helpers import build_intent
 
     if include_footer is None:
-        include_footer = playbook != "chat"
+        include_footer = agent_key != "chat"
     if stage is None:
-        stage = _PLAYBOOK_STAGE.get(playbook, "")
+        stage = _KEY_STAGE.get(agent_key, "")
 
     resolved_org = org_uid if org_uid is not None else await _resolve_org_uid(repository_uid)
-    platform_body = await _resolve_platform_base(playbook)
-    overlay = await resolve_enabled_overlay(resolved_org, playbook)
+    platform_body = await _resolve_platform_base(agent_key)
+    agent, override = await _resolve_override(resolved_org, agent_key)
 
     if repo_guidance is None:
         guidance_block = await _resolve_repo_guidance_section(repository_uid, stage)
@@ -156,9 +182,9 @@ async def compose_playbook_intent(
         custom_intent=custom_intent,
         prompt_body=prompt_body,
         platform_instructions=platform_body,
-        default_intent=agent_base_fallback(playbook) or f"Run the {playbook} playbook.",
-        org_overlay_mode=(overlay.mode if overlay else ""),
-        org_overlay_body=(overlay.body if overlay else ""),
+        default_intent=agent_base_fallback(agent_key) or f"Run the {agent_key} agent.",
+        org_overlay_mode=(override.mode if override else ""),
+        org_overlay_body=(override.body if override else ""),
         repo_guidance_section=guidance_block,
         scope_summary=structural,
         existing_state_listing=existing_state_listing,
@@ -167,8 +193,8 @@ async def compose_playbook_intent(
     )
     return ComposedIntent(
         text=text,
-        overlay_uid=overlay.uid if overlay else "",
-        overlay_rev=int(overlay.rev or 0) if overlay else 0,
+        agent_uid=agent.uid if agent else "",
+        agent_rev=int(override.rev or 0) if override else 0,
     )
 
 
@@ -176,43 +202,42 @@ async def chat_instruction_layers(org_uid: str) -> str:
     """Chat's thinner wrapper: platform chat instructions + org guidance,
     with no framing header and no look-before-write footer. Appended to the
     code-owned chat contract in the first-turn preamble."""
-    from domains.agent_overlays.services.overlay_service import resolve_enabled_overlay
     from domains.agents.services.seed_agent_bases import agent_base_fallback
     from domains.runs.services._intent_helpers import ORG_GUIDANCE_HEADING
 
     base = await _resolve_platform_base("chat")
     if base is None:
         base = agent_base_fallback("chat")
-    overlay = await resolve_enabled_overlay(org_uid, "chat")
-    if overlay is not None and (overlay.mode or "") == "replace":
-        base = overlay.body or ""
+    _agent, override = await _resolve_override(org_uid, "chat")
+    if override is not None and (override.mode or "") == "replace":
+        base = override.body or ""
     parts = [p for p in [(base or "").strip()] if p]
-    if overlay is not None and (overlay.mode or "") == "append" and (overlay.body or "").strip():
-        parts.append(f"{ORG_GUIDANCE_HEADING}\n\n{overlay.body.strip()}")
+    if override is not None and (override.mode or "") == "append" and (override.body or "").strip():
+        parts.append(f"{ORG_GUIDANCE_HEADING}\n\n{override.body.strip()}")
     return "\n\n".join(parts)
 
 
 async def preview_composed_prompt(
-    *, org_uid: str, playbook: str, mode: str, body: str
+    *, org_uid: str, agent_key: str, mode: str, body: str
 ) -> str:
-    """The fully composed prompt for a DRAFT overlay (not persisted), using a
+    """The fully composed prompt for a DRAFT override (not persisted), using a
     representative scope stub — so editors see exactly what the agent gets."""
     from domains.agents.services.seed_agent_bases import agent_base_fallback
     from domains.runs.services._intent_helpers import build_intent
 
-    platform_body = await _resolve_platform_base(playbook)
+    platform_body = await _resolve_platform_base(agent_key)
     return build_intent(
         platform_instructions=platform_body,
-        default_intent=agent_base_fallback(playbook) or f"Run the {playbook} playbook.",
+        default_intent=agent_base_fallback(agent_key) or f"Run the {agent_key} agent.",
         org_overlay_mode=mode,
         org_overlay_body=body,
         repo_guidance_section=_render_repo_guidance(
-            _PLAYBOOK_STAGE.get(playbook, ""),
+            _KEY_STAGE.get(agent_key, ""),
             "(preview) The repository's configured stage guidance appears here "
             "on real runs, stacking on top of the layers above.",
         )
-        if _PLAYBOOK_STAGE.get(playbook)
+        if _KEY_STAGE.get(agent_key)
         else "",
         scope_summary=PREVIEW_SCOPE_STUB,
-        include_footer=playbook != "chat",
+        include_footer=agent_key != "chat",
     )

@@ -2,14 +2,14 @@
 (opensweep://agent/<playbook>) — the task-instructions layer org overlays
 apply to. DB writes are integration territory; here we pin the specs."""
 
-from domains.agent_prompts.services.seed_agent_bases import (
+from domains.agents.services.seed_agent_bases import (
     _AGENT_BASES,
     AGENT_PLAYBOOKS,
     agent_base_fallback,
     agent_source_url,
 )
-from domains.agent_prompts.services.seed_defaults import _DEFAULTS, workflow_source_url
-from domains.agent_prompts.services.seed_variants import _VARIANTS, variant_source_url
+from domains.agents.services.seed_defaults import _DEFAULTS, workflow_source_url
+from domains.agents.services.seed_variants import _VARIANTS, variant_source_url
 from domains.runs.services.job_types import get_job_type
 from domains.runs.services.playbooks import PLAYBOOKS
 

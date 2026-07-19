@@ -31,7 +31,7 @@ from domains.agent_overlays.schemas import (
     PlatformBaseDTO,
     PlaybookOverlayStatusDTO,
 )
-from domains.agent_prompts.services.seed_agent_bases import AGENT_PLAYBOOKS
+from domains.agents.services.seed_agent_bases import AGENT_PLAYBOOKS
 from infrastructure.audit import write_audit
 from logging_config import logger
 
@@ -292,7 +292,7 @@ async def revert_overlay(
 
 async def list_playbook_statuses(org_uid: str) -> list[PlaybookOverlayStatusDTO]:
     """Every playbook with its platform base preview + overlay status."""
-    from domains.agent_prompts.services.seed_agent_bases import (
+    from domains.agents.services.seed_agent_bases import (
         AGENT_PLAYBOOKS,
         agent_base_prompt,
         agent_source_url,

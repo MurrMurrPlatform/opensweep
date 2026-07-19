@@ -5,7 +5,7 @@ inference function. The full import flow is exercised end-to-end in the
 manual smoke checklist.
 """
 
-from domains.agent_prompts.services.ecc_import import (
+from domains.agents.services.ecc_import import (
     _extract_title,
     _infer_tags,
     _parse_markdown,

@@ -2,9 +2,9 @@
 
 ECC ships 79 commands + 63 agents. We import a curated subset (the
 audit-relevant ones) and map their YAML frontmatter + markdown body into
-AgentPrompt rows.
+Agent rows.
 
-User-edited prompts (source='user') are sticky — re-import skips them so
+User-edited prompts (provenance='user') are sticky — re-import skips them so
 your edits aren't clobbered.
 
 Source is MIT-licensed; attribution is preserved via `source_url` +
@@ -24,8 +24,8 @@ from uuid import uuid4
 
 import yaml
 
-from domains.agent_prompts.models import AgentPrompt
-from domains.agent_prompts.schemas import ImportEccResult
+from domains.agents.models import Agent
+from domains.agents.schemas import ImportEccResult
 from logging_config import logger
 
 # Allowed audit-relevant files. Pulled from inspection of the ECC repo;
@@ -189,10 +189,10 @@ def _file_url(commit: str, kind: str, filename: str) -> str:
 
 
 async def import_ecc(*, force: bool = False) -> ImportEccResult:
-    """Clone ECC and upsert audit-relevant prompts as AgentPrompt rows.
+    """Clone ECC and upsert audit-relevant prompts as Agent rows.
 
     `force=False` keeps existing user-edited prompts intact and only updates
-    rows whose `source='imported'` and content has changed.
+    rows whose `provenance='imported'` and content has changed.
     """
     errors: list[str] = []
     try:
@@ -204,8 +204,8 @@ async def import_ecc(*, force: bool = False) -> ImportEccResult:
             imported=0, skipped_user_edited=0, source_commit="", errors=[msg]
         )
 
-    existing_rows = await AgentPrompt.nodes.all()
-    by_url: dict[str, AgentPrompt] = {}
+    existing_rows = await Agent.nodes.all()
+    by_url: dict[str, Agent] = {}
     for p in existing_rows:
         if p.source_url:
             by_url[p.source_url] = p
@@ -232,22 +232,22 @@ async def import_ecc(*, force: bool = False) -> ImportEccResult:
                 source_url = _file_url(commit, kind, filename)
 
                 existing = by_url.get(source_url)
-                if existing and existing.source == "user":
+                if existing and existing.provenance == "user":
                     skipped += 1
                     continue
 
                 now = datetime.now(timezone.utc)
                 if existing is None:
-                    p = AgentPrompt(
+                    p = Agent(
                         uid=uuid4().hex,
                         title=title,
                         description=description,
-                        body=body.strip(),
-                        default_job_type="audit",
-                        default_scope="repository",
+                        prompt=body.strip(),
+                        produces="findings",
+                        
                         default_effort="normal",
                         tags=tags,
-                        source="imported",
+                        provenance="imported",
                         source_url=source_url,
                         source_commit=commit,
                         enabled=True,
@@ -257,7 +257,7 @@ async def import_ecc(*, force: bool = False) -> ImportEccResult:
                 else:
                     existing.title = title
                     existing.description = description
-                    existing.body = body.strip()
+                    existing.prompt = body.strip()
                     existing.tags = tags
                     existing.source_commit = commit
                     existing.updated_at = now

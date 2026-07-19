@@ -321,13 +321,13 @@ async def test_preview_replace_substitutes_the_platform_layer(monkeypatch):
 
 
 async def test_list_playbook_statuses_covers_every_playbook(monkeypatch):
-    from domains.agent_prompts.services import seed_agent_bases
+    from domains.agents.services import seed_agent_bases
 
     async def no_base(playbook):
         return None
 
     monkeypatch.setattr(
-        "domains.agent_prompts.services.seed_agent_bases.agent_base_prompt", no_base
+        "domains.agents.services.seed_agent_bases.agent_base_prompt", no_base
     )
     await _put(playbook="review", body="mine")
     statuses = await svc.list_playbook_statuses("org-a")
@@ -418,7 +418,7 @@ async def test_compose_degrades_when_every_layer_is_broken(monkeypatch):
         structural="Verify finding X.",
         org_uid="org-a",
     )
-    from domains.agent_prompts.services.seed_agent_bases import agent_base_fallback
+    from domains.agents.services.seed_agent_bases import agent_base_fallback
 
     assert agent_base_fallback("verify") in composed.text
     assert "Verify finding X." in composed.text

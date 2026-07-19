@@ -27,7 +27,7 @@ app = Celery(
     backend=result_backend,
     include=[
         "domains.execution.tasks.cleanup_sandboxes",
-        "domains.runs.tasks.schedule_tick",
+        "domains.agents.tasks.schedule_tick",
         "domains.runs.tasks.resume_paused",
         "domains.runs.tasks.reconcile_runs",
         "domains.delivery.tasks.sync_pull_requests",

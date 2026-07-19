@@ -60,8 +60,8 @@ async def _seed_system_run_policy(mode: SeedMode) -> SeedResult:
 async def _seed_ecc_prompts(mode: SeedMode) -> SeedResult:
     """Bootstrap the prompt library from ECC — only when it is empty. Network-
     and git-dependent, so failures are recorded, never raised."""
-    from domains.agent_prompts.models import AgentPrompt
-    from domains.agent_prompts.services.ecc_import import import_ecc
+    from domains.agents.models import AgentPrompt
+    from domains.agents.services.ecc_import import import_ecc
 
     res = SeedResult(name="ecc_prompts")
     if await AgentPrompt.nodes.all():
@@ -78,19 +78,19 @@ async def _seed_ecc_prompts(mode: SeedMode) -> SeedResult:
 
 
 async def _seed_workflow_default_prompts(mode: SeedMode) -> SeedResult:
-    from domains.agent_prompts.services.seed_defaults import seed_workflow_default_prompts
+    from domains.agents.services.seed_defaults import seed_workflow_default_prompts
 
     return await seed_workflow_default_prompts(mode)
 
 
 async def _seed_variant_prompts(mode: SeedMode) -> SeedResult:
-    from domains.agent_prompts.services.seed_variants import seed_variant_prompts
+    from domains.agents.services.seed_variants import seed_variant_prompts
 
     return await seed_variant_prompts(mode)
 
 
 async def _seed_agent_base_prompts(mode: SeedMode) -> SeedResult:
-    from domains.agent_prompts.services.seed_agent_bases import seed_agent_base_prompts
+    from domains.agents.services.seed_agent_bases import seed_agent_base_prompts
 
     return await seed_agent_base_prompts(mode)
 

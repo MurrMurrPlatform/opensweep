@@ -22,8 +22,8 @@ Seeding is idempotent and never overwrites a user-edited row.
 
 from __future__ import annotations
 
-from domains.agent_prompts.models import AgentPrompt
-from domains.agent_prompts.services.platform_prompts import tally, upsert_platform_prompt
+from domains.agents.models import Agent
+from domains.agents.services.platform_prompts import tally, upsert_platform_prompt
 from infrastructure.seeding.base import SeedMode, SeedResult
 from logging_config import logger
 
@@ -40,7 +40,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "High-recall audit: trace inputs to sensitive operations, no finding cap, "
         "unconfirmed-but-serious issues filed and labeled.",
         "stage": "ask",
-        "default_job_type": "audit",
+        "produces": "findings",
         "default_effort": "deep",
         "tags": ["opensweep-variant", "ask", "audit", "deep"],
         "body": (
@@ -73,7 +73,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Shallow, high-precision hunt: at most 5 high-confidence, high-impact "
         "findings; an empty result is a valid result.",
         "stage": "ask",
-        "default_job_type": "audit",
+        "produces": "findings",
         "default_effort": "light",
         "tags": ["opensweep-variant", "ask", "audit", "quick"],
         "body": (
@@ -96,7 +96,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Security-lens audit: findings need a concrete attack path; hard "
         "exclusions for DoS/hardening/trusted-input noise.",
         "stage": "ask",
-        "default_job_type": "audit",
+        "produces": "findings",
         "default_effort": "deep",
         "tags": ["opensweep-variant", "ask", "audit", "security", "deep"],
         "body": (
@@ -130,7 +130,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Convert visible symptoms (failing tests, TODO/FIXME, swallowed errors) "
         "into deduplicated, actionable Findings with ranked hypotheses.",
         "stage": "ask",
-        "default_job_type": "audit",
+        "produces": "findings",
         "default_effort": "normal",
         "tags": ["opensweep-variant", "ask", "audit", "triage"],
         "body": (
@@ -159,7 +159,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Multi-lens independent review: hostile-input stance, untrusted PR text, "
         "validate-before-flagging, over-engineering counts.",
         "stage": "review",
-        "default_job_type": "audit",
+        "produces": "review-verdict",
         "default_effort": "deep",
         "tags": ["opensweep-variant", "review", "code-review", "deep"],
         "body": (
@@ -202,7 +202,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Blocking-issues-only review: correctness bugs, security holes, and "
         "tests that would pass anyway. Empty review is a valid outcome.",
         "stage": "review",
-        "default_job_type": "audit",
+        "produces": "review-verdict",
         "default_effort": "light",
         "tags": ["opensweep-variant", "review", "code-review", "quick"],
         "body": (
@@ -228,7 +228,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Systematic-debugging fix discipline: reproduce, trace to origin, one "
         "hypothesis at a time, regression test proven red→green, 3-strike stop.",
         "stage": "fix",
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "default_effort": "deep",
         "tags": ["opensweep-variant", "fix", "debugging", "deep"],
         "body": (
@@ -259,7 +259,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Try to refute the fix: original scenario against current code, sibling "
         "paths, same root cause elsewhere, regression guard present.",
         "stage": "verify",
-        "default_job_type": "audit",
+        "produces": "verification",
         "default_effort": "deep",
         "tags": ["opensweep-variant", "verify", "deep"],
         "body": (
@@ -287,7 +287,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "TDD implementation: failing test per criterion first, minimal code to "
         "green, red→green evidence reported.",
         "stage": "implement",
-        "default_job_type": "implement",
+        "produces": "code-changes",
         "default_effort": "normal",
         "tags": ["opensweep-variant", "implement", "tdd"],
         "body": (
@@ -311,7 +311,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Product-opportunity hunt: file kind=feature-idea findings only — "
         "missing capabilities, UX friction, natural extensions grounded in this repo.",
         "stage": "ask",
-        "default_job_type": "audit",
+        "produces": "findings",
         "default_effort": "normal",
         "tags": ["opensweep-variant", "ask", "audit", "feature-ideas"],
         "body": (
@@ -347,7 +347,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Web scout: find trending repos, AI news, frameworks, techniques and "
         "research relevant to this repo and its interests; files news items only.",
         "stage": "ask",
-        "default_job_type": "audit",
+        "produces": "findings",
         "default_effort": "normal",
         "tags": ["opensweep-variant", "ask", "audit", "news"],
         "body": (
@@ -386,7 +386,7 @@ _VARIANTS: dict[str, dict] = {
         "description": "Make docs smaller and truer: verify claims against code, delete before "
         "adding, one term per concept.",
         "stage": "document",
-        "default_job_type": "document",
+        "produces": "documentation",
         "default_effort": "light",
         "tags": ["opensweep-variant", "document", "docs", "quick"],
         "body": (
@@ -413,9 +413,9 @@ async def variant_prompt_body(slug: str) -> str | None:
     stable source_url. None when the row was deleted or disabled — callers
     fall back to the repo's configured stage prompt."""
     url = variant_source_url(slug)
-    for p in await AgentPrompt.nodes.filter(source="platform", source_url=url):
+    for p in await Agent.nodes.filter(provenance="system", source_url=url):
         if p.enabled:
-            return p.body or None
+            return p.prompt or None
     return None
 
 
@@ -424,8 +424,8 @@ async def seed_variant_prompts(mode: SeedMode = SeedMode.UPSERT) -> SeedResult:
     re-seed of existing rows (see SeedMode / upsert_platform_prompt)."""
     by_url = {
         (p.source_url or ""): p
-        for p in await AgentPrompt.nodes.all()
-        if (p.source or "") == "platform"
+        for p in await Agent.nodes.all()
+        if (p.provenance or "") == "system"
     }
     res = SeedResult(name="variant_prompts")
     for slug, spec in _VARIANTS.items():
