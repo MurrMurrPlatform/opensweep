@@ -27,8 +27,7 @@ from config import settings
 from domains.executors._shared import (
     StreamRecorder,
     budget_briefing,
-    enforce_ceilings,
-    exceeded_usage,
+    ceiling_warnings,
     execute_envelope_tool_calls,
     record_input,
     resolve_provider,
@@ -304,8 +303,9 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             executor_value=Executor.CLAUDE_CODE.value,
         )
 
-        # Live ceilings (audit #48): fed with real usage from the CLI's
-        # `result` event; a hard exceedance lands the run in LIMIT_EXCEEDED.
+        # Post-run ceiling accounting (Task 5): warnings only — a finished run
+        # is never retroactively failed; LIMIT_EXCEEDED is reserved for runs a
+        # limit actually stopped (wall kill sets timed_out=True below).
         usage_snapshot = UsageSnapshot(
             wall_seconds=wall_seconds,
             tool_turns=int(cli_usage.get("num_turns") or 0),
@@ -313,34 +313,18 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             + int(cli_usage.get("output_tokens") or 0),
             dollars=float(cli_usage.get("total_cost_usd") or 0.0),
         )
-        warnings, exceeded = enforce_ceilings(
+        warnings = ceiling_warnings(
             policy=req.policy, usage=usage_snapshot, wall_ceiling=wall_ceiling
         )
-        if exceeded is not None:
-            return DispatchResult(
-                status=RunStatus.LIMIT_EXCEEDED,
-                raw_artifact_uri=raw_uri,
-                parse_status=parse_status,
-                usage=exceeded_usage(
-                    exceeded,
-                    wall_seconds=round(wall_seconds, 2),
-                    exit_code=exit_code,
-                    cli_usage=cli_usage,
-                ),
-                error=str(exceeded),
-                summary="ceiling exceeded",
-            )
 
-        status = (
-            RunStatus.FAILED
-            if (timed_out or (exit_code is not None and exit_code != 0))
-            else RunStatus.AWAITING_INPUT
-        )
         if timed_out:
-            err = f"timed out after {wall_ceiling}s"
+            status = RunStatus.LIMIT_EXCEEDED
+            err = f"wall ceiling reached after {wall_ceiling}s"
         elif exit_code not in (0, None):
+            status = RunStatus.FAILED
             err = f"claude CLI exited {exit_code}"
         else:
+            status = RunStatus.AWAITING_INPUT
             err = ""
 
         return DispatchResult(

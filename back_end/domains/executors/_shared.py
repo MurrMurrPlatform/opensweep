@@ -35,7 +35,7 @@ from domains.llm_providers.services.llm_provider_service import (
 from domains.platform_tools.complete_run import extract_outcome
 from domains.platform_tools.dispatcher import dispatch as dispatch_platform_tool
 from domains.run_policies.models import RunPolicy
-from domains.run_policies.services.ceilings import CeilingExceeded, UsageSnapshot
+from domains.run_policies.services.ceilings import UsageSnapshot
 from domains.run_policies.services.ceilings import check as check_ceilings
 from domains.run_policies.services.system_default import DEFAULT_MAX_WALL_SECONDS
 from infrastructure import artifact_store
@@ -127,7 +127,7 @@ def budget_briefing(policy, wall_ceiling: int | None) -> str:
     )
 
 
-# ── Ceiling enforcement (audit #48) ──────────────────────────────────────
+# ── Ceiling accounting (Task 5) ───────────────────────────────────────────
 
 
 class _EffectivePolicy:
@@ -147,37 +147,17 @@ class _EffectivePolicy:
         return getattr(self._policy, name)
 
 
-def enforce_ceilings(
-    *,
-    policy: RunPolicy | None,
-    usage: UsageSnapshot,
-    wall_ceiling: int | None,
-) -> tuple[list[str], CeilingExceeded | None]:
-    """Live ceiling check. Returns (soft_warnings, exceeded-or-None).
-
-    Hard exceedances are returned (not raised) so adapters can assemble
-    their executor-specific LIMIT_EXCEEDED DispatchResult. `wall_ceiling`
-    must be the same value used for the subprocess timeout (None = the
-    local-provider skip / no wall guard)."""
+def ceiling_warnings(*, policy, usage: UsageSnapshot, wall_ceiling: int | None) -> list[str]:
+    """Post-run ceiling accounting — WARNINGS ONLY. A finished run is never
+    retroactively failed for running hot; LIMIT_EXCEEDED is reserved for runs
+    a limit actually stopped (wall kill / CLI --max-turns stop)."""
     if policy is None:
-        return [], None
-    try:
-        warnings = check_ceilings(
-            policy=_EffectivePolicy(policy, wall_ceiling),
-            usage=usage,
-            raise_on_exceed=True,
-        )
-    except CeilingExceeded as exc:
-        return [], exc
-    return warnings, None
-
-
-def exceeded_usage(exc: CeilingExceeded, **usage: Any) -> dict[str, Any]:
-    """The `usage` payload for a LIMIT_EXCEEDED DispatchResult."""
-    return {
-        **usage,
-        "exceeded": {"field": exc.field, "value": exc.value, "ceiling": exc.ceiling},
-    }
+        return []
+    return check_ceilings(
+        policy=_EffectivePolicy(policy, wall_ceiling),
+        usage=usage,
+        raise_on_exceed=False,
+    )
 
 
 # ── Run input + live stream recording ─────────────────────────────────────

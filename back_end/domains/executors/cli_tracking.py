@@ -17,8 +17,7 @@ from typing import Any
 from domains.executors._shared import (
     StreamRecorder,
     budget_briefing,
-    enforce_ceilings,
-    exceeded_usage,
+    ceiling_warnings,
     execute_envelope_tool_calls,
     extract_envelope,
     record_input,
@@ -151,35 +150,24 @@ class _CLITrackingAdapter(ExecutorAdapter):
             )
             output_refs.extend(refs)
 
-        # Live ceilings (audit #48). Subscription CLIs surface no token/dollar
-        # metering, so wall/tool-turn ceilings are the enforceable set here;
-        # `timeout` already encodes the local-provider skip.
+        # Post-run ceiling accounting (Task 5): warnings only — a finished run
+        # is never retroactively failed; LIMIT_EXCEEDED is reserved for runs a
+        # limit actually stopped (wall kill surfaces as inv.error "timed out").
         usage_snapshot = UsageSnapshot(
             wall_seconds=wall,
             tool_turns=len(envelope.get("tool_calls", [])) if envelope else 0,
         )
-        warnings, exceeded = enforce_ceilings(
+        warnings = ceiling_warnings(
             policy=req.policy, usage=usage_snapshot, wall_ceiling=timeout
         )
-        if exceeded is not None:
-            return DispatchResult(
-                status=RunStatus.LIMIT_EXCEEDED,
-                raw_artifact_uri=raw_uri,
-                parse_status=parse_status,
-                usage=exceeded_usage(
-                    exceeded,
-                    wall_seconds=round(wall, 2),
-                    exit_code=inv.exit_code,
-                    provider_kind=provider.kind,
-                    transport=inv.transport,
-                ),
-                output_refs=output_refs,
-                error=str(exceeded),
-                summary=f"{self.name.value} ceiling exceeded",
-                outcome=outcome,
-            )
 
-        status = RunStatus.FAILED if inv.error else RunStatus.AWAITING_INPUT
+        wall_killed = inv.error.startswith("timed out") if inv.error else False
+        if wall_killed:
+            status = RunStatus.LIMIT_EXCEEDED
+        elif inv.error:
+            status = RunStatus.FAILED
+        else:
+            status = RunStatus.AWAITING_INPUT
         return DispatchResult(
             status=status,
             raw_artifact_uri=raw_uri,
