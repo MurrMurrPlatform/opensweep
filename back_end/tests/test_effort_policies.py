@@ -73,3 +73,38 @@ def test_wall_positive_is_used():
 def test_wall_unset_falls_back_to_system_default():
     from domains.run_policies.services.system_default import DEFAULT_MAX_WALL_SECONDS
     assert resolve_wall_ceiling(_req(_P(None)), "claude_subscription") == DEFAULT_MAX_WALL_SECONDS
+
+
+# Legacy "quick" must normalize at every API boundary that types the field as
+# InvestigationEffort — otherwise old clients / stored payloads 422 (the enum
+# no longer has a "quick" member).
+
+
+def test_trigger_review_request_normalizes_quick_depth():
+    from api.v1.delivery import TriggerReviewRequest
+
+    assert TriggerReviewRequest(depth="quick").depth is InvestigationEffort.SHORT
+
+
+def test_trigger_review_request_defaults_depth_to_normal():
+    from api.v1.delivery import TriggerReviewRequest
+
+    assert TriggerReviewRequest().depth is InvestigationEffort.NORMAL
+
+
+def test_audit_request_normalizes_quick_effort():
+    from api.v1.sweep import AuditRequest
+
+    assert AuditRequest(effort="quick").effort is InvestigationEffort.SHORT
+
+
+def test_deep_scan_request_normalizes_quick_effort():
+    from api.v1.sweep import DeepScanRequest
+
+    assert DeepScanRequest(effort="quick").effort is InvestigationEffort.SHORT
+
+
+def test_deep_scan_request_defaults_effort_to_deep():
+    from api.v1.sweep import DeepScanRequest
+
+    assert DeepScanRequest().effort is InvestigationEffort.DEEP

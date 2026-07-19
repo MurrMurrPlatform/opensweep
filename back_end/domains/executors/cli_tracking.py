@@ -5,7 +5,7 @@ of platform-tool calls. They are deliberately read/report only: no patch or
 apply surface is available in v1.
 
 Shared plumbing (provider/ceiling resolution, stream recording, envelope
-extraction + tool dispatch, live ceilings) lives in `_shared.py`.
+extraction + tool dispatch, warnings-only ceiling accounting) lives in `_shared.py`.
 """
 
 from __future__ import annotations
@@ -57,6 +57,22 @@ _CONTINUATION_NUDGE_TRACKING = (
     "then emit the final JSON envelope of platform tool calls INCLUDING a "
     "complete_run entry with your end-of-run report."
 )
+
+
+def envelope_has_complete_run(envelope: dict[str, Any] | None) -> bool:
+    """True when a parsed final envelope contains a `complete_run` tool call.
+
+    Envelope-based codex runs stamp Run.completed_at only AFTER the
+    continuation decision (execute_envelope_tool_calls runs later), so
+    `_completed_via_mcp` cannot see an envelope-path completion in time — the
+    envelope itself is the authoritative first-pass completion signal.
+    """
+    if not envelope:
+        return False
+    for call in envelope.get("tool_calls") or []:
+        if isinstance(call, dict) and call.get("tool") == "complete_run":
+            return True
+    return False
 
 
 def codex_continuation_prompt(nudge: str, transcript_tail: str) -> str:
@@ -172,9 +188,13 @@ class _CLITrackingAdapter(ExecutorAdapter):
                 summary=f"{self.name.value} paused: provider quota exhausted — will retry",
             )
 
-        # Codex continuation pass (Task 7): if codex did not finish (no
-        # complete_run stamped via MCP) and wall budget remains, re-prompt once
-        # with a capped tail of the prior transcript as context.
+        # Codex continuation pass (Task 7): if codex did not finish and wall
+        # budget remains, re-prompt once with a capped tail of the prior
+        # transcript as context. "Did not finish" has two signals: the MCP-path
+        # completion (`_completed_via_mcp`, for MCP-configured codex) AND the
+        # envelope-path completion (`complete_run` in the first-pass envelope,
+        # already parsed above) — the latter is required because envelope tool
+        # calls execute later, so completed_at is not yet stamped at this gate.
         # OpenCode gets no continuation yet — no session resume is available and
         # transcript-tail re-prompt is only wired for codex for now.
         # Tracking variable: last_inv points at whichever pass ran last so that
@@ -186,6 +206,7 @@ class _CLITrackingAdapter(ExecutorAdapter):
             remaining_wall = (timeout - wall) if timeout is not None else None
             if (
                 inv.ok  # gate: a crashed/timed-out first pass must NOT be re-prompted
+                and not envelope_has_complete_run(envelope)
                 and not await _completed_via_mcp(req.run_uid)
                 and (remaining_wall is None or remaining_wall > _MIN_CONTINUATION_WALL_SECONDS)
             ):

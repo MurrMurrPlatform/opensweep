@@ -184,8 +184,9 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             label="live claude_code transcript",
         )
         # Real usage from claude's `result` stream event (num_turns, token
-        # counts, total_cost_usd) — feeds the live ceiling check. `num_turns`
-        # is per-pass; we accumulate it into `turns_used` across passes.
+        # counts, total_cost_usd) — feeds post-run ceiling warnings (never a
+        # hard stop). `num_turns` is per-pass; we accumulate it into
+        # `turns_used` across passes.
         # Token counts and cost are likewise per-pass in cli_usage (each pass
         # overwrites it); we accumulate totals in tokens_used / dollars_used.
         cli_usage: dict[str, Any] = {}
@@ -202,10 +203,13 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         )
         investigate_wall = soft_wall(wall_ceiling)
 
-        async def _run_pass(pass_argv: list[str], timeout: float | None) -> tuple[int | None, bool, str]:
-            """One CLI invocation. Returns (exit_code, timed_out, pass_stdout)."""
+        async def _run_pass(pass_argv: list[str], timeout: float | None) -> tuple[int | None, bool, str, str]:
+            """One CLI invocation. Returns (exit_code, timed_out, pass_stdout,
+            pass_stderr) — both slices are per-pass so quota detection sees only
+            this pass's stderr, not the cumulative stream across passes."""
             nonlocal cli_usage
             pass_offset = len(stdout_parts)
+            pass_stderr_offset = len(stderr_parts)
             pass_timed_out = False
             proc = await asyncio.create_subprocess_exec(
                 *pass_argv,
@@ -266,7 +270,12 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                     await proc.wait()
                 except Exception:
                     pass
-            return proc.returncode, pass_timed_out, "".join(stdout_parts[pass_offset:])
+            return (
+                proc.returncode,
+                pass_timed_out,
+                "".join(stdout_parts[pass_offset:]),
+                "".join(stderr_parts[pass_stderr_offset:]),
+            )
 
         def _remaining(ceiling: int | None) -> float | None:
             if ceiling is None:
@@ -296,7 +305,7 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                     pass_argv = with_turn_cap(cont, remaining_turns)
                     append_event(req.run_uid, "user_message", text=_CONTINUATION_NUDGE)
 
-                exit_code, timed_out, pass_stdout = await _run_pass(pass_argv, remaining)
+                exit_code, timed_out, pass_stdout, pass_stderr = await _run_pass(pass_argv, remaining)
                 turns_used += int(cli_usage.get("num_turns") or 0)
                 tokens_used += int(cli_usage.get("input_tokens") or 0) + int(cli_usage.get("output_tokens") or 0)
                 dollars_used += float(cli_usage.get("total_cost_usd") or 0.0)
@@ -306,7 +315,7 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                         session_id = meta.session_id
                 if timed_out:
                     break
-                if detect_quota_exhaustion(exit_code, pass_stdout, "".join(stderr_parts)):
+                if detect_quota_exhaustion(exit_code, pass_stdout, pass_stderr):
                     quota_hit = True
                     break
                 if await _completed_via_mcp(req.run_uid):
@@ -318,6 +327,15 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                 pass_no += 1
                 if pass_no > max_extra_passes:
                     break
+
+            # Whether the run hit its budget BEFORE the wind-down pass. The
+            # wind-down reuses `exit_code`/`timed_out` (its own clean exit would
+            # otherwise erase a soft-wall kill from the investigate loop), so
+            # capture the budget-stop signal here and OR it into the post-loop
+            # decision below.
+            budget_stopped_before_winddown = bool(
+                timed_out or (turn_cap and turns_used >= turn_cap)
+            )
 
             # Wind-down: budget ran out (wall soft-kill, turn cap, or pass cap)
             # before complete_run — spend the reserved wall share on a wrap-up
@@ -337,7 +355,7 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                     )
                     if wind_argv is not None:
                         append_event(req.run_uid, "user_message", text=_WINDDOWN_NUDGE)
-                        exit_code, timed_out, _ = await _run_pass(
+                        exit_code, timed_out, _, _ = await _run_pass(
                             with_turn_cap(wind_argv, 30), winddown_budget
                         )
                         turns_used += int(cli_usage.get("num_turns") or 0)
@@ -420,7 +438,14 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         # Did the agent deliberately finish (complete_run)? Checked once more
         # after the wind-down pass, which may itself have called complete_run.
         completed = await _completed_via_mcp(req.run_uid)
-        budget_stopped = (timed_out or (turn_cap and turns_used >= turn_cap)) and not completed
+        # OR in the pre-wind-down signal: a soft-wall-killed run whose wind-down
+        # exits cleanly still stopped on budget (the wind-down overwrote
+        # `timed_out`). A wind-down that itself times out also counts.
+        budget_stopped = (
+            budget_stopped_before_winddown
+            or timed_out
+            or (turn_cap and turns_used >= turn_cap)
+        ) and not completed
 
         if budget_stopped:
             # The continuation + wind-down loop ran out of wall/turn budget

@@ -10,7 +10,7 @@ which triplicated:
   `StreamRecorder` — audit #35)
 - JSON envelope extraction and the trailer/envelope platform-tool dispatch
   loop (incl. complete_run harvesting and output_refs extraction)
-- live ceiling enforcement feeding real usage (audit #48)
+- post-run ceiling accounting: warnings only, never a hard stop (audit #48)
 
 Adapters keep only argv/prompt construction and executor-specific bits.
 """

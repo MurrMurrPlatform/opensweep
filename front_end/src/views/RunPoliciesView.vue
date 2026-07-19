@@ -84,15 +84,24 @@ function numOrNull(v: number | ''): number | null {
  * Format a ceiling value for display.
  * - wall seconds: 0 = explicitly unlimited; null = unset (backend default ~60m)
  * - other ceilings: null = no ceiling (unlimited)
+ *
+ * `prefix` (e.g. a currency sign) is applied ONLY to numeric values — never to
+ * the "Unlimited" / "default (60m)" words, so a dollar field renders
+ * "Unlimited", not "$Unlimited".
  */
-function formatCeiling(v: number | null | undefined, unit: string, isWall = false): string {
+function formatCeiling(
+  v: number | null | undefined,
+  unit: string,
+  isWall = false,
+  prefix = '',
+): string {
   if (isWall) {
     if (v === 0) return 'Unlimited'
     if (v == null) return 'default (60m)'
-    return `${v}${unit}`
+    return `${prefix}${v}${unit}`
   }
   if (v == null) return 'Unlimited'
-  return `${v}${unit}`
+  return `${prefix}${v}${unit}`
 }
 
 function resetForm() {
@@ -298,7 +307,7 @@ async function confirmRemove() {
               </div>
               <div class="text-xs text-muted-foreground">{{ p.description }}</div>
               <div class="text-xs text-muted-foreground font-mono mt-1 break-all">
-                ${{ formatCeiling(p.max_dollars, '') }} · tokens={{ formatCeiling(p.max_tokens, '') }} ·
+                {{ formatCeiling(p.max_dollars, '', false, '$') }} · tokens={{ formatCeiling(p.max_tokens, '') }} ·
                 wall={{ formatCeiling(p.max_wall_seconds, 's', true) }} · turns={{ formatCeiling(p.max_tool_turns, '') }} · files={{ formatCeiling(p.max_files_touched, '') }} ·
                 cloud={{ p.cloud_allowed }} · local_only={{ p.local_only }} · dry_run={{ p.dry_run }} · on_exceed={{ p.on_exceed }}
               </div>

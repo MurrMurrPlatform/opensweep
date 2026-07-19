@@ -11,7 +11,7 @@ and dispatches them sequentially. A multi-turn loop is a future
 enhancement.
 
 Shared plumbing (provider/ceiling resolution, stream recording, envelope
-extraction + tool dispatch, live ceilings) lives in `_shared.py`.
+extraction + tool dispatch, warnings-only ceiling accounting) lives in `_shared.py`.
 """
 
 from __future__ import annotations

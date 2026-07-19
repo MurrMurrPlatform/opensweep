@@ -40,8 +40,6 @@ from infrastructure.audit import write_audit
 # because normalize_effort maps the legacy "quick" workflow depth to SHORT.
 REVIEW_DEPTH_VARIANTS = {"short": "review-quick-gate", "deep": "review-adversarial"}
 
-_DEPTHS = ("short", "normal", "deep")
-
 
 def depth_block(depth: str, max_findings: int | None = None) -> str:
     """The intent's budget/stance paragraph. `max_findings` is the numeric
