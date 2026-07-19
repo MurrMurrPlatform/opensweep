@@ -53,7 +53,7 @@ from domains.investigations.schemas import (
     RunStatus,
 )
 from domains.investigations.services.run_events import append_event, publish_delta
-from domains.llm_providers.schemas import default_cli_template, effective_cli_template
+from domains.llm_providers.schemas import effective_cli_template
 from domains.llm_providers.services.credentials import provider_secret
 from domains.llm_providers.services.llm_executor import with_model_flag
 from domains.run_policies.services.ceilings import UsageSnapshot
