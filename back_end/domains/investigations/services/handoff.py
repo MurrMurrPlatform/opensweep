@@ -17,6 +17,11 @@ and DB side effects live in write_handoff_file / prepare_handoff.
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from domains.investigations.schemas import RunHandoffDTO
 
 HANDOFF_FILENAME = "OPENSWEEP_HANDOFF.md"
 
@@ -109,3 +114,73 @@ You are taking over an OpenSweep agent conversation in a local terminal.
 
 {transcript}
 """
+
+
+# ── Side effects ─────────────────────────────────────────────────────────────
+
+
+def write_handoff_file(sandbox_dir: str, content: str) -> str:
+    """Write the brief at the sandbox root and keep it out of git via
+    .git/info/exclude (idempotent). The exclude write is best-effort — a
+    sandbox mid-teardown must not break the handoff response."""
+    root = Path(sandbox_dir)
+    path = root / HANDOFF_FILENAME
+    path.write_text(content)
+    try:
+        exclude = root / ".git" / "info" / "exclude"
+        if exclude.parent.is_dir():
+            existing = exclude.read_text() if exclude.exists() else ""
+            if HANDOFF_FILENAME not in existing.splitlines():
+                with exclude.open("a") as fh:
+                    fh.write(f"{HANDOFF_FILENAME}\n")
+    except OSError:
+        pass
+    return str(path)
+
+
+async def prepare_handoff(run) -> RunHandoffDTO:
+    """Build the takeover payload for a run: pick the mode, write the brief
+    into the live sandbox, and render the one-paste command."""
+    from domains.execution.models import Sandbox
+    from domains.execution.schemas import SandboxStatus
+    from domains.investigations.schemas import RunHandoffDTO
+    from domains.investigations.services.turn_service import transcript_entries
+
+    sandbox = (
+        await Sandbox.nodes.get_or_none(uid=run.sandbox_uid) if (run.sandbox_uid or "") else None
+    )
+    live = sandbox is not None and sandbox.status == SandboxStatus.READY.value
+    mode, reason = handoff_mode(
+        executor=run.executor or "",
+        cli_session_id=run.cli_session_id or "",
+        sandbox_live=live,
+    )
+    if mode == "unavailable":
+        return RunHandoffDTO(mode=mode, reason=reason)
+
+    spec = dict(run.workspace_spec or {})
+    content = render_handoff_markdown(
+        title=run.title or "",
+        playbook=run.playbook or "",
+        work_branch=spec.get("work_branch") or sandbox.sandbox_branch or "",
+        base_branch=spec.get("base_branch") or sandbox.source_branch or "",
+        entries=transcript_entries(run.uid),
+    )
+    # Written in BOTH modes: if a resume ever fails (custom CLAUDE_CONFIG_DIR,
+    # pruned session), the brief is already in place as the fallback.
+    write_handoff_file(sandbox.container_path, content)
+
+    if mode == "resume":
+        command = build_resume_command(
+            host_path=sandbox.host_path,
+            container_path=sandbox.container_path,
+            cli_session_id=run.cli_session_id,
+        )
+    else:
+        command = build_seeded_command(host_path=sandbox.host_path)
+    return RunHandoffDTO(
+        mode=mode,
+        command=command,
+        sandbox_host_path=sandbox.host_path,
+        cli_session_id=run.cli_session_id or "",
+    )

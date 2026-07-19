@@ -212,6 +212,22 @@ class RunDTO(BaseModel):
     updated_at: datetime | None = None
 
 
+class RunHandoffDTO(BaseModel):
+    """Terminal takeover payload (docs/features/sandbox_improvements.md §3A/3B).
+
+    mode: resume — paste-command resumes the actual claude session;
+          seeded — paste-command starts a fresh claude seeded by the
+          OPENSWEEP_HANDOFF.md brief written into the workspace;
+          unavailable — no live workspace; `reason` says how to recover.
+    """
+
+    mode: str
+    command: str = ""
+    sandbox_host_path: str = ""
+    cli_session_id: str = ""
+    reason: str = ""
+
+
 class CreateRunRequest(BaseModel):
     """POST /api/v1/runs — one-off run creation (chat and ask playbooks; the
     other playbooks have domain trigger endpoints that carry their guards)."""
