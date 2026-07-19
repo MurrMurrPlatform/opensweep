@@ -11,6 +11,7 @@ extraction + tool dispatch, live ceilings) lives in `_shared.py`.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -36,6 +37,8 @@ from domains.platform_tools.complete_run import extract_outcome
 from domains.run_policies.services.ceilings import UsageSnapshot
 from infrastructure import artifact_store
 from infrastructure.code_graph import CODE_GRAPH_PROMPT, code_graph_available
+
+logger = logging.getLogger(__name__)
 
 # Patch tools stay off in tracking-only v1.
 _DENY_TOOLS = {"attach_patch_to_finding": "patch tools are disabled in tracking-only v1"}
@@ -174,11 +177,16 @@ class _CLITrackingAdapter(ExecutorAdapter):
         # with a capped tail of the prior transcript as context.
         # OpenCode gets no continuation yet — no session resume is available and
         # transcript-tail re-prompt is only wired for codex for now.
+        # Tracking variable: last_inv points at whichever pass ran last so that
+        # status decisions (wall-kill, FAILED) and usage always reflect the
+        # final pass outcome.
+        last_inv = inv
         continuation_pass = False
         if self.provider_kind == "codex_subscription":
             remaining_wall = (timeout - wall) if timeout is not None else None
             if (
-                not await _completed_via_mcp(req.run_uid)
+                inv.ok  # gate: a crashed/timed-out first pass must NOT be re-prompted
+                and not await _completed_via_mcp(req.run_uid)
                 and (remaining_wall is None or remaining_wall > _MIN_CONTINUATION_WALL_SECONDS)
             ):
                 cont_prompt = codex_continuation_prompt(_CONTINUATION_NUDGE_TRACKING, raw_stdout)
@@ -212,9 +220,13 @@ class _CLITrackingAdapter(ExecutorAdapter):
                 finally:
                     await cont_recorder.close()
 
+                last_inv = cont_inv  # status decisions now reflect the continuation pass
+
                 cont_stdout = cont_inv.raw_output or ""
                 raw_stdout = raw_stdout + "\n\n--- CONTINUATION PASS ---\n" + cont_stdout
-                raw_stderr = raw_stderr + (cont_inv.stderr or "")
+                cont_stderr = cont_inv.stderr or ""
+                if cont_stderr:
+                    raw_stderr = raw_stderr + "\n--- CONTINUATION PASS STDERR ---\n" + cont_stderr
                 wall = time.monotonic() - started
                 continuation_pass = True
 
@@ -224,6 +236,19 @@ class _CLITrackingAdapter(ExecutorAdapter):
                     first_calls = (envelope.get("tool_calls") or []) if envelope else []
                     cont_calls = cont_envelope.get("tool_calls") or []
                     merged_calls = first_calls + cont_calls
+                    # Count how many complete_run entries appear across both passes
+                    # to log when both contained one (continuation's wins per spec).
+                    complete_run_count = sum(
+                        1
+                        for c in merged_calls
+                        if (c.get("tool") if isinstance(c, dict) else None) == "complete_run"
+                    )
+                    if complete_run_count >= 2:
+                        logger.info(
+                            "codex continuation: both passes emitted complete_run — "
+                            "the continuation's wins (%d total in merged list)",
+                            complete_run_count,
+                        )
                     # Use the continuation envelope as the base (it has the later summary).
                     envelope = dict(cont_envelope)
                     envelope["tool_calls"] = merged_calls
@@ -264,29 +289,36 @@ class _CLITrackingAdapter(ExecutorAdapter):
             policy=req.policy, usage=usage_snapshot, wall_ceiling=timeout
         )
 
-        wall_killed = inv.error.startswith("timed out") if inv.error else False
+        # Use last_inv (= cont_inv when continuation ran, else inv) so that
+        # wall-kill detection, FAILED status, and exit_code all reflect the
+        # final pass.  first_pass_exit_code is included for observability when
+        # a continuation was attempted.
+        wall_killed = last_inv.error.startswith("timed out") if last_inv.error else False
         if wall_killed:
             status = RunStatus.LIMIT_EXCEEDED
-        elif inv.error:
+        elif last_inv.error:
             status = RunStatus.FAILED
         else:
             status = RunStatus.AWAITING_INPUT
+        usage: dict[str, Any] = {
+            "wall_seconds": round(wall, 2),
+            "exit_code": last_inv.exit_code,
+            "provider_kind": provider.kind,
+            "transport": last_inv.transport,
+            "tool_calls": len(envelope.get("tool_calls", [])) if envelope else 0,
+            "tool_results": tool_results,
+            "warnings": warnings,
+            "continuation_pass": continuation_pass,
+        }
+        if continuation_pass:
+            usage["first_pass_exit_code"] = inv.exit_code
         return DispatchResult(
             status=status,
             raw_artifact_uri=raw_uri,
             parse_status=parse_status,
-            usage={
-                "wall_seconds": round(wall, 2),
-                "exit_code": inv.exit_code,
-                "provider_kind": provider.kind,
-                "transport": inv.transport,
-                "tool_calls": len(envelope.get("tool_calls", [])) if envelope else 0,
-                "tool_results": tool_results,
-                "warnings": warnings,
-                "continuation_pass": continuation_pass,
-            },
+            usage=usage,
             output_refs=output_refs,
-            error=inv.error or "",
+            error=last_inv.error or "",
             summary=f"{self.name.value} finished in {wall:.1f}s",
             outcome=outcome or extract_outcome({"summary": (envelope or {}).get("summary")}),
         )
