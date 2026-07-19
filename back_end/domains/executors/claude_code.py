@@ -53,6 +53,7 @@ from domains.investigations.schemas import (
     RunStatus,
 )
 from domains.investigations.services.run_events import append_event, publish_delta
+from domains.investigations.services.turn_cli import extract_claude_meta
 from domains.llm_providers.schemas import effective_cli_template
 from domains.llm_providers.services.credentials import provider_secret
 from domains.llm_providers.services.llm_executor import with_model_flag
@@ -153,15 +154,15 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             .replace("{{mcp_config_path_q}}", shlex.quote(mcp_config_path))
         )
 
+        # Un-capped base argv: the continuation loop below applies
+        # `with_turn_cap` per pass (the initial pass with the full cap, later
+        # passes with the *remaining* turns), so wrapping here would double the
+        # flag.
         argv = with_model_flag(
             ensure_stream_json_flags(shlex.split(rendered)),
             kind="claude_subscription",
             model=provider.model or "",
             template=template,
-        )
-        argv = with_turn_cap(
-            argv,
-            int(req.policy.max_tool_turns) if (req.policy and req.policy.max_tool_turns) else None,
         )
         env = claude_env(run_uid=req.run_uid, oauth_token=provider_secret(provider))
         await record_input(
@@ -182,12 +183,27 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             label="live claude_code transcript",
         )
         # Real usage from claude's `result` stream event (num_turns, token
-        # counts, total_cost_usd) — feeds the live ceiling check.
+        # counts, total_cost_usd) — feeds the live ceiling check. `num_turns`
+        # is per-pass; we accumulate it into `turns_used` across passes.
         cli_usage: dict[str, Any] = {}
+        turns_used = 0
+        session_id = ""
+        quota_hit = False
+        max_extra_passes = int(getattr(settings, "OPENSWEEP_CONTINUATION_PASSES", 3))
+        turn_cap = (
+            int(req.policy.max_tool_turns)
+            if (req.policy and req.policy.max_tool_turns)
+            else None
+        )
+        investigate_wall = soft_wall(wall_ceiling)
 
-        try:
+        async def _run_pass(pass_argv: list[str], timeout: float | None) -> tuple[int | None, bool, str]:
+            """One CLI invocation. Returns (exit_code, timed_out, pass_stdout)."""
+            nonlocal cli_usage
+            pass_offset = len(stdout_parts)
+            pass_timed_out = False
             proc = await asyncio.create_subprocess_exec(
-                *argv,
+                *pass_argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -234,18 +250,89 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                     _pump(proc.stderr, stderr_parts),
                     proc.wait(),
                 )
-                if wall_ceiling is None:
+                if timeout is None:
                     await pumps
                 else:
-                    await asyncio.wait_for(pumps, timeout=wall_ceiling)
+                    await asyncio.wait_for(pumps, timeout=timeout)
             except TimeoutError:
-                timed_out = True
+                pass_timed_out = True
                 kill_tree(proc)
                 try:
                     await proc.wait()
                 except Exception:
                     pass
-            exit_code = proc.returncode
+            return proc.returncode, pass_timed_out, "".join(stdout_parts[pass_offset:])
+
+        def _remaining(ceiling: int | None) -> float | None:
+            if ceiling is None:
+                return None
+            return ceiling - (time.monotonic() - started)
+
+        try:
+            pass_no = 0
+            while True:
+                remaining = _remaining(investigate_wall)
+                if pass_no == 0:
+                    pass_argv = with_turn_cap(argv, turn_cap)
+                else:
+                    if remaining is not None and remaining < _MIN_CONTINUATION_SECONDS:
+                        break
+                    remaining_turns = (
+                        max(1, turn_cap - turns_used) if turn_cap else None
+                    )
+                    cont = build_continuation_argv(
+                        argv,
+                        instruction=instruction,
+                        nudge=_CONTINUATION_NUDGE,
+                        session_id=session_id,
+                    )
+                    if cont is None:
+                        break
+                    pass_argv = with_turn_cap(cont, remaining_turns)
+                    append_event(req.run_uid, "user_message", text=_CONTINUATION_NUDGE)
+
+                exit_code, timed_out, pass_stdout = await _run_pass(pass_argv, remaining)
+                turns_used += int(cli_usage.get("num_turns") or 0)
+                for line in pass_stdout.splitlines():
+                    meta = extract_claude_meta(line)
+                    if meta.session_id:
+                        session_id = meta.session_id
+                if timed_out:
+                    break
+                if detect_quota_exhaustion(exit_code, pass_stdout, "".join(stderr_parts)):
+                    quota_hit = True
+                    break
+                if await _completed_via_mcp(req.run_uid):
+                    break
+                if turn_cap and turns_used >= turn_cap:
+                    break
+                if exit_code not in (0, None) and "--max-turns" not in " ".join(pass_argv):
+                    break  # real CLI failure; --max-turns stops exit nonzero and MAY continue
+                pass_no += 1
+                if pass_no > max_extra_passes:
+                    break
+
+            # Wind-down: budget ran out (wall soft-kill, turn cap, or pass cap)
+            # before complete_run — spend the reserved wall share on a wrap-up
+            # pass so the run ends with a report instead of a cliff.
+            if (
+                session_id
+                and not quota_hit
+                and not await _completed_via_mcp(req.run_uid)
+            ):
+                winddown_budget = _remaining(wall_ceiling)
+                if winddown_budget is None or winddown_budget > 30:
+                    wind_argv = build_continuation_argv(
+                        argv,
+                        instruction=instruction,
+                        nudge=_WINDDOWN_NUDGE,
+                        session_id=session_id,
+                    )
+                    if wind_argv is not None:
+                        append_event(req.run_uid, "user_message", text=_WINDDOWN_NUDGE)
+                        exit_code, timed_out, _ = await _run_pass(
+                            with_turn_cap(wind_argv, 30), winddown_budget
+                        )
         except FileNotFoundError as exc:
             return DispatchResult(
                 status=RunStatus.FAILED,
@@ -254,6 +341,8 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             )
         finally:
             await recorder.close()
+            if session_id:
+                await _persist_session_id(req.run_uid, session_id)
 
         wall_seconds = time.monotonic() - started
         raw_stdout = "".join(stdout_parts)
@@ -305,10 +394,11 @@ class ClaudeCodeAdapter(ExecutorAdapter):
 
         # Post-run ceiling accounting (Task 5): warnings only — a finished run
         # is never retroactively failed; LIMIT_EXCEEDED is reserved for runs a
-        # limit actually stopped (wall kill sets timed_out=True below).
+        # limit actually stopped (wall kill / turn cap). tool_turns is the
+        # accumulated per-pass total, not just the last pass's num_turns.
         usage_snapshot = UsageSnapshot(
             wall_seconds=wall_seconds,
-            tool_turns=int(cli_usage.get("num_turns") or 0),
+            tool_turns=turns_used,
             tokens=int(cli_usage.get("input_tokens") or 0)
             + int(cli_usage.get("output_tokens") or 0),
             dollars=float(cli_usage.get("total_cost_usd") or 0.0),
@@ -317,9 +407,19 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             policy=req.policy, usage=usage_snapshot, wall_ceiling=wall_ceiling
         )
 
-        if timed_out:
+        # Did the agent deliberately finish (complete_run)? Checked once more
+        # after the wind-down pass, which may itself have called complete_run.
+        completed = await _completed_via_mcp(req.run_uid)
+        budget_stopped = (timed_out or (turn_cap and turns_used >= turn_cap)) and not completed
+
+        if budget_stopped:
+            # The continuation + wind-down loop ran out of wall/turn budget
+            # before the agent called complete_run. LIMIT_EXCEEDED is in
+            # FOLLOW_UP_STATUSES, so the UI composer stays enabled and — with
+            # cli_session_id persisted above — a follow-up message resumes the
+            # same CLI session.
             status = RunStatus.LIMIT_EXCEEDED
-            err = f"wall ceiling reached after {wall_ceiling}s"
+            err = "run budget exhausted (wall/turns) — resumable from the UI"
         elif exit_code not in (0, None):
             status = RunStatus.FAILED
             err = f"claude CLI exited {exit_code}"
@@ -339,6 +439,8 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                 "tool_results": tool_results,
                 "warnings": warnings,
                 "cli_usage": cli_usage,
+                "continuation_passes": pass_no,
+                "turns_used": turns_used,
             },
             output_refs=[raw_uri, *parsed_refs],
             error=err,
@@ -427,6 +529,78 @@ def with_turn_cap(argv: list[str], max_turns: int | None) -> list[str]:
     if not max_turns or max_turns <= 0 or "--max-turns" in argv:
         return list(argv)
     return [*argv, "--max-turns", str(int(max_turns))]
+
+
+# Continuation loop (see docs/superpowers/plans/2026-07-19-run-depth-and-policy-overhaul.md):
+# a headless `-p` turn ends whenever the model emits a final message, which on
+# huge open-ended tasks is reliably too early. While the agent has not called
+# complete_run (it stamps Run.completed_at via MCP) and budget remains, resume
+# the CLI session and tell it to continue. The last _WINDDOWN_SHARE of the wall
+# is reserved for one wrap-up pass so runs end with a report, not a kill.
+_WINDDOWN_SHARE = 0.10
+_MIN_CONTINUATION_SECONDS = 120
+
+_CONTINUATION_NUDGE = """Continue this run — it is not finished. You stopped without calling the
+`complete_run` platform tool, so OpenSweep resumed your session. Pick up
+exactly where you left off: work through every remaining area of your plan,
+file each new issue with `create_finding` as you find it, and only when the
+whole scope is genuinely covered finish with `complete_run`. Do not repeat
+work you already recorded and do not re-file findings you already filed."""
+
+_WINDDOWN_NUDGE = """Your run budget is exhausted — do NOT investigate anything new. Wrap up now:
+file any findings you have evidence for but have not yet filed, record the
+areas you did not reach as skipped, and call `complete_run` with your
+end-of-run report. This is your final pass."""
+
+
+def soft_wall(wall_ceiling: int | None) -> int | None:
+    """The investigation portion of the wall: kill at this point, then spend
+    the reserved remainder on one wind-down pass."""
+    if wall_ceiling is None:
+        return None
+    return max(1, int(wall_ceiling * (1 - _WINDDOWN_SHARE)))
+
+
+def build_continuation_argv(
+    argv: list[str], *, instruction: str, nudge: str, session_id: str
+) -> list[str] | None:
+    """Continuation-pass argv: same invocation with the -p payload swapped for
+    the nudge, resuming the recorded session. None (no continuation possible)
+    when there is no session id or a custom template inlined the instruction
+    in a way we cannot find."""
+    if not session_id:
+        return None
+    out: list[str] = []
+    replaced = False
+    for token in argv:
+        if not replaced and token == instruction:
+            out.append(nudge)
+            replaced = True
+        else:
+            out.append(token)
+    if not replaced:
+        return None
+    return [*out, "--resume", session_id]
+
+
+async def _completed_via_mcp(run_uid: str) -> bool:
+    """True when the agent already finished deliberately — complete_run stamps
+    completed_at on the Run through the MCP bridge."""
+    from domains.investigations.models import Run
+
+    run = await Run.nodes.get_or_none(uid=run_uid)
+    return bool(run is not None and run.completed_at)
+
+
+async def _persist_session_id(run_uid: str, session_id: str) -> None:
+    """The UI's follow-up turns (turn_service) resume Run.cli_session_id —
+    recording it here keeps executor runs continuable from the UI."""
+    from domains.investigations.models import Run
+
+    run = await Run.nodes.get_or_none(uid=run_uid)
+    if run is not None and session_id:
+        run.cli_session_id = session_id
+        await run.save()
 
 
 # Shared between the read and write prompts: MCP servers can still be
