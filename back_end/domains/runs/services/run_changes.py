@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from config import settings
-from domains.investigations.services.workspace import live_workspace_path
+from domains.runs.services.workspace import live_workspace_path
 from logging_config import logger
 
 # Per-file unified patch budget; beyond it the patch is dropped (too_large).

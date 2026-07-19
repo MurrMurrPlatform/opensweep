@@ -80,7 +80,7 @@ async def register_github_repo(
     # fail the registration (the `document` playbook recreates it later).
     try:
         from domains.docs.services.doc_service import seed_conventions_doc
-        from domains.investigations.services.seeding import (
+        from domains.runs.services.seeding import (
             seed_audit_stale_investigation,
             seed_keep_docs_current_investigation,
         )

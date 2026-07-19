@@ -11,8 +11,8 @@ base resolves to the in-code fallback, the org overlay to none.
 
 import inspect
 
-from domains.investigations.services.playbooks import playbook_for_job_type
-from domains.investigations.services.sweep import (
+from domains.runs.services.playbooks import playbook_for_job_type
+from domains.runs.services.sweep import (
     DeepScanResult,
     _deep_scan_intent,
     run_deep_scan,

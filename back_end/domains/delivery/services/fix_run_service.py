@@ -30,14 +30,14 @@ from domains.delivery.services.run_dispatch import (
 from domains.execution.schemas import SandboxDTO
 from domains.execution.services.sandbox_service import SandboxService
 from domains.findings.models import Finding
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
+from domains.runs.models import Run
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
-    InvestigationEffort,
+    Effort,
     RunTrigger,
 )
-from domains.investigations.services.lifecycle import trigger_run
+from domains.runs.services.lifecycle import trigger_run
 from domains.repositories.services.repository_service import repository_to_dto
 from domains.repositories.services.workflow import guidance_section, stage_prompt_body
 from domains.run_policies.services.effort import ensure_policy_for_effort
@@ -155,7 +155,7 @@ async def trigger_fix_run(
         next_round = int(pr.fix_rounds or 0) + 1
 
         denylist = write_gate.effective_denylist(policy)
-        run_policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+        run_policy = await ensure_policy_for_effort(Effort.NORMAL)
 
         # The slow git clone is deferred into the run's background pipeline via
         # this factory — the dispatch request returns as soon as the queued run

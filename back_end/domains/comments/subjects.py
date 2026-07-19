@@ -31,11 +31,11 @@ def _model_for(subject_type: CommentSubjectType) -> Any:
 
         return NewsItem
     if subject_type == CommentSubjectType.RUN:
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
 
         return Run
     if subject_type == CommentSubjectType.INVESTIGATION:
-        from domains.investigations.models import Investigation
+        from domains.runs.models import Investigation
 
         return Investigation
     from domains.docs.models import Doc

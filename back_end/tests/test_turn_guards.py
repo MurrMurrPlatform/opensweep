@@ -8,7 +8,7 @@ run still 409s.
 import pytest
 from fastapi import HTTPException
 
-from domains.investigations.services.turn_service import ensure_can_send
+from domains.runs.services.turn_service import ensure_can_send
 
 
 def _detail(exc_info) -> str:

@@ -136,7 +136,7 @@ async def compose_playbook_intent(
     """
     from domains.agent_overlays.services.overlay_service import resolve_enabled_overlay
     from domains.agent_prompts.services.seed_agent_bases import agent_base_fallback
-    from domains.investigations.services._intent_helpers import build_intent
+    from domains.runs.services._intent_helpers import build_intent
 
     if include_footer is None:
         include_footer = playbook != "chat"
@@ -178,7 +178,7 @@ async def chat_instruction_layers(org_uid: str) -> str:
     code-owned chat contract in the first-turn preamble."""
     from domains.agent_overlays.services.overlay_service import resolve_enabled_overlay
     from domains.agent_prompts.services.seed_agent_bases import agent_base_fallback
-    from domains.investigations.services._intent_helpers import ORG_GUIDANCE_HEADING
+    from domains.runs.services._intent_helpers import ORG_GUIDANCE_HEADING
 
     base = await _resolve_platform_base("chat")
     if base is None:
@@ -198,7 +198,7 @@ async def preview_composed_prompt(
     """The fully composed prompt for a DRAFT overlay (not persisted), using a
     representative scope stub — so editors see exactly what the agent gets."""
     from domains.agent_prompts.services.seed_agent_bases import agent_base_fallback
-    from domains.investigations.services._intent_helpers import build_intent
+    from domains.runs.services._intent_helpers import build_intent
 
     platform_body = await _resolve_platform_base(playbook)
     return build_intent(

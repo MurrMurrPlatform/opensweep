@@ -47,12 +47,12 @@ from domains.executors.mcp_bridge import (
 )
 from domains.executors.quota import detect_quota_exhaustion
 from domains.executors.stream_events import ClaudeStreamTranslator, stream_event_delta
-from domains.investigations.schemas import (
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
     RunStatus,
 )
-from domains.investigations.services.run_events import append_event, publish_delta
+from domains.runs.services.run_events import append_event, publish_delta
 from domains.llm_providers.schemas import default_cli_template
 from domains.llm_providers.services.credentials import provider_secret
 from domains.llm_providers.services.llm_executor import with_model_flag

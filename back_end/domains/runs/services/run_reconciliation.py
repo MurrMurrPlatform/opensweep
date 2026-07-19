@@ -20,9 +20,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config import settings
-from domains.investigations.models import Run
-from domains.investigations.services import playbooks as playbook_registry
-from domains.investigations.services.run_events import append_event, events_path
+from domains.runs.models import Run
+from domains.runs.services import playbooks as playbook_registry
+from domains.runs.services.run_events import append_event, events_path
 from domains.llm_providers.services.llm_executor import is_local_provider_kind
 from domains.run_policies.models import RunPolicy
 from infrastructure.audit import write_audit

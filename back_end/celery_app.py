@@ -27,9 +27,9 @@ app = Celery(
     backend=result_backend,
     include=[
         "domains.execution.tasks.cleanup_sandboxes",
-        "domains.investigations.tasks.schedule_tick",
-        "domains.investigations.tasks.resume_paused",
-        "domains.investigations.tasks.reconcile_runs",
+        "domains.runs.tasks.schedule_tick",
+        "domains.runs.tasks.resume_paused",
+        "domains.runs.tasks.reconcile_runs",
         "domains.delivery.tasks.sync_pull_requests",
         "domains.slack.tasks.deliver",
     ],
@@ -53,17 +53,17 @@ app.conf.update(
     # GitHub push events feed changed paths into
     # domains/docs/services/doc_freshness.mark_docs_stale.
     beat_schedule={
-        "investigation-schedule-tick": {
-            "task": "opensweep.investigations.schedule_tick",
+        "agent-schedule-tick": {
+            "task": "opensweep.agents.schedule_tick",
             "schedule": 60.0,  # every minute — finest cron resolution
         },
         # Quota pause/resume (PLATFORM_V2_DESIGN.md §8): the beat task only
         # SELECTS eligible paused runs and enqueues one
-        # opensweep.investigations.resume_run task per run — the actual
+        # opensweep.runs.resume_run task per run — the actual
         # re-dispatch (a full CLI run) happens in that per-run task, which
         # carries its own 3600/3900s limits instead of the global 600/900s.
-        "investigation-resume-paused-runs": {
-            "task": "opensweep.investigations.resume_paused_runs",
+        "run-resume-paused": {
+            "task": "opensweep.runs.resume_paused_runs",
             "schedule": 600.0,  # every 10 minutes
         },
         # Destroy sandboxes whose cleanup_after has passed. The task existed
@@ -77,7 +77,7 @@ app.conf.update(
         # is transcript-stream mtime, so this also covers local providers
         # that have no wall ceiling.
         "run-reconcile": {
-            "task": "opensweep.investigations.reconcile_stale_runs",
+            "task": "opensweep.runs.reconcile_stale_runs",
             "schedule": 300.0,  # every 5 minutes
         },
         # 2-way PR reconcile: webhooks are the realtime path; this sweep
@@ -122,7 +122,7 @@ def sweep_worker_orphans(**_kwargs):
     runs stamped as worker-owned now instead of waiting for the liveness
     tick. Best-effort: a failure here must never block worker startup."""
     try:
-        from domains.investigations.services.run_reconciliation import (
+        from domains.runs.services.run_reconciliation import (
             reconcile_orphaned_runs,
         )
         from infrastructure.celery_async import run_async_task

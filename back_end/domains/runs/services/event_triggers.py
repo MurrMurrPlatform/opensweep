@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from domains.docs.services.doc_freshness import watches_path
-from domains.investigations.models import Investigation
-from domains.investigations.schemas import Executor
+from domains.runs.models import Investigation
+from domains.runs.schemas import Executor
 from domains.run_policies.services.dry_run import estimate as estimate_run
 from logging_config import logger
 
@@ -112,9 +112,9 @@ async def auto_run_candidates_for_change(
     auto-running. Returns the dispatched run uids. Per-candidate failures
     (in-flight guards, no provider) are logged and skipped — one bad
     Investigation never blocks the rest."""
-    from domains.investigations.services.active_runs import active_runs_for
-    from domains.investigations.services.lifecycle import LifecycleError, trigger_run
-    from domains.investigations.schemas import RunTrigger
+    from domains.runs.services.active_runs import active_runs_for
+    from domains.runs.services.lifecycle import LifecycleError, trigger_run
+    from domains.runs.schemas import RunTrigger
 
     candidates = await candidates_for_change(
         repository_uid=repository_uid,

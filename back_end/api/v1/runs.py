@@ -20,8 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user, require_role
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
+from domains.runs.models import Run
+from domains.runs.schemas import (
     ClientWsMessage,
     CreateRunRequest,
     Playbook,
@@ -30,18 +30,18 @@ from domains.investigations.schemas import (
     RunStatus,
     SendRunMessageRequest,
 )
-from domains.investigations.services.active_runs import active_runs_for
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
-from domains.investigations.services.run_changes import read_changes
-from domains.investigations.services.run_events import (
+from domains.runs.services.active_runs import active_runs_for
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.run_changes import read_changes
+from domains.runs.services.run_events import (
     append_event,
     read_events,
     read_events_from,
     run_events_channel,
 )
-from domains.investigations.services.run_reconciliation import reconcile_stale_runs
-from domains.investigations.services.turn_service import TurnService, run_to_dto
-from domains.investigations.services.workspace import (
+from domains.runs.services.run_reconciliation import reconcile_stale_runs
+from domains.runs.services.turn_service import TurnService, run_to_dto
+from domains.runs.services.workspace import (
     WorkspaceError,
     recreate_workspace,
 )
@@ -135,10 +135,10 @@ async def _repo_from_context(context: dict[str, str] | None) -> str | None:
 
 
 async def _create_chat_run(req: CreateRunRequest, *, actor_uid: str, org_uid: str) -> Run:
-    from domains.investigations.services import workspace as workspace_service
+    from domains.runs.services import workspace as workspace_service
     from domains.llm_providers.services.llm_provider_service import select_provider
     from domains.execution.services.sandbox_service import SandboxService
-    from domains.investigations.services.lifecycle import _executor_for_provider
+    from domains.runs.services.lifecycle import _executor_for_provider
     from domains.repositories.services.repository_service import repository_to_dto
 
     repository = await RepositoryService().get_repository(req.repository_uid, org_uid)
@@ -214,7 +214,7 @@ async def _create_chat_run(req: CreateRunRequest, *, actor_uid: str, org_uid: st
 
     first_prompt = (req.prompt or "").strip()
     if first_prompt and req.surface == "chat":
-        from domains.investigations.services.chat_context import build_chat_preamble
+        from domains.runs.services.chat_context import build_chat_preamble
 
         preamble = await build_chat_preamble(context, org_uid=org_uid)
         first_prompt = f"{preamble}\n\n## The maintainer says\n{first_prompt}"

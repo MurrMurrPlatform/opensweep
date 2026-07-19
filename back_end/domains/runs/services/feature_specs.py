@@ -20,13 +20,13 @@ from typing import Optional
 from uuid import uuid4
 
 from domains.docs.models import Doc
-from domains.investigations.models import Investigation, Run
-from domains.investigations.schemas import (
+from domains.runs.models import Investigation, Run
+from domains.runs.schemas import (
     ExecutionMode,
     InvestigationProvenance,
     RunTrigger,
 )
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
 
 
 def _format_doc_summary(doc: Doc) -> str:

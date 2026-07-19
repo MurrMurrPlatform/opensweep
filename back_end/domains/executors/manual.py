@@ -12,7 +12,7 @@ without needing claude_code / internal_llm running.
 from __future__ import annotations
 
 from domains.executors.base import AdapterRegistry, DispatchRequest, DispatchResult, ExecutorAdapter
-from domains.investigations.schemas import Executor, RunStatus
+from domains.runs.schemas import Executor, RunStatus
 
 
 class ManualAdapter(ExecutorAdapter):

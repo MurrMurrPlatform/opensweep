@@ -91,7 +91,7 @@ async def resolve_thread(candidate: str, *, run_uid: str = "") -> Thread | None:
         if t is not None:
             return t
     if run_uid:
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
 
         run = await Run.nodes.get_or_none(uid=run_uid)
         if run is not None and (run.thread_uid or ""):
@@ -221,7 +221,7 @@ class ThreadService:
             thread.updated_at = fresh.updated_at
 
     async def attach_run(self, thread: Thread, run_uid: str) -> None:
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
 
         if run_uid in (thread.run_uids or []):
             # Idempotent: rev2 threads keep ONE run for their whole life —
@@ -245,7 +245,7 @@ class ThreadService:
         t = await self.transition(uid, "abandoned", actor_uid=actor_uid)
         if t.active_run_uid:
             try:
-                from domains.investigations.services.turn_service import TurnService
+                from domains.runs.services.turn_service import TurnService
 
                 await TurnService().cancel_run(t.active_run_uid, actor_uid=actor_uid)
             except Exception as exc:  # noqa: BLE001 — already-terminal runs are fine
@@ -282,13 +282,13 @@ class ThreadService:
         from domains.delivery.services.implement_run_service import branch_name_for_ticket
         from domains.delivery.services.run_dispatch import require_repository
         from domains.execution.services.sandbox_service import SandboxService
-        from domains.investigations.schemas import (
+        from domains.runs.schemas import (
             ExecutionMode,
             Executor,
-            InvestigationEffort,
+            Effort,
             RunTrigger,
         )
-        from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+        from domains.runs.services.lifecycle import LifecycleError, trigger_run
         from domains.repositories.services.repository_service import repository_to_dto
         from domains.run_policies.services.effort import ensure_policy_for_effort
         from domains.tickets.services.ticket_service import TicketService
@@ -329,7 +329,7 @@ class ThreadService:
                 checkout_existing=checkout_existing,
             )
 
-        policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+        policy = await ensure_policy_for_effort(Effort.NORMAL)
         try:
             run = await trigger_run(
                 repository_uid=ticket.repository_uid,
@@ -386,7 +386,7 @@ class ThreadService:
         return thread
 
     async def get_detail(self, uid: str) -> ThreadDetailDTO:
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
 
         t = await self.get_node(uid)
         runs: list[ThreadRunSummaryDTO] = []
@@ -677,7 +677,7 @@ class ThreadService:
         """Rev2: implementation is a platform-authored GO message into the
         SAME conversation — the phase flip opens the write gate; no new run.
         Legacy threads (separate-run v1) fall back to the old dispatch."""
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
         from domains.tickets.services.ticket_service import TicketService
 
         t = await self.get_node(uid)
@@ -746,7 +746,7 @@ class ThreadService:
         """v1 threads (refine-playbook conversation): dispatch a separate
         implement run with decision-log carry-over, as originally shipped."""
         from domains.delivery.services.implement_run_service import trigger_implement_run
-        from domains.investigations.services.run_events import read_events
+        from domains.runs.services.run_events import read_events
         from domains.threads.services.intents import build_group_addendum
         from domains.tickets.models import Ticket
 

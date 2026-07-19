@@ -84,7 +84,7 @@ class RunTrigger(StrEnum):
     SCHEDULE = "schedule"
 
 
-class InvestigationEffort(StrEnum):
+class Effort(StrEnum):
     QUICK = "quick"
     NORMAL = "normal"
     DEEP = "deep"
@@ -122,7 +122,7 @@ class InvestigationDTO(BaseModel):
     intent: str
     job_type: str = "audit"
     target: dict[str, Any] = Field(default_factory=dict)
-    effort: InvestigationEffort = InvestigationEffort.NORMAL
+    effort: Effort = Effort.NORMAL
     schedule: str = ""
     default_executor: Executor = Executor.INTERNAL_LLM
     default_mode: ExecutionMode = ExecutionMode.ANALYZE_ONLY
@@ -140,7 +140,7 @@ class CreateInvestigationRequest(BaseModel):
     intent: str = ""
     job_type: str = "audit"
     target: dict[str, Any] = Field(default_factory=dict)
-    effort: InvestigationEffort = InvestigationEffort.NORMAL
+    effort: Effort = Effort.NORMAL
     schedule: str = ""
     default_executor: Executor = Executor.INTERNAL_LLM
     default_mode: ExecutionMode = ExecutionMode.ANALYZE_ONLY
@@ -156,7 +156,7 @@ class UpdateInvestigationRequest(BaseModel):
     description: str | None = None
     intent: str | None = None
     target: dict[str, Any] | None = None
-    effort: InvestigationEffort | None = None
+    effort: Effort | None = None
     schedule: str | None = None
     compute_dial: ComputeDial | None = None
 

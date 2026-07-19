@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 
-from domains.investigations.models import Run
+from domains.runs.models import Run
 from infrastructure.audit import write_audit
 
 

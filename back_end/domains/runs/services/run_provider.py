@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from domains.investigations.models import Run
+from domains.runs.models import Run
 from domains.llm_providers.models import LLMProvider
 
 

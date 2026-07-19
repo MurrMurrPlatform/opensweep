@@ -29,7 +29,7 @@ async def test_create_run_guards_repo_org_before_dispatch(monkeypatch):
     monkeypatch.setattr(runs, "trigger_run", boom_trigger)
     monkeypatch.setattr(runs, "_create_chat_run", boom_chat)
 
-    from domains.investigations.schemas import CreateRunRequest, Playbook
+    from domains.runs.schemas import CreateRunRequest, Playbook
     from domains.users.schemas import UserDTO
 
     user = UserDTO(uid="u", email="e@x.y", display_name="U", role="maintainer", org_uid="org-a")

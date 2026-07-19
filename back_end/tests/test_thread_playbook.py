@@ -3,9 +3,9 @@
 import asyncio
 from types import SimpleNamespace
 
-from domains.investigations.models import PLAYBOOKS as MODEL_PLAYBOOKS
-from domains.investigations.services.active_runs import WRITE_PLAYBOOKS as ACTIVE_WRITE
-from domains.investigations.services.playbooks import (
+from domains.runs.models import PLAYBOOKS as MODEL_PLAYBOOKS
+from domains.runs.services.active_runs import WRITE_PLAYBOOKS as ACTIVE_WRITE
+from domains.runs.services.playbooks import (
     CHECKED_PLAYBOOKS,
     PLAYBOOKS,
     WRITE_PLAYBOOKS,

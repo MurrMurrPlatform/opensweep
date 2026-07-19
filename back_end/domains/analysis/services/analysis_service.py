@@ -239,11 +239,11 @@ class AnalysisService:
         )
 
         # Lazy imports: sweep/effort pull in the investigations stack.
-        from domains.investigations.schemas import InvestigationEffort
-        from domains.investigations.services.sweep import run_deep_scan
+        from domains.runs.schemas import Effort
+        from domains.runs.services.sweep import run_deep_scan
         from domains.run_policies.services.effort import ensure_policy_for_effort
 
-        policy = await ensure_policy_for_effort(InvestigationEffort.DEEP)
+        policy = await ensure_policy_for_effort(Effort.DEEP)
         result = await run_deep_scan(
             repository_uid=old.repository_uid,
             triggered_by=triggered_by or "refine",

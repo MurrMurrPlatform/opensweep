@@ -132,8 +132,8 @@ async def propose_ticket_groups(
     """Dispatch a read-only run that analyzes ungrouped backlog/todo tickets
     and proposes groupings via `opensweep_platform_propose_ticket_group`. Every
     proposal is human-approved before anything changes."""
-    from domains.investigations.schemas import InvestigationEffort, RunTrigger
-    from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+    from domains.runs.schemas import Effort, RunTrigger
+    from domains.runs.services.lifecycle import LifecycleError, trigger_run
     from domains.run_policies.services.effort import ensure_policy_for_effort
     from infrastructure.audit import write_audit
 
@@ -164,7 +164,7 @@ async def propose_ticket_groups(
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
     await write_audit(
         kind="ticket_group.propose.requested",
         subject_uid=req.repository_uid,
@@ -311,7 +311,7 @@ async def implement_ticket(uid: str, user: UserDTO = Depends(require_role("maint
     commits in a write sandbox; the platform validates, pushes, and opens a
     draft PR."""
     from domains.delivery.services.implement_run_service import trigger_implement_run
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
 
     ticket = await TicketService().get_node(uid)
     await require_repo_in_org(ticket.repository_uid, user.org_uid)

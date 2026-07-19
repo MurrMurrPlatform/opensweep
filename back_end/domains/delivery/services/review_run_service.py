@@ -17,13 +17,13 @@ from domains.delivery.services.pull_request_service import (
 )
 from domains.delivery.services.resolution_service import ensure_merge_policy
 from domains.delivery.services.run_dispatch import dispatch_serialized
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
+from domains.runs.models import Run
+from domains.runs.schemas import (
     Executor,
-    InvestigationEffort,
+    Effort,
     RunTrigger,
 )
-from domains.investigations.services.lifecycle import trigger_run
+from domains.runs.services.lifecycle import trigger_run
 from domains.repositories.models import Repository
 from domains.repositories.services.workflow import (
     guidance_section,
@@ -140,18 +140,18 @@ def build_review_intent(
 
 
 async def _resolve_depth(
-    pr: PullRequest, depth: InvestigationEffort | None, trigger: RunTrigger
-) -> InvestigationEffort:
+    pr: PullRequest, depth: Effort | None, trigger: RunTrigger
+) -> Effort:
     """Explicit choice wins; auto (event) reviews use the repo's configured
     stage depth; everything else defaults to normal."""
     if depth is not None:
         return depth
     if trigger == RunTrigger.EVENT:
-        return InvestigationEffort(await stage_depth(pr.repository_uid, "review"))
-    return InvestigationEffort.NORMAL
+        return Effort(await stage_depth(pr.repository_uid, "review"))
+    return Effort.NORMAL
 
 
-async def _resolve_guidance(repository_uid: str, depth: InvestigationEffort) -> str | None:
+async def _resolve_guidance(repository_uid: str, depth: Effort) -> str | None:
     """quick/deep use their seeded variant; normal (or a deleted/disabled
     variant) falls back to the repo's configured review-stage prompt."""
     from domains.agent_prompts.services.seed_variants import variant_prompt_body
@@ -169,7 +169,7 @@ async def trigger_review_run(
     *,
     triggered_by: str = "",
     trigger: RunTrigger = RunTrigger.MANUAL,
-    depth: InvestigationEffort | None = None,
+    depth: Effort | None = None,
     force_full: bool = False,
     max_findings: int | None = None,
 ):
@@ -186,7 +186,7 @@ async def trigger_review_run(
         # Incremental re-review (§D): a prior verdict at an older sha narrows the
         # scope to what changed since. Deep and forced reviews stay full-scope.
         prior_verdict_sha = ""
-        if not force_full and resolved_depth != InvestigationEffort.DEEP:
+        if not force_full and resolved_depth != Effort.DEEP:
             prior = await latest_verdict_for(pr.uid)
             if prior is not None and prior.sha and prior.sha != pr.head_sha:
                 prior_verdict_sha = prior.sha

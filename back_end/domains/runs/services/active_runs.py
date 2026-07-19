@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from domains.investigations.models import Run
+from domains.runs.models import Run
 
 # Statuses that mean "an executor is (or will be) working on this target".
 # paused_quota counts: the resume beat re-dispatches the SAME run.
@@ -93,7 +93,7 @@ async def active_runs_for(
     Repairs stuck rows first: a run orphaned by a process restart must not
     hold the 409 dispatch guard hostage until someone happens to open the
     runs list."""
-    from domains.investigations.services.run_reconciliation import reconcile_stale_runs
+    from domains.runs.services.run_reconciliation import reconcile_stale_runs
 
     await reconcile_stale_runs()
     runs = await Run.nodes.filter(status__in=list(ACTIVE_RUN_STATUSES))

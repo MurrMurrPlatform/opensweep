@@ -37,14 +37,14 @@ from domains.docs.services.doc_freshness import docs_watching_paths
 from domains.execution.schemas import SandboxDTO
 from domains.execution.services.sandbox_service import SandboxService
 from domains.findings.models import Finding
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
+from domains.runs.models import Run
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
-    InvestigationEffort,
+    Effort,
     RunTrigger,
 )
-from domains.investigations.services.lifecycle import trigger_run
+from domains.runs.services.lifecycle import trigger_run
 from domains.repositories.models import Repository
 from domains.repositories.services.repository_service import repository_to_dto
 from domains.repositories.services.workflow import stage_prompt_body
@@ -268,7 +268,7 @@ async def _dispatch_implement(
 ):
     policy = await ensure_merge_policy(repo.uid)
     denylist = write_gate.effective_denylist(policy)
-    run_policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    run_policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="implement_run.requested",

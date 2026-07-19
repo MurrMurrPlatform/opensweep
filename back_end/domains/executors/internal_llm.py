@@ -36,8 +36,8 @@ from domains.executors.base import (
     DispatchResult,
     ExecutorAdapter,
 )
-from domains.investigations.schemas import Executor, RunStatus
-from domains.investigations.services.run_events import append_event
+from domains.runs.schemas import Executor, RunStatus
+from domains.runs.services.run_events import append_event
 from domains.llm_providers.services.llm_executor import (
     invoke as invoke_provider,
 )

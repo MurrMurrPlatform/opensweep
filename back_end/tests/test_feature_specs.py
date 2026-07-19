@@ -6,7 +6,7 @@ runs) is exercised in integration tests; here we just verify the intent
 template shape so the LLM gets the right instructions.
 """
 
-from domains.investigations.services.feature_specs import (
+from domains.runs.services.feature_specs import (
     _DRAFT_PAGE_INTENT,
     _VERIFY_PAGE_INTENT,
 )

@@ -30,14 +30,14 @@ from fastapi import HTTPException
 from config import settings
 from domains.executors.mcp_bridge import claude_env, codex_mcp_overrides, write_claude_mcp_config
 from domains.executors.stream_events import ClaudeStreamTranslator, stream_event_delta
-from domains.investigations.models import Run
-from domains.investigations.schemas import FOLLOW_UP_STATUSES, RunStatus
-from domains.investigations.services import playbooks as playbook_registry
-from domains.investigations.services import run_changes
-from domains.investigations.services import workspace as workspace_service
-from domains.investigations.services.run_context import build_run_context
-from domains.investigations.services.run_events import append_event, publish_delta, read_events
-from domains.investigations.services.turn_cli import (
+from domains.runs.models import Run
+from domains.runs.schemas import FOLLOW_UP_STATUSES, RunStatus
+from domains.runs.services import playbooks as playbook_registry
+from domains.runs.services import run_changes
+from domains.runs.services import workspace as workspace_service
+from domains.runs.services.run_context import build_run_context
+from domains.runs.services.run_events import append_event, publish_delta, read_events
+from domains.runs.services.turn_cli import (
     INTERRUPT_GRACE_SECONDS,
     TURN_TIMEOUT_SECONDS,
     build_claude_turn_argv,
@@ -710,7 +710,7 @@ async def _provider_turn_timeout_seconds(run: Run, provider) -> int | None:
 
 
 def run_to_dto(run: Run):
-    from domains.investigations.schemas import (
+    from domains.runs.schemas import (
         ExecutionMode,
         Executor,
         Playbook,

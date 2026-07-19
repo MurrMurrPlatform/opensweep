@@ -191,7 +191,7 @@ async def set_workflow(
 
 async def stage_prompt_body(repository_uid: str, stage: str) -> str | None:
     """Resolve the stage's configured prompt body; None when unset/unavailable."""
-    from domains.investigations.services._intent_helpers import load_agent_prompt_body
+    from domains.runs.services._intent_helpers import load_agent_prompt_body
 
     config = await get_workflow(repository_uid)
     uid = (config.get(stage) or {}).get("agent_prompt_uid") or ""

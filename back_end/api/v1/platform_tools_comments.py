@@ -68,7 +68,7 @@ async def platform_add_comment(
     await require_tool_repo_access(request, user, subject.repository_uid)
     run_uid = request.headers.get("X-OpenSweep-Run-Uid") or ""
     if run_uid:
-        from domains.investigations.models import Run
+        from domains.runs.models import Run
 
         run = await Run.nodes.get_or_none(uid=run_uid)
         rejection = thread_comment_error(run.playbook if run else "")

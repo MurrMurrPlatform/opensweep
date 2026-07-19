@@ -6,8 +6,8 @@ adapter result discarded, skipping the write-gate push + draft PR. The agent
 committed in the sandbox but nothing was ever pushed.
 """
 
-from domains.investigations.schemas import RunStatus
-from domains.investigations.services.lifecycle import dispatch_result_is_stale
+from domains.runs.schemas import RunStatus
+from domains.runs.services.lifecycle import dispatch_result_is_stale
 
 
 def test_agent_self_completed_turn_is_not_stale():

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from domains.investigations.services.run_events import preview, preview_structured
+from domains.runs.services.run_events import preview, preview_structured
 
 
 def stream_event_delta(line: str) -> str | None:

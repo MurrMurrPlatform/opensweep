@@ -19,7 +19,7 @@ from domains.comments.models import Comment
 from domains.comments.schemas import CommentSubjectType
 from domains.comments.service import render_mentioned_items, render_thread
 from domains.comments.subjects import subject_snapshot
-from domains.investigations.schemas import InvestigationEffort, RunTrigger
+from domains.runs.schemas import Effort, RunTrigger
 from domains.run_policies.services.effort import ensure_policy_for_effort
 from logging_config import logger
 
@@ -94,8 +94,8 @@ async def pending_opensweep_runs(
     Backs the thread's thinking bubble across page reloads. awaiting_input
     and the terminal states are not pending — by then the reply (or the
     failure) is already on the thread."""
-    from domains.investigations.models import Run
-    from domains.investigations.services.active_runs import ACTIVE_RUN_STATUSES
+    from domains.runs.models import Run
+    from domains.runs.services.active_runs import ACTIVE_RUN_STATUSES
 
     runs = await Run.nodes.filter(
         surface="comment", status__in=list(ACTIVE_RUN_STATUSES)
@@ -110,7 +110,7 @@ async def trigger_opensweep_reply(
 
     Returns the run uid, or "" when dispatch failed (logged, never raised)."""
     try:
-        from domains.investigations.services.lifecycle import trigger_run
+        from domains.runs.services.lifecycle import trigger_run
 
         thread = await render_thread(subject_type, comment.subject_uid)
         # Scope @-mentions to the org that owns the thread's subject (F2): the
@@ -147,7 +147,7 @@ async def trigger_opensweep_reply(
             ),
         )
         intent = composed.text
-        policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+        policy = await ensure_policy_for_effort(Effort.NORMAL)
         target: dict[str, Any] = {
             f"{subject_type.value}_uid": subject.uid,
             "comment_uid": comment.uid,

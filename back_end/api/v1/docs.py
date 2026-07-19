@@ -19,11 +19,11 @@ from domains.docs.schemas import (
     UpdateDocRequest,
 )
 from domains.docs.services import doc_service
-from domains.investigations.services.feature_specs import (
+from domains.runs.services.feature_specs import (
     draft_doc_page,
     verify_doc_page,
 )
-from domains.investigations.services.lifecycle import LifecycleError
+from domains.runs.services.lifecycle import LifecycleError
 from domains.tenancy import require_repo_in_org
 from domains.users.schemas import UserDTO
 

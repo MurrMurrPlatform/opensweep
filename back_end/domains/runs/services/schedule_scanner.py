@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from croniter import croniter
 
-from domains.investigations.models import Investigation
-from domains.investigations.schemas import RunTrigger, parse_schedule
+from domains.runs.models import Investigation
+from domains.runs.schemas import RunTrigger, parse_schedule
 from logging_config import logger
 
 
@@ -44,7 +44,7 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
     """Iterate Investigations with cron schedules and dispatch any that are due."""
     # Imported lazily so the pure is_due helper above stays importable without
     # pulling the full executor/config stack.
-    from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+    from domains.runs.services.lifecycle import LifecycleError, trigger_run
 
     moment = now or datetime.now(timezone.utc)
     result = ScanResult()
@@ -73,7 +73,7 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
                 inv.last_scheduled_at = moment
                 await inv.save()
                 continue
-            from domains.investigations.services.sweep import run_auto_audit
+            from domains.runs.services.sweep import run_auto_audit
 
             try:
                 audit = await run_auto_audit(

@@ -2,8 +2,8 @@
 same provider/model info that FindingDTO already surfaces via
 provider_info_for_run(), now visible on runs (RunDetailView.vue)."""
 
-from domains.investigations.models import Run
-from domains.investigations.services.turn_service import run_to_dto
+from domains.runs.models import Run
+from domains.runs.services.turn_service import run_to_dto
 
 
 def test_run_to_dto_maps_provider_fields_from_usage_snapshot():

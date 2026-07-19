@@ -81,7 +81,7 @@ async def select_audit_targets(repository_uid: str, *, limit: int = 3) -> list[A
             latest[c.scope_uid or ""] = c.checked_at
 
     in_flight: set[str] = set()
-    from domains.investigations.services.active_runs import active_runs_for
+    from domains.runs.services.active_runs import active_runs_for
 
     for run in await active_runs_for(repository_uid=repository_uid):
         target = dict(run.target or {})

@@ -36,7 +36,7 @@ async def dev_reset() -> dict[str, Any]:
     from domains.delivery.models import FindingResolution, PullRequest, Verdict
     from domains.docs.models import Doc, DocEdit
     from domains.findings.models import Finding
-    from domains.investigations.models import Investigation, Run
+    from domains.runs.models import Investigation, Run
     from domains.memory.models import Memory
     from domains.tickets.models import Ticket
 

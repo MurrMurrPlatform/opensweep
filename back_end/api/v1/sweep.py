@@ -9,7 +9,7 @@ POST /api/v1/repositories/{uid}/sweep/audit
     Dispatches one audit Investigation per selected doc page. Focus lives
     in the optional custom_intent text, not a category picker.
 
-See domains.investigations.services.sweep for the orchestration logic.
+See domains.runs.services.sweep for the orchestration logic.
 """
 
 
@@ -17,10 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user, require_role
-from domains.investigations.schemas import InvestigationEffort
-from domains.investigations.services.active_runs import active_runs_for, conflict_detail
+from domains.runs.schemas import Effort
+from domains.runs.services.active_runs import active_runs_for, conflict_detail
 from domains.run_policies.services.effort import ensure_policy_for_effort
-from domains.investigations.services.sweep import (
+from domains.runs.services.sweep import (
     AuditResult,
     DeepScanResult,
     GenerateDocsResult,
@@ -50,7 +50,7 @@ class GenerateDocsRequest(BaseModel):
 
 
 # The generate-docs flow creates Investigations with job_type "generate-docs"
-# (see domains.investigations.services.sweep). The legacy names are kept so
+# (see domains.runs.services.sweep). The legacy names are kept so
 # pre-rename in-flight runs still block a re-click.
 GENERATE_DOCS_JOB_TYPES = ["generate-docs", "discover-capabilities", "discover"]
 
@@ -67,7 +67,7 @@ class AuditRequest(BaseModel):
     max_findings: int | None = Field(default=None, ge=1, le=50)
     # Compute dial: resolves to the run policy applied to the dispatched
     # repository-scoped audit run (whole-repo path).
-    effort: InvestigationEffort = InvestigationEffort.NORMAL
+    effort: Effort = Effort.NORMAL
 
 
 class AuditResultDTO(BaseModel):
@@ -101,7 +101,7 @@ async def run_generate_docs_endpoint(
     # In-flight guard: one generate-docs per repository at a time — a second
     # run would double-propose the same page tree. These runs are spawned
     # from Investigations, so the job_type check joins through them.
-    from domains.investigations.models import Investigation
+    from domains.runs.models import Investigation
 
     candidates = await active_runs_for(repository_uid=repository_uid)
     in_flight = []
@@ -182,7 +182,7 @@ class DeepScanRequest(BaseModel):
     max_findings: int | None = Field(default=None, ge=1, le=200)
     # Compute dial → run policy. Deep by default: a whole-repo sweep needs a
     # generous wall ceiling.
-    effort: InvestigationEffort = InvestigationEffort.DEEP
+    effort: Effort = Effort.DEEP
 
 
 class DeepScanResultDTO(BaseModel):
@@ -216,7 +216,7 @@ async def run_deep_scan_endpoint(
 
     # In-flight guard: one deep scan per repository at a time — a second would
     # duplicate a long, expensive whole-repo sweep.
-    from domains.investigations.models import Investigation
+    from domains.runs.models import Investigation
 
     candidates = await active_runs_for(repository_uid=repository_uid)
     in_flight = []

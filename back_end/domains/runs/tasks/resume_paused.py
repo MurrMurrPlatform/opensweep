@@ -1,12 +1,12 @@
 """Celery tasks — resume quota-paused Runs (§8).
 
 Two tasks:
-  - `opensweep.investigations.resume_paused_runs` (beat, every 10 min): ONLY
+  - `opensweep.runs.resume_paused_runs` (beat, every 10 min): ONLY
     selects runs with status `paused_quota` and enqueues one
-    `opensweep.investigations.resume_run` per run. It never re-dispatches
+    `opensweep.runs.resume_run` per run. It never re-dispatches
     anything itself — a re-dispatched CLI run can take an hour, far beyond
     the global 600/900s task limits that apply to the beat tick.
-  - `opensweep.investigations.resume_run` (per run, soft/hard limits 3600/3900s):
+  - `opensweep.runs.resume_run` (per run, soft/hard limits 3600/3900s):
     - EXHAUSTED (retry_count >= OPENSWEEP_QUOTA_MAX_RETRIES) → fail for real
       ("quota retries exhausted"), destroy the discovery sandbox;
     - RETRY (an unexhausted fallback provider exists → immediately; otherwise
@@ -26,7 +26,7 @@ from celery_app import app
 from logging_config import logger
 
 
-@app.task(name="opensweep.investigations.resume_paused_runs")
+@app.task(name="opensweep.runs.resume_paused_runs")
 def resume_paused_runs() -> dict:
     from infrastructure.celery_async import run_async_task
     from infrastructure.neomodel_config import configure_neomodel
@@ -39,7 +39,7 @@ def resume_paused_runs() -> dict:
 
 async def _scan_and_enqueue() -> dict:
     """Select eligible runs and fan out one resume_run task per run."""
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
 
     run_uids = [
         r.uid for r in await Run.nodes.all() if r.status == "paused_quota"
@@ -50,7 +50,7 @@ async def _scan_and_enqueue() -> dict:
 
 
 @app.task(
-    name="opensweep.investigations.resume_run",
+    name="opensweep.runs.resume_run",
     soft_time_limit=3600,
     time_limit=3900,
 )
@@ -71,7 +71,7 @@ def resume_run(run_uid: str) -> dict:
 
 
 async def _resume_by_uid(run_uid: str) -> dict:
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
 
     run = await Run.nodes.get_or_none(uid=run_uid)
     if run is None or run.status != "paused_quota":
@@ -90,8 +90,8 @@ async def _resume_by_uid(run_uid: str) -> dict:
 
 async def _resume_one(run, *, now: datetime) -> str:
     from config import settings
-    from domains.investigations.services.lifecycle import redispatch_run
-    from domains.investigations.services.quota_retry import RetryAction, decide_retry
+    from domains.runs.services.lifecycle import redispatch_run
+    from domains.runs.services.quota_retry import RetryAction, decide_retry
     from domains.llm_providers.services.llm_provider_service import select_provider
 
     quota = dict((run.usage or {}).get("quota") or {})
@@ -128,8 +128,8 @@ async def _resume_one(run, *, now: datetime) -> str:
 
 async def _fail_exhausted(run, *, now: datetime, retry_count: int) -> None:
     from domains.execution.services.sandbox_service import SandboxService
-    from domains.investigations.schemas import RunStatus
-    from domains.investigations.services import playbooks as playbook_registry
+    from domains.runs.schemas import RunStatus
+    from domains.runs.services import playbooks as playbook_registry
     from infrastructure.audit import write_audit
 
     run.status = RunStatus.FAILED.value

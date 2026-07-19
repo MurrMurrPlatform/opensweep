@@ -280,7 +280,7 @@ async def _artifact_target_repository_uid(target_uid: str, target_type: str) -> 
     tenancy-gated like every other entity-keyed tool. 404 on unknown targets."""
     from domains.delivery.models import PullRequest
     from domains.docs.models import Doc
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
     from domains.memory.models import Memory
     from domains.tickets.models import Ticket
 

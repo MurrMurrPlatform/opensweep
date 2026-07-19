@@ -100,7 +100,7 @@ def test_codex_overrides_are_toml_config_pairs():
 
 
 def test_codex_turn_argv_carries_config_overrides():
-    from domains.investigations.services.turn_cli import build_codex_turn_argv
+    from domains.runs.services.turn_cli import build_codex_turn_argv
 
     argv = build_codex_turn_argv(
         prompt="hi", model="gpt-5", config_overrides=["a=1", "b=2"]

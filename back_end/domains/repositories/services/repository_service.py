@@ -64,7 +64,7 @@ class RepositoryService:
         # page so agents always have a propose_doc_edit target, plus the
         # on-event "Keep docs current" Investigation (§9).
         from domains.docs.services.doc_service import seed_conventions_doc
-        from domains.investigations.services.seeding import (
+        from domains.runs.services.seeding import (
             seed_audit_stale_investigation,
             seed_keep_docs_current_investigation,
         )

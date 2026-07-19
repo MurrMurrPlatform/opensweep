@@ -153,7 +153,7 @@ def append_event(run_uid: str, type: str, *, turn: int = 1, **payload: Any) -> N
     # never raises; narration events themselves never narrate (guard below).
     if type == "tool_use":
         try:
-            from domains.investigations.services.narration import narration_for_event
+            from domains.runs.services.narration import narration_for_event
 
             narration = narration_for_event(event)
             if narration is not None:

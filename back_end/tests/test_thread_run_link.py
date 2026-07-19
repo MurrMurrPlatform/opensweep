@@ -1,6 +1,6 @@
 """Run carries an optional thread back-reference (unified dev flow Phase 1)."""
 
-from domains.investigations.models import Run
+from domains.runs.models import Run
 
 
 def test_run_has_thread_uid_property():

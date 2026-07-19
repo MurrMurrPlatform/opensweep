@@ -99,7 +99,7 @@ async def _seed_per_repo(mode: SeedMode) -> SeedResult:
     """Per repository: one pinned conventions Doc page and the on-event
     "keep docs current" / "audit stale" Investigations. All idempotent."""
     from domains.docs.services.doc_service import seed_conventions_doc
-    from domains.investigations.services.seeding import (
+    from domains.runs.services.seeding import (
         seed_audit_stale_investigation,
         seed_keep_docs_current_investigation,
     )

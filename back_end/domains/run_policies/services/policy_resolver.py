@@ -15,7 +15,7 @@ from typing import Optional
 
 from neomodel import adb
 
-from domains.investigations.schemas import Executor, RunTrigger
+from domains.runs.schemas import Executor, RunTrigger
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.services.system_default import (
     ensure_system_default,

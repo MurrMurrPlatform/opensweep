@@ -407,7 +407,7 @@ async def lifespan(app: FastAPI):
         # Dispatch tasks are asyncio tasks inside THIS process — any run still
         # queued/running from a previous backend life died with it. Fail those
         # rows now so the UI and the 409 dispatch guard stop trusting them.
-        from domains.investigations.services.run_reconciliation import (
+        from domains.runs.services.run_reconciliation import (
             reconcile_orphaned_runs,
         )
         from infrastructure.process_role import BACKEND

@@ -8,8 +8,8 @@ Neo4j-bound behavior lives in integration tests, not here.
 
 import inspect
 
-from domains.investigations.services.job_types import get_job_type
-from domains.investigations.services.sweep import estimate_sweep_cost, run_audit
+from domains.runs.services.job_types import get_job_type
+from domains.runs.services.sweep import estimate_sweep_cost, run_audit
 
 
 def test_generate_docs_job_type_exists():

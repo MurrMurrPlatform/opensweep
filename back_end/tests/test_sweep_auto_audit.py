@@ -6,9 +6,9 @@ covered purely in test_audit_selection.py.
 
 import inspect
 
-from domains.investigations.services.job_types import get_job_type
-from domains.investigations.services.schedule_scanner import should_auto_audit
-from domains.investigations.services.sweep import AuditResult, run_auto_audit
+from domains.runs.services.job_types import get_job_type
+from domains.runs.services.schedule_scanner import should_auto_audit
+from domains.runs.services.sweep import AuditResult, run_auto_audit
 
 
 def test_audit_stale_job_type_exists():
@@ -38,7 +38,7 @@ def test_scanner_predicate_gates_on_job_type_and_dial():
 
 
 def test_seeded_investigation_is_inert_until_a_cron_is_set():
-    from domains.investigations.services.seeding import (
+    from domains.runs.services.seeding import (
         AUDIT_STALE_TITLE,
         seed_audit_stale_investigation,
     )

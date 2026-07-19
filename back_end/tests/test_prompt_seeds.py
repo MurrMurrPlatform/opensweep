@@ -15,7 +15,7 @@ from domains.agent_prompts.services.seed_variants import (
     _VARIANTS,
     variant_source_url,
 )
-from domains.investigations.services.job_types import get_job_type
+from domains.runs.services.job_types import get_job_type
 from domains.repositories.services.workflow import STAGES
 
 _EFFORTS = {"light", "normal", "deep"}

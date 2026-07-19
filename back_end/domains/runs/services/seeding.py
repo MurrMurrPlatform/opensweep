@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from domains.investigations.models import Investigation
-from domains.investigations.schemas import ExecutionMode, InvestigationProvenance
+from domains.runs.models import Investigation
+from domains.runs.schemas import ExecutionMode, InvestigationProvenance
 
 KEEP_DOCS_CURRENT_TITLE = "Keep docs current"
 

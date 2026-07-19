@@ -24,17 +24,17 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from domains.docs.models import Doc
-from domains.investigations.models import Investigation
-from domains.investigations.schemas import (
+from domains.runs.models import Investigation
+from domains.runs.schemas import (
     ExecutionMode,
     InvestigationProvenance,
     RunTrigger,
 )
-from domains.investigations.services._intent_helpers import (
+from domains.runs.services._intent_helpers import (
     build_intent,
     load_agent_prompt_body,
 )
-from domains.investigations.services.lifecycle import (
+from domains.runs.services.lifecycle import (
     LifecycleError,
     trigger_run,
 )
@@ -289,7 +289,7 @@ async def run_auto_audit(
     Zero targets returns an empty result WITHOUT dispatching — run_audit's
     empty-doc_uids path means "whole repository", which is never what a
     nothing-is-stale tick should do."""
-    from domains.investigations.services.audit_selection import select_audit_targets
+    from domains.runs.services.audit_selection import select_audit_targets
 
     targets = await select_audit_targets(repository_uid, limit=limit)
     if not targets:
@@ -374,7 +374,7 @@ async def run_deep_scan(
     # the default when neither of the higher-priority sources is present, so the
     # per-stage selector keeps its override power.
     if not run_policy_uid:
-        from domains.investigations.schemas import InvestigationEffort
+        from domains.runs.schemas import Effort
         from domains.repositories.services.workflow import stage_run_overrides
         from domains.run_policies.services.effort import ensure_policy_for_effort
 
@@ -382,7 +382,7 @@ async def run_deep_scan(
             await stage_run_overrides(repository_uid, "analysis")
         ).get("run_policy_uid") or ""
         if not stage_pin:
-            deep_policy = await ensure_policy_for_effort(InvestigationEffort.DEEP)
+            deep_policy = await ensure_policy_for_effort(Effort.DEEP)
             run_policy_uid = deep_policy.uid
 
     budget_line: Optional[str] = None

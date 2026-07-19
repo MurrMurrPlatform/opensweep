@@ -454,7 +454,7 @@ async def test_push_event_fans_out_per_tenant_open_prs(monkeypatch):
     async def fake_refresh(*, repository_uid, changed_paths, source):
         refreshed.append(repository_uid)
 
-    from domains.investigations.services import event_triggers
+    from domains.runs.services import event_triggers
 
     monkeypatch.setattr(event_triggers, "refresh_docs_for_change", fake_refresh)
 

@@ -6,8 +6,8 @@ from unittest import mock
 
 from app import app
 from domains.executors.mcp_bridge import claude_env
-from domains.investigations.schemas import ExecutionMode
-from domains.investigations.services.job_types import get_job_type
+from domains.runs.schemas import ExecutionMode
+from domains.runs.services.job_types import get_job_type
 
 
 def _openapi_operation_ids() -> set[str]:
@@ -116,7 +116,7 @@ def test_probe_platform_mcp_reports_unreachable_backend(monkeypatch):
 
 def test_codex_turn_env_is_allowlisted_too():
     """Same allowlist rule for the codex executor's turn env."""
-    from domains.investigations.services.turn_cli import codex_turn_env
+    from domains.runs.services.turn_cli import codex_turn_env
 
     class _Provider:
         credential_secret = ""

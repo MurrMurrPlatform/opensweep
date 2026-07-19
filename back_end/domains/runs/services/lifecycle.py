@@ -31,18 +31,18 @@ from domains.executors import cli_tracking as _adapter_cli_tracking  # noqa: F40
 from domains.executors import internal_llm as _adapter_internal_llm  # noqa: F401
 from domains.executors import manual as _adapter_manual  # noqa: F401
 from domains.executors.base import AdapterRegistry, DispatchRequest
-from domains.investigations.models import RUN_SURFACES, Investigation, Run
-from domains.investigations.schemas import (
+from domains.runs.models import RUN_SURFACES, Investigation, Run
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
     RunStatus,
     RunTrigger,
 )
-from domains.investigations.services import playbooks as playbook_registry
-from domains.investigations.services import run_changes
-from domains.investigations.services import workspace as workspace_service
-from domains.investigations.services.quota_retry import next_retry_at
-from domains.investigations.services.run_events import append_event
+from domains.runs.services import playbooks as playbook_registry
+from domains.runs.services import run_changes
+from domains.runs.services import workspace as workspace_service
+from domains.runs.services.quota_retry import next_retry_at
+from domains.runs.services.run_events import append_event
 from domains.docs.services.briefing import build_briefing
 from domains.llm_providers.models import LLMProvider
 from domains.llm_providers.services.llm_provider_service import select_provider

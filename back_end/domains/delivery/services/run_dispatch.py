@@ -27,9 +27,9 @@ from fastapi import HTTPException
 from domains.delivery.services import write_gate
 from domains.delivery.services.resolution_service import ensure_merge_policy
 from domains.execution.schemas import SandboxDTO
-from domains.investigations.models import Run
-from domains.investigations.schemas import RunStatus
-from domains.investigations.services.active_runs import (
+from domains.runs.models import Run
+from domains.runs.schemas import RunStatus
+from domains.runs.services.active_runs import (
     active_runs_for,
     blocking_run,
     conflict_detail,
@@ -207,7 +207,7 @@ async def finalize_write_run(
     # waiting for GitHub to redeliver the push webhook. Same machinery the
     # webhook uses, so gating/dedup stay consistent; best-effort, never
     # blocks the finalize.
-    from domains.investigations.services.event_triggers import refresh_docs_for_change
+    from domains.runs.services.event_triggers import refresh_docs_for_change
 
     await refresh_docs_for_change(
         repository_uid=repository_uid,

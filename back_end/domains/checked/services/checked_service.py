@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from domains.checked.models import Checked
 from domains.findings.models import Finding
-from domains.investigations.models import Investigation, Run
+from domains.runs.models import Investigation, Run
 from domains.repositories.models import Repository
 from infrastructure.audit import write_audit
 from infrastructure.git_providers import get_provider_client

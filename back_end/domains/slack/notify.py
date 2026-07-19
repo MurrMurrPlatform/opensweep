@@ -67,7 +67,7 @@ async def _subject_context(subject_type: str, subject_uid: str) -> tuple[str, bo
         return "", True
     try:
         if subject_type == "Run":
-            from domains.investigations.models import Run
+            from domains.runs.models import Run
 
             run = await Run.nodes.get_or_none(uid=subject_uid)
             if run is None:

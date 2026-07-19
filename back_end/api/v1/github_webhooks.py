@@ -544,7 +544,7 @@ async def _delivery_follow_through(
         for commit in payload.get("commits") or []:
             for key in ("added", "modified", "removed"):
                 changed_paths.extend(str(p) for p in (commit.get(key) or []))
-        from domains.investigations.services.event_triggers import refresh_docs_for_change
+        from domains.runs.services.event_triggers import refresh_docs_for_change
 
         await refresh_docs_for_change(
             repository_uid=repo.uid, changed_paths=changed_paths, source="webhook"
@@ -562,7 +562,7 @@ async def _delivery_follow_through(
     }:
         from domains.delivery.models import PullRequest as PRNode
         from domains.delivery.services.review_run_service import trigger_review_run
-        from domains.investigations.schemas import RunTrigger
+        from domains.runs.schemas import RunTrigger
         from domains.repositories.services.workflow import stage_auto
 
         if await stage_auto(repo.uid, "review"):

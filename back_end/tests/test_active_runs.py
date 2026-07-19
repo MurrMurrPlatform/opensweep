@@ -3,7 +3,7 @@ runs carry their entity links directly; no Investigation join)."""
 
 from types import SimpleNamespace
 
-from domains.investigations.services.active_runs import (
+from domains.runs.services.active_runs import (
     ACTIVE_RUN_STATUSES,
     WRITE_PLAYBOOKS,
     blocking_run,

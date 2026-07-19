@@ -12,9 +12,9 @@ import pytest
 from fastapi import HTTPException
 
 from domains.comments.schemas import CommentSubjectType
-from domains.investigations.models import RUN_SURFACES, Run
-from domains.investigations.schemas import CreateRunRequest, Playbook, RunDTO
-from domains.investigations.services.turn_service import run_to_dto
+from domains.runs.models import RUN_SURFACES, Run
+from domains.runs.schemas import CreateRunRequest, Playbook, RunDTO
+from domains.runs.services.turn_service import run_to_dto
 from domains.users.schemas import UserDTO
 
 pytestmark = pytest.mark.asyncio
@@ -43,7 +43,7 @@ def test_run_to_dto_maps_missing_surface_to_runs():
 
 
 async def test_trigger_run_rejects_unknown_surface():
-    from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+    from domains.runs.services.lifecycle import LifecycleError, trigger_run
 
     with pytest.raises(LifecycleError, match="unknown surface"):
         await trigger_run(
@@ -57,7 +57,7 @@ async def test_trigger_run_rejects_unknown_surface():
 async def test_opensweep_reply_dispatch_sets_comment_surface(monkeypatch):
     from domains.comments import opensweep_mention
     from domains.comments.models import Comment
-    from domains.investigations.services import lifecycle
+    from domains.runs.services import lifecycle
     from domains.tickets.models import Ticket
 
     captured: dict = {}
@@ -296,7 +296,7 @@ async def test_create_chat_resolves_repo_from_context_subject(monkeypatch):
 
 
 async def test_chat_preamble_without_context_is_just_the_contract():
-    from domains.investigations.services.chat_context import build_chat_preamble
+    from domains.runs.services.chat_context import build_chat_preamble
 
     text = await build_chat_preamble({})
     assert "opensweep_platform_" in text
@@ -306,7 +306,7 @@ async def test_chat_preamble_without_context_is_just_the_contract():
 
 async def test_chat_preamble_snapshots_the_subject(monkeypatch):
     from domains.comments import subjects
-    from domains.investigations.services.chat_context import build_chat_preamble
+    from domains.runs.services.chat_context import build_chat_preamble
 
     async def fake_get_subject(subject_type, uid):
         return SimpleNamespace(uid=uid)
@@ -321,7 +321,7 @@ async def test_chat_preamble_snapshots_the_subject(monkeypatch):
 
 async def test_chat_preamble_survives_a_missing_subject(monkeypatch):
     from domains.comments import subjects
-    from domains.investigations.services.chat_context import build_chat_preamble
+    from domains.runs.services.chat_context import build_chat_preamble
 
     async def fake_get_subject(subject_type, uid):
         return None

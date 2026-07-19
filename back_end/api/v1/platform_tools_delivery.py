@@ -254,7 +254,7 @@ async def submit_finding_verification(
     from domains.delivery.services.verification_run_service import (
         submit_finding_verification as record,
     )
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
 
     pr = await _pr_by_ref(req.pull_request_uid, req.repository_uid, req.github_number)
     await require_tool_repo_access(request, user, pr.repository_uid)

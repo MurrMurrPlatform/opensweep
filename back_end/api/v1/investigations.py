@@ -8,22 +8,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user, require_role
-from domains.investigations.models import Investigation, Run
-from domains.investigations.schemas import (
+from domains.runs.models import Investigation, Run
+from domains.runs.schemas import (
     CreateInvestigationRequest,
     InvestigationDTO,
-    InvestigationEffort,
+    Effort,
     InvestigationProvenance,
     RunDTO,
     RunTrigger,
     UpdateInvestigationRequest,
 )
-from domains.investigations.schemas import parse_schedule
-from domains.investigations.services import event_triggers
-from domains.investigations.services.job_types import get_job_type, list_job_types
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
-from domains.investigations.services.run_reconciliation import reconcile_stale_runs
-from domains.investigations.services.turn_service import run_to_dto
+from domains.runs.schemas import parse_schedule
+from domains.runs.services import event_triggers
+from domains.runs.services.job_types import get_job_type, list_job_types
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.run_reconciliation import reconcile_stale_runs
+from domains.runs.services.turn_service import run_to_dto
 from domains.run_policies.services.effort import ensure_policy_for_effort
 from domains.tenancy import org_repo_uids, require_repo_in_org
 from domains.users.schemas import UserDTO
@@ -41,7 +41,7 @@ def _to_dto(i: Investigation) -> InvestigationDTO:
         intent=i.intent,
         job_type=i.job_type or "audit",
         target=dict(i.target or {}),
-        effort=InvestigationEffort(i.effort or "normal"),
+        effort=Effort(i.effort or "normal"),
         schedule=i.schedule or "",
         default_executor=i.default_executor or "internal_llm",
         default_mode=i.default_mode or "analyze_only",
@@ -115,7 +115,7 @@ async def create_investigation(
     if not intent:
         # No explicit intent: compose the job type's canned intent with the
         # repo's workflow prompt for this stage (if one is configured).
-        from domains.investigations.services._intent_helpers import build_intent
+        from domains.runs.services._intent_helpers import build_intent
         from domains.repositories.services.workflow import stage_prompt_body
 
         stage = {

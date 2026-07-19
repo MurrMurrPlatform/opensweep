@@ -19,14 +19,14 @@ from domains.findings.services.finding_service import (
     FindingService,
     finding_to_dto,
 )
-from domains.investigations.models import Run
-from domains.investigations.schemas import (
-    InvestigationEffort,
+from domains.runs.models import Run
+from domains.runs.schemas import (
+    Effort,
     RunDTO,
     RunTrigger,
 )
-from domains.investigations.services.turn_service import run_to_dto
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.turn_service import run_to_dto
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
 from domains.run_policies.services.effort import ensure_policy_for_effort
 from domains.tenancy import org_repo_uids, require_repo_in_org
 from domains.users.schemas import UserDTO
@@ -122,7 +122,7 @@ async def trigger_ratchet(
         trigger_implement_run,
     )
     from domains.findings.models import Finding
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
     from domains.tickets.models import Ticket
 
     await require_repo_in_org(req.repository_uid, user.org_uid)
@@ -395,7 +395,7 @@ async def refine_finding(uid: str, user: UserDTO = Depends(require_role("maintai
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="finding.refine.requested",
@@ -448,7 +448,7 @@ async def verify_finding(uid: str, user: UserDTO = Depends(require_role("maintai
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="finding.verify.requested",

@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from domains.investigations.schemas import InvestigationEffort
+from domains.runs.schemas import Effort
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.services.system_default import ensure_system_default
 
 
 _EFFORT_POLICIES = {
-    InvestigationEffort.QUICK: {
+    Effort.QUICK: {
         "name": "opensweep-effort-quick",
         "description": "Quick investigation ceilings.",
         "max_dollars": 0.25,
@@ -19,7 +19,7 @@ _EFFORT_POLICIES = {
         "max_tool_turns": 20,
         "max_files_touched": 25,
     },
-    InvestigationEffort.DEEP: {
+    Effort.DEEP: {
         "name": "opensweep-effort-deep",
         "description": "Deep investigation ceilings.",
         "max_dollars": 25.0,
@@ -30,8 +30,8 @@ _EFFORT_POLICIES = {
 }
 
 
-async def ensure_policy_for_effort(effort: InvestigationEffort) -> RunPolicy:
-    if effort == InvestigationEffort.NORMAL:
+async def ensure_policy_for_effort(effort: Effort) -> RunPolicy:
+    if effort == Effort.NORMAL:
         return await ensure_system_default()
 
     config = _EFFORT_POLICIES[effort]

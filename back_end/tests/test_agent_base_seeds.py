@@ -10,8 +10,8 @@ from domains.agent_prompts.services.seed_agent_bases import (
 )
 from domains.agent_prompts.services.seed_defaults import _DEFAULTS, workflow_source_url
 from domains.agent_prompts.services.seed_variants import _VARIANTS, variant_source_url
-from domains.investigations.services.job_types import get_job_type
-from domains.investigations.services.playbooks import PLAYBOOKS
+from domains.runs.services.job_types import get_job_type
+from domains.runs.services.playbooks import PLAYBOOKS
 
 # Overlay-only agent keys: specialized sweep flows that run under the "ask"
 # run playbook but carry their own seeded instruction bases.

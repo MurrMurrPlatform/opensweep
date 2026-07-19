@@ -29,7 +29,7 @@ Hook failures never corrupt the recorded run outcome (logged, not raised).
 
 from __future__ import annotations
 
-from domains.investigations.models import Run
+from domains.runs.models import Run
 from logging_config import logger
 
 PLAYBOOKS = {"chat", "ask", "review", "fix", "implement", "verify", "document", "refine", "thread"}
@@ -133,7 +133,7 @@ async def _continue_review_chain(review_run: Run) -> None:
     )
 
     # Lazy: lifecycle imports this module at import time.
-    from domains.investigations.services.lifecycle import LifecycleError
+    from domains.runs.services.lifecycle import LifecycleError
 
     pr = await PullRequest.nodes.get_or_none(uid=pr_uid)
     if pr is None:

@@ -21,8 +21,8 @@ import os
 from domains.execution.models import Sandbox
 from domains.execution.schemas import SandboxDTO, SandboxStatus
 from domains.execution.services.sandbox_service import SandboxService
-from domains.investigations.models import Run
-from domains.investigations.services.run_events import append_event
+from domains.runs.models import Run
+from domains.runs.services.run_events import append_event
 from domains.repositories.models import Repository
 from domains.repositories.services.repository_service import repository_to_dto
 from logging_config import logger

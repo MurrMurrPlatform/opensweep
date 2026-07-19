@@ -1,7 +1,7 @@
 """Thread lifecycle hooks — called from delivery finalizers and webhooks.
 
 Hook failures never corrupt the host flow (logged, not raised), mirroring
-domains/investigations/services/playbooks.py.
+domains/runs/services/playbooks.py.
 """
 
 from __future__ import annotations

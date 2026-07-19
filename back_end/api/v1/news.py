@@ -10,13 +10,13 @@ from pydantic import BaseModel, Field
 from api.dependencies import get_current_user, require_role
 from domains.agent_prompts.services.seed_variants import variant_prompt_body
 from domains.findings.schemas import FindingDTO
-from domains.investigations.schemas import (
-    InvestigationEffort,
+from domains.runs.schemas import (
+    Effort,
     RunDTO,
     RunTrigger,
 )
-from domains.investigations.services.lifecycle import LifecycleError, trigger_run
-from domains.investigations.services.turn_service import run_to_dto
+from domains.runs.services.lifecycle import LifecycleError, trigger_run
+from domains.runs.services.turn_service import run_to_dto
 from domains.news.schemas import (
     ConvertNewsRequest,
     CreateNewsItemRequest,
@@ -174,7 +174,7 @@ async def trigger_news_scan(
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="news.scan.requested",
@@ -223,7 +223,7 @@ async def trigger_news_doc_proposal(
         org_uid=user.org_uid,
     )
     intent = composed.text
-    policy = await ensure_policy_for_effort(InvestigationEffort.NORMAL)
+    policy = await ensure_policy_for_effort(Effort.NORMAL)
 
     await write_audit(
         kind="news.doc_proposal.requested",

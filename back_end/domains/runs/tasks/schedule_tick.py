@@ -6,9 +6,9 @@ from celery_app import app
 from logging_config import logger
 
 
-@app.task(name="opensweep.investigations.schedule_tick")
+@app.task(name="opensweep.agents.schedule_tick")
 def schedule_tick() -> dict:
-    from domains.investigations.services.schedule_scanner import scan_and_dispatch
+    from domains.runs.services.schedule_scanner import scan_and_dispatch
     from infrastructure.celery_async import run_async_task
     from infrastructure.neomodel_config import configure_neomodel
 

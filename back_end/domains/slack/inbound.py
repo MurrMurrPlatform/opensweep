@@ -234,7 +234,7 @@ async def command_repos_reply(org_uid: str) -> str:
 
 
 async def command_runs_reply(org_uid: str) -> str:
-    from domains.investigations.models import Run
+    from domains.runs.models import Run
     from domains.slack.formatting import frontend_base_url
 
     repos = {r.uid: r for r in await org_repositories(org_uid)}

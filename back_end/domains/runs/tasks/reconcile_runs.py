@@ -13,9 +13,9 @@ from celery_app import app
 from logging_config import logger
 
 
-@app.task(name="opensweep.investigations.reconcile_stale_runs")
+@app.task(name="opensweep.runs.reconcile_stale_runs")
 def reconcile_stale_runs_task() -> dict:
-    from domains.investigations.services.run_reconciliation import reconcile_stale_runs
+    from domains.runs.services.run_reconciliation import reconcile_stale_runs
     from infrastructure.celery_async import run_async_task
     from infrastructure.neomodel_config import configure_neomodel
 

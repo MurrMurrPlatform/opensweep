@@ -24,7 +24,7 @@ from domains.findings.schemas import (
     normalize_tags,
 )
 from domains.findings.services.dedupe import build_dedupe_key
-from domains.investigations.services.run_provider import provider_info_for_run
+from domains.runs.services.run_provider import provider_info_for_run
 from infrastructure.audit import write_audit
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}

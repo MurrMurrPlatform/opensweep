@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from domains.investigations.schemas import (
+from domains.runs.schemas import (
     ExecutionMode,
     Executor,
     RunStatus,

@@ -2,8 +2,8 @@
 
 import pytest
 
-from domains.investigations.schemas import parse_schedule
-from domains.investigations.services.job_types import get_job_type, list_job_types
+from domains.runs.schemas import parse_schedule
+from domains.runs.services.job_types import get_job_type, list_job_types
 
 
 def test_job_types_define_distinct_output_shapes():
