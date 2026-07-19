@@ -138,7 +138,7 @@ export const useDocStore = defineStore('docs', () => {
       auto_select?: boolean
       limit?: number
       max_findings?: number
-      effort?: 'small' | 'normal' | 'large'
+      effort?: 'short' | 'normal' | 'deep' | 'unlimited'
     } = {},
   ): Promise<DocAuditResult> {
     return apiPost<DocAuditResult>(`/repositories/${repoUid}/sweep/audit`, {

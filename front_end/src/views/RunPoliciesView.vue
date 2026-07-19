@@ -80,6 +80,21 @@ function numOrNull(v: number | ''): number | null {
   return v === '' || Number.isNaN(v) ? null : Number(v)
 }
 
+/**
+ * Format a ceiling value for display.
+ * - wall seconds: 0 = explicitly unlimited; null = unset (backend default ~60m)
+ * - other ceilings: null = no ceiling (unlimited)
+ */
+function formatCeiling(v: number | null | undefined, unit: string, isWall = false): string {
+  if (isWall) {
+    if (v === 0) return 'Unlimited'
+    if (v == null) return 'default (60m)'
+    return `${v}${unit}`
+  }
+  if (v == null) return 'Unlimited'
+  return `${v}${unit}`
+}
+
 function resetForm() {
   Object.assign(form, emptyForm())
   editingUid.value = null
@@ -283,8 +298,8 @@ async function confirmRemove() {
               </div>
               <div class="text-xs text-muted-foreground">{{ p.description }}</div>
               <div class="text-xs text-muted-foreground font-mono mt-1 break-all">
-                ${{ p.max_dollars ?? '∞' }} · tokens={{ p.max_tokens ?? '∞' }} ·
-                wall={{ p.max_wall_seconds ?? '∞' }}s · turns={{ p.max_tool_turns ?? '∞' }} · files={{ p.max_files_touched ?? '∞' }} ·
+                ${{ formatCeiling(p.max_dollars, '') }} · tokens={{ formatCeiling(p.max_tokens, '') }} ·
+                wall={{ formatCeiling(p.max_wall_seconds, 's', true) }} · turns={{ formatCeiling(p.max_tool_turns, '') }} · files={{ formatCeiling(p.max_files_touched, '') }} ·
                 cloud={{ p.cloud_allowed }} · local_only={{ p.local_only }} · dry_run={{ p.dry_run }} · on_exceed={{ p.on_exceed }}
               </div>
             </div>
