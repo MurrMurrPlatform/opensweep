@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Executor(StrEnum):
@@ -71,9 +71,31 @@ class RunTrigger(StrEnum):
 
 
 class Effort(StrEnum):
-    QUICK = "quick"
+    SHORT = "short"
     NORMAL = "normal"
     DEEP = "deep"
+    UNLIMITED = "unlimited"
+
+
+# Legacy stored/typed values → current tiers ("quick" predates the rename;
+# "light"/"small"/"large" appear in older seeds and UI payloads).
+_EFFORT_ALIASES = {
+    "quick": Effort.SHORT,
+    "light": Effort.SHORT,
+    "small": Effort.SHORT,
+    "large": Effort.DEEP,
+}
+
+
+def normalize_effort(value: str | None) -> Effort:
+    """Tolerant parse for effort values from old rows, old clients, or seeds."""
+    raw = (value or "").strip().lower()
+    if raw in _EFFORT_ALIASES:
+        return _EFFORT_ALIASES[raw]
+    try:
+        return Effort(raw)
+    except ValueError:
+        return Effort.NORMAL
 
 
 class RunDTO(BaseModel):
@@ -126,6 +148,22 @@ class RunDTO(BaseModel):
     duration_ms: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class RunHandoffDTO(BaseModel):
+    """Terminal takeover payload (docs/features/sandbox_improvements.md §3A/3B).
+
+    mode: resume — paste-command resumes the actual claude session;
+          seeded — paste-command starts a fresh claude seeded by the
+          OPENSWEEP_HANDOFF.md brief written into the workspace;
+          unavailable — no live workspace; `reason` says how to recover.
+    """
+
+    mode: str
+    command: str = ""
+    sandbox_host_path: str = ""
+    cli_session_id: str = ""
+    reason: str = ""
 
 
 class CreateRunRequest(BaseModel):

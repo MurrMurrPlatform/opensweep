@@ -75,6 +75,30 @@ def test_paused_quota_is_attention():
     assert category_for(event_types_for("run.paused_quota", {})) == CATEGORY_ATTENTION
 
 
+def test_normal_run_completion_notifies():
+    # Every self-completed run lands as `run.awaiting_input` (complete_run
+    # aliases the agent's "completed" onto it) — that is the everyday "run
+    # finished" signal, not run.ended (a human closing the run).
+    assert "run.awaiting_input" in RELEVANT_AUDIT_KINDS
+    types = event_types_for("run.awaiting_input", {})
+    assert types == ["run.completed"]
+    assert category_for(types) == CATEGORY_ACTIVITY
+
+
+def test_limit_exceeded_is_attention():
+    types = event_types_for("run.limit_exceeded", {})
+    assert types == ["attention.required"]
+    assert category_for(types) == CATEGORY_ATTENTION
+
+
+def test_agent_question_is_attention():
+    # ask_user (thread session agent) — the run is literally waiting on a
+    # human answer.
+    types = event_types_for("thread.question_asked", {})
+    assert types == ["attention.required"]
+    assert category_for(types) == CATEGORY_ATTENTION
+
+
 def test_mention_category():
     assert category_for(["comment.mention"]) == CATEGORY_MENTIONS
 

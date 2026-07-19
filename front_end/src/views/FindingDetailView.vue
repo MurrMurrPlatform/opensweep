@@ -364,7 +364,7 @@ function summaryFor(run: RunDTO): string {
 
 function runStatusBadge(run: RunDTO): { label: string; variant: BadgeVariants['variant'] } {
   // awaiting_input / ended both mean the verification turn finished OK.
-  return { label: runStatusLabel(run), variant: toneToBadge(runStatusVariant(run.status)) }
+  return { label: runStatusLabel(run), variant: toneToBadge(runStatusVariant(run.status, run)) }
 }
 
 const liveVerification = computed(() =>

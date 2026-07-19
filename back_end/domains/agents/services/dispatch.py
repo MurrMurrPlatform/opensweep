@@ -22,7 +22,7 @@ from domains.agents.services.registry import (
     playbook_for_produces,
     stage_for_agent_key,
 )
-from domains.runs.schemas import Effort, RunTrigger
+from domains.runs.schemas import Effort, RunTrigger, normalize_effort
 
 
 def _scope_summary(target: dict[str, Any]) -> str:
@@ -81,7 +81,7 @@ async def dispatch_agent(
     resolved_effort = (effort or agent.default_effort or "normal").strip()
     policy_uid = run_policy_uid
     if not policy_uid:
-        policy = await ensure_policy_for_effort(Effort(resolved_effort))
+        policy = await ensure_policy_for_effort(normalize_effort(resolved_effort))
         policy_uid = policy.uid
 
     return await trigger_run(

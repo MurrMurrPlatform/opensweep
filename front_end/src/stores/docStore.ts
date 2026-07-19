@@ -135,7 +135,7 @@ export const useDocStore = defineStore('docs', () => {
       auto_select?: boolean
       limit?: number
       max_findings?: number
-      effort?: 'quick' | 'normal' | 'deep'
+      effort?: 'short' | 'normal' | 'deep' | 'unlimited'
     } = {},
   ): Promise<DocAuditResult> {
     return apiPost<DocAuditResult>(`/repositories/${repoUid}/sweep/audit`, {
@@ -157,7 +157,7 @@ export const useDocStore = defineStore('docs', () => {
       agent_uid?: string
       custom_intent?: string
       max_findings?: number
-      effort?: 'quick' | 'normal' | 'deep'
+      effort?: 'short' | 'normal' | 'deep' | 'unlimited'
     } = {},
   ): Promise<DeepScanResult> {
     return apiPost<DeepScanResult>(`/repositories/${repoUid}/sweep/deep-scan`, {

@@ -84,7 +84,8 @@ function hydrate(a: AgentDTO) {
   description.value = a.description
   prompt.value = a.prompt
   produces.value = a.produces
-  effort.value = a.default_effort
+  const legacyEffort: Record<string, string> = { quick: 'short', small: 'short', light: 'short', large: 'deep' }
+  effort.value = (legacyEffort[a.default_effort] ?? a.default_effort) as AgentEffort
   tagsText.value = a.tags.join(', ')
   enabled.value = a.enabled
 }
@@ -327,9 +328,10 @@ async function runNow() {
               >
                 <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="quick">Quick</SelectItem>
+                  <SelectItem value="short">Short</SelectItem>
                   <SelectItem value="normal">Normal</SelectItem>
                   <SelectItem value="deep">Deep</SelectItem>
+                  <SelectItem value="unlimited">Unlimited</SelectItem>
                 </SelectContent>
               </Select>
             </div>

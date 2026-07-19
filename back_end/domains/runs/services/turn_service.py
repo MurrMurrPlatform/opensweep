@@ -114,6 +114,14 @@ def ensure_can_cancel(status: str) -> None:
         )
 
 
+def consume_needs_input(usage: dict | None) -> dict:
+    """Drop the ask_user needs_input flag — the user replying IS the input
+    the run was waiting on. Pure so it stays testable without Neo4j."""
+    out = dict(usage or {})
+    out.pop("needs_input", None)
+    return out
+
+
 def ensure_can_send(status: str, in_flight: bool, *, playbook: str = "") -> None:
     """Guard for follow-up messages: pure so it stays testable without Neo4j.
 
@@ -237,6 +245,7 @@ class TurnService:
             reopened = run.status == RunStatus.ENDED.value
             run.status = RunStatus.RUNNING.value
             run.error = ""
+            run.usage = consume_needs_input(run.usage)
             run.updated_at = now
             run.last_activity_at = now
             await run.save()

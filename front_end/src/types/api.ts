@@ -39,7 +39,7 @@ export type RunStatus =
 export type RunPlaybook = 'chat' | 'ask' | 'review' | 'fix' | 'implement' | 'verify' | 'document' | 'refine'
 export type RunTrigger = 'manual' | 'event' | 'schedule'
 export type RunSurface = 'runs' | 'comment' | 'chat'
-export type AgentEffort = 'quick' | 'normal' | 'deep'
+export type AgentEffort = 'short' | 'normal' | 'deep' | 'unlimited'
 
 export type OnExceed = 'abort' | 'pause_for_approval'
 
@@ -464,6 +464,18 @@ export interface RunDTO {
   duration_ms: number
   created_at?: string | null
   updated_at?: string | null
+}
+
+/** Terminal takeover payload for POST /runs/{uid}/handoff. */
+export interface RunHandoffDTO {
+  /** resume — paste resumes the actual claude session; seeded — paste starts a
+   *  fresh claude seeded by the OPENSWEEP_HANDOFF.md brief; unavailable — no
+   *  live workspace, `reason` says how to recover. */
+  mode: 'resume' | 'seeded' | 'unavailable'
+  command: string
+  sandbox_host_path: string
+  cli_session_id: string
+  reason: string
 }
 
 /** POST /runs — creates chat/ask runs; other playbooks have domain triggers. */
@@ -1442,6 +1454,7 @@ export interface ThreadDTO {
   plan_state: PlanState
   branch: string
   pr_uid: string
+  ready_for_review: boolean
   active_run_uid: string
   created_by: string
   created_at: string | null

@@ -8,7 +8,7 @@ waive, defer (→ ticket), blocking-override (not-important / escalate).
 from datetime import UTC
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.dependencies import get_current_user, require_role
 from domains.tenancy import org_repo_uids, require_repo_in_org
@@ -37,7 +37,7 @@ from domains.delivery.services.resolution_service import (
     resolution_to_dto,
 )
 from domains.findings.models import Finding
-from domains.runs.schemas import Effort
+from domains.runs.schemas import Effort, normalize_effort
 from domains.users.schemas import UserDTO
 
 router = APIRouter(prefix="/api/v1/delivery", tags=["delivery"])
@@ -90,6 +90,31 @@ async def get_pull_request(uid: str, user: UserDTO = Depends(get_current_user)):
     return pull_request_to_dto(pr)
 
 
+class PullRequestFilesDTO(BaseModel):
+    """Changed files + per-file unified diffs of a PR (Files panel). Same
+    shape as `RunChangesDTO` so the frontend diff panel is shared; `tree`
+    stays empty (no workspace behind a synced PR)."""
+
+    source: str = "none"
+    base: str = ""
+    captured_at: str | None = None
+    files: list[dict] = []
+    tree: list[str] = []
+
+
+@router.get(
+    "/pull-requests/{uid}/files",
+    response_model=PullRequestFilesDTO,
+    operation_id="opensweep_pull_request_files",
+)
+async def get_pull_request_files(uid: str, user: UserDTO = Depends(get_current_user)):
+    """The PR's diff straight from the provider (GET /pulls/{n}/files)."""
+    service = PullRequestService()
+    pr = await service.get_node(uid)
+    await require_repo_in_org(pr.repository_uid, user.org_uid)
+    return PullRequestFilesDTO(**await service.files(pr))
+
+
 @router.post(
     "/pull-requests/sync",
     response_model=PullRequestDTO,
@@ -140,6 +165,13 @@ class TriggerReviewRequest(BaseModel):
     full: bool = False
     # Numeric budget: caps normal/deep and overrides quick's default of 5.
     max_findings: int | None = Field(default=None, ge=1, le=50)
+
+    @field_validator("depth", mode="before")
+    @classmethod
+    def _normalize_depth(cls, v):
+        if v is None:
+            return v
+        return normalize_effort(v if isinstance(v, str) else (v.value if v else ""))
 
 
 @router.post(

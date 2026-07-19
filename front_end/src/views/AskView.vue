@@ -35,7 +35,7 @@ const selectedAgent = ref<AgentDTO | null>(null)
 const customMode = ref(false)
 const editingBody = ref(false)
 const body = ref('')
-const effort = ref<'quick' | 'normal' | 'deep'>('normal')
+const effort = ref<'short' | 'normal' | 'deep' | 'unlimited'>('normal')
 const submitting = ref(false)
 
 // The Ask page dispatches ask runs: agents that produce findings or answers
@@ -66,10 +66,13 @@ function pickAgent(a: AgentDTO) {
   editingBody.value = false
   body.value = a.prompt
   const eff = (a.default_effort || 'normal').toString()
-  effort.value = (['quick', 'normal', 'deep'].includes(eff) ? eff : 'normal') as
-    | 'quick'
+  const legacy: Record<string, string> = { quick: 'short', small: 'short', light: 'short', large: 'deep' }
+  const mapped = legacy[eff] ?? eff
+  effort.value = (['short', 'normal', 'deep', 'unlimited'].includes(mapped) ? mapped : 'normal') as
+    | 'short'
     | 'normal'
     | 'deep'
+    | 'unlimited'
 }
 
 function startCustom() {
@@ -265,9 +268,10 @@ async function submit() {
                 <SelectValue placeholder="Effort" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="quick">Quick</SelectItem>
+                <SelectItem value="short">Short</SelectItem>
                 <SelectItem value="normal">Normal</SelectItem>
                 <SelectItem value="deep">Deep</SelectItem>
+                <SelectItem value="unlimited">Unlimited</SelectItem>
               </SelectContent>
             </Select>
           </div>

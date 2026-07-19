@@ -137,16 +137,22 @@ async def complete_run(
                 f"must be one of {sorted(VALID_FINAL_STATUSES)}"
             ),
         )
+    self_reported_status = final_status
     final_status = canonical_final_status(final_status)
     r = await Run.nodes.get_or_none(uid=run_uid)
     if r is None:
         raise HTTPException(status_code=404, detail=f"Run {run_uid} not found")
 
     now = datetime.now(timezone.utc)
+    prior_status = r.status or ""
     r.status = final_status
     r.completed_at = now
     if usage:
         r.usage = {**(r.usage or {}), **usage}
+    # The alias erases "completed" from Run.status; keep the agent's original
+    # self-report so the UI and the notification feed can tell "done" apart
+    # from "genuinely waiting on a human".
+    r.usage = {**(r.usage or {}), "self_reported_status": self_reported_status}
     if output_refs:
         r.output_refs = list({*(r.output_refs or []), *output_refs})
     if raw_artifact_uri:
@@ -169,13 +175,24 @@ async def complete_run(
         r.duration_ms = int(delta)
     r.updated_at = now
     await r.save()
-    await write_audit(
-        kind=f"run.{final_status}",
-        subject_uid=r.uid,
-        subject_type="Run",
-        actor_uid=r.executor,
-        payload={"summary": summary, "outcome": outcome, "usage": dict(r.usage or {})},
-    )
+    # Audit only the status TRANSITION: an MCP self-completing agent calls
+    # complete_run mid-run and the lifecycle finalize calls it again with the
+    # adapter result — one completion must yield one audit event (the
+    # notification feed and Slack both deliver straight off this stream).
+    if prior_status != final_status:
+        await write_audit(
+            kind=f"run.{final_status}",
+            subject_uid=r.uid,
+            subject_type="Run",
+            actor_uid=r.executor,
+            payload={
+                "title": r.title or "",
+                "summary": summary,
+                "outcome": outcome,
+                "self_reported_status": self_reported_status,
+                "usage": dict(r.usage or {}),
+            },
+        )
     # Checked stamps are written by the playbook completion hook
     # (playbooks.on_turn_complete), not here — analyze playbooks only.
     return {

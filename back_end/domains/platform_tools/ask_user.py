@@ -15,6 +15,8 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from infrastructure.audit import write_audit
+
 
 def _validate(*, thread_uid: str, question: str, options: list[str]) -> None:
     if not (thread_uid or "").strip():
@@ -66,6 +68,33 @@ async def ask_user(
     ]
     thread.updated_at = now
     await thread.save()
+
+    # The run is now literally waiting on a human answer: surface it in the
+    # notification feed (attention group) and flag the calling run so the UI
+    # can show "needs your input" instead of a generic finished badge. The
+    # repository_uid is passed explicitly — deriving it would need another
+    # DB round-trip write_audit can skip.
+    await write_audit(
+        kind="thread.question_asked",
+        subject_uid=thread.uid,
+        subject_type="Thread",
+        actor_uid=executor,
+        repository_uid=thread.repository_uid or "",
+        payload={
+            "title": question.strip(),
+            "thread_uid": thread.uid,
+            "question_uid": question_uid,
+            "ticket_uid": thread.subject_ticket_uid or "",
+            "run_uid": executor if executor != "manual" else "",
+        },
+    )
+    if executor and executor != "manual":
+        from domains.runs.models import Run
+
+        run = await Run.nodes.get_or_none(uid=executor)
+        if run is not None:
+            run.usage = {**(run.usage or {}), "needs_input": True}
+            await run.save()
 
     # Mirror to the ticket's discussion so followers see the question without
     # opening the thread (the agent itself cannot post comments — the
