@@ -185,8 +185,12 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         # Real usage from claude's `result` stream event (num_turns, token
         # counts, total_cost_usd) — feeds the live ceiling check. `num_turns`
         # is per-pass; we accumulate it into `turns_used` across passes.
+        # Token counts and cost are likewise per-pass in cli_usage (each pass
+        # overwrites it); we accumulate totals in tokens_used / dollars_used.
         cli_usage: dict[str, Any] = {}
         turns_used = 0
+        tokens_used = 0
+        dollars_used = 0.0
         session_id = ""
         quota_hit = False
         max_extra_passes = int(getattr(settings, "OPENSWEEP_CONTINUATION_PASSES", 3))
@@ -293,6 +297,8 @@ class ClaudeCodeAdapter(ExecutorAdapter):
 
                 exit_code, timed_out, pass_stdout = await _run_pass(pass_argv, remaining)
                 turns_used += int(cli_usage.get("num_turns") or 0)
+                tokens_used += int(cli_usage.get("input_tokens") or 0) + int(cli_usage.get("output_tokens") or 0)
+                dollars_used += float(cli_usage.get("total_cost_usd") or 0.0)
                 for line in pass_stdout.splitlines():
                     meta = extract_claude_meta(line)
                     if meta.session_id:
@@ -306,8 +312,8 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                     break
                 if turn_cap and turns_used >= turn_cap:
                     break
-                if exit_code not in (0, None) and "--max-turns" not in " ".join(pass_argv):
-                    break  # real CLI failure; --max-turns stops exit nonzero and MAY continue
+                if exit_code not in (0, None):
+                    break  # real CLI failure; turn-cap stops are caught by the turns_used check above
                 pass_no += 1
                 if pass_no > max_extra_passes:
                     break
@@ -333,6 +339,9 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                         exit_code, timed_out, _ = await _run_pass(
                             with_turn_cap(wind_argv, 30), winddown_budget
                         )
+                        turns_used += int(cli_usage.get("num_turns") or 0)
+                        tokens_used += int(cli_usage.get("input_tokens") or 0) + int(cli_usage.get("output_tokens") or 0)
+                        dollars_used += float(cli_usage.get("total_cost_usd") or 0.0)
         except FileNotFoundError as exc:
             return DispatchResult(
                 status=RunStatus.FAILED,
@@ -394,14 +403,14 @@ class ClaudeCodeAdapter(ExecutorAdapter):
 
         # Post-run ceiling accounting (Task 5): warnings only — a finished run
         # is never retroactively failed; LIMIT_EXCEEDED is reserved for runs a
-        # limit actually stopped (wall kill / turn cap). tool_turns is the
-        # accumulated per-pass total, not just the last pass's num_turns.
+        # limit actually stopped (wall kill / turn cap). tool_turns, tokens, and
+        # dollars are all accumulated across every pass (including wind-down);
+        # cli_usage stays as-is (last pass's raw values for the usage payload).
         usage_snapshot = UsageSnapshot(
             wall_seconds=wall_seconds,
             tool_turns=turns_used,
-            tokens=int(cli_usage.get("input_tokens") or 0)
-            + int(cli_usage.get("output_tokens") or 0),
-            dollars=float(cli_usage.get("total_cost_usd") or 0.0),
+            tokens=tokens_used,
+            dollars=dollars_used,
         )
         warnings = ceiling_warnings(
             policy=req.policy, usage=usage_snapshot, wall_ceiling=wall_ceiling
@@ -441,6 +450,8 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                 "cli_usage": cli_usage,
                 "continuation_passes": pass_no,
                 "turns_used": turns_used,
+                "tokens_used": tokens_used,
+                "dollars_used": dollars_used,
             },
             output_refs=[raw_uri, *parsed_refs],
             error=err,
