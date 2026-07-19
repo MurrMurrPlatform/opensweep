@@ -1,7 +1,7 @@
 # Sandbox improvements — options landscape
 
-Status: options survey (2026-07-19). Track 3 (terminal takeover, options 3A + 3B)
-is being implemented first; the other tracks are candidates for follow-up specs.
+Status: options survey (2026-07-19). Track 3 (terminal takeover, options
+3A + 3B) is implemented; the other tracks are candidates for follow-up specs.
 
 ## Context: what exists today
 
@@ -95,29 +95,40 @@ opt-in "heavy run" tier later, possibly offloaded to remote runners
 Two facts make this tractable: sandboxes live on the user's host filesystem,
 and Runs store `cli_session_id`.
 
-### 3A. True session handoff (recommended — being implemented)
+### 3A. True session handoff (implemented)
 
-Point the worker's Claude Code state (`CLAUDE_CONFIG_DIR`) at a host-mounted
-path (e.g., `~/.opensweep/claude-state`). An attach command (copy-to-clipboard
-button next to Test Locally, or CLI) then does:
+Shipped as `POST /api/v1/runs/{uid}/handoff` plus the "Continue in terminal"
+button on Threads: one paste copies the run's Claude session file under the
+host cwd's project slug and runs `claude --resume <id>` inside the sandbox.
+Session files are shared through the `~/.claude` bind-mounts (worker and
+backend).
+
+The shipped command (copy-to-clipboard, next to Test Locally):
 
 ```sh
 cd ~/.opensweep/sandboxes/<uid> && \
-  CLAUDE_CODE_OAUTH_TOKEN=… CLAUDE_CONFIG_DIR=~/.opensweep/claude-state \
-  claude --resume <cli_session_id>
+  dst="$HOME/.claude/projects/$(pwd -P | sed 's/[^a-zA-Z0-9]/-/g')" && \
+  mkdir -p "$dst" && \
+  cp -n "$HOME/.claude/projects/-host-sandboxes-<uid>/<sid>.jsonl" "$dst/" 2>/dev/null; \
+  claude --resume <sid>
 ```
 
-This resumes the *actual* session — full context, same working tree. The
-platform marks the run "detached to terminal" so the Thread UI does not race
-it; handing back = push the branch / resume the thread (a fresh turn re-reads
-the branch).
+The session-file copy is needed because `claude --resume` is project-scoped
+(session files are keyed by the cwd's path slug, and container/host cwds
+differ). This resumes the *actual* session — full context, same working tree.
+Takeover is recorded on the run and thread timelines (not enforced as a
+lock); handing back = just resume the conversation in the platform — the
+next turn reads the same working copy, local commits included.
 
-### 3B. Transcript-seeded fresh session (fallback — being implemented)
+### 3B. Transcript-seeded fresh session (implemented, fallback)
 
-Generate a context file from the run's `events.jsonl` and start a fresh local
-`claude` session seeded with it. Loses true session state but works when the
-session store is not shared (hosted deployments, remote workers, non-Claude
-executors).
+Shipped alongside 3A: the handoff endpoint always writes an
+`OPENSWEEP_HANDOFF.md` brief (task, branch contract, transcript tail) into the
+sandbox root, excluded via `.git/info/exclude`. Non-claude executors — and any
+failed resume — start a fresh local `claude` pointed at that brief.
+
+Loses true session state but works when the session store is not shared
+(hosted deployments, remote workers, non-Claude executors).
 
 ### 3C. Terminal as a Thread client (later)
 
