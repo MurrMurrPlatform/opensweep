@@ -26,6 +26,14 @@ export function acceptsFollowUp(status: RunStatus): boolean {
   return FOLLOW_UP_STATUSES.includes(status)
 }
 
+/** ask_user set usage.needs_input: the run is genuinely waiting on a human
+ *  answer (cleared when the next follow-up message starts a turn). */
+export function runNeedsInput(run: RunLike): boolean {
+  const usage = run.usage
+  if (!usage || typeof usage !== 'object') return false
+  return (usage as Record<string, unknown>).needs_input === true
+}
+
 export function runQuota(run: RunLike): RunQuotaUsage | null {
   const usage = run.usage
   if (!usage || typeof usage !== 'object') return null
@@ -44,7 +52,10 @@ function formatEta(iso: string): string {
 
 /** "Paused (quota) — retry 2 in ~14m" for paused_quota runs, a readable label otherwise. */
 export function runStatusLabel(run: RunLike): string {
-  if (run.status === 'awaiting_input') return 'awaiting input'
+  // awaiting_input is the everyday "turn finished" state (there is no
+  // terminal completed status) — only an open agent question means the run
+  // is actually waiting on the user.
+  if (run.status === 'awaiting_input') return runNeedsInput(run) ? 'needs your input' : 'done'
   if (run.status !== 'paused_quota') return run.status
   const quota = runQuota(run)
   const retry = Number(quota?.retry_count ?? 0) + 1
@@ -54,12 +65,14 @@ export function runStatusLabel(run: RunLike): string {
   return `Paused (quota) — retry ${retry}${eta}`
 }
 
-/** Badge variant per status: awaiting_input green, ended neutral,
- *  queued/running live, failures red, paused_quota purple-ish warn. */
+/** Badge variant per status: awaiting_input green (warn when an agent
+ *  question is open), ended neutral, queued/running live, failures red,
+ *  paused_quota purple-ish warn. */
 export function runStatusVariant(
   status: RunStatus,
+  run?: RunLike,
 ): 'success' | 'danger' | 'warn' | 'info' | 'default' {
-  if (status === 'awaiting_input') return 'success'
+  if (status === 'awaiting_input') return run && runNeedsInput(run) ? 'warn' : 'success'
   if (status === 'running' || status === 'queued') return 'info'
   if (status === 'failed' || status === 'cancelled' || status === 'limit_exceeded') return 'danger'
   if (status === 'paused_quota') return 'warn'

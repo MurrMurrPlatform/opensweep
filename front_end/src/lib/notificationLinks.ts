@@ -8,6 +8,7 @@ import type { NotificationDTO } from '@/types/api'
 /** subject_type (audit) → flat detail route name. */
 const DETAIL_ROUTES: Record<string, string> = {
   Run: 'run-detail',
+  Thread: 'thread-detail',
   Ticket: 'ticket-detail',
   Finding: 'finding-detail',
   PullRequest: 'pull-request-detail',

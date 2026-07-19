@@ -52,8 +52,9 @@ CATALOG: tuple[NotificationEvent, ...] = (
     NotificationEvent(
         "attention.required",
         "Human attention required",
-        "OpenSweep needs a human: a review verdict came back needs-human, a "
-        "verification could not conclude, or a run is paused on provider quota.",
+        "OpenSweep needs a human: an agent asked you a question, a review "
+        "verdict came back needs-human, a verification could not conclude, a "
+        "run hit its ceiling, or a run is paused on provider quota.",
         "rotating_light",
         CATEGORY_ATTENTION,
     ),
@@ -145,9 +146,16 @@ BY_TYPE: dict[str, NotificationEvent] = {e.event_type: e for e in CATALOG}
 # audit kind → notification event type(s). Kinds absent here never reach the
 # delivery task (write_audit pre-filters on RELEVANT_AUDIT_KINDS).
 _KIND_MAP: dict[str, tuple[str, ...]] = {
+    # complete_run aliases the agent's "completed" self-report onto
+    # awaiting_input (there is no terminal completed state) — so
+    # run.awaiting_input IS the everyday "run finished" signal; run.ended is
+    # a human explicitly closing the run.
+    "run.awaiting_input": ("run.completed",),
     "run.ended": ("run.completed",),
     "run.failed": ("run.failed",),
+    "run.limit_exceeded": ("attention.required",),
     "run.paused_quota": ("attention.required",),
+    "thread.question_asked": ("attention.required",),
     "verification.needs_human": ("attention.required",),
     "ticket.created": ("ticket.created",),
     "ticket.transitioned": ("ticket.status_changed",),

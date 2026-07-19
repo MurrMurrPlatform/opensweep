@@ -49,3 +49,16 @@ def test_paused_quota_409s_with_resume_hint():
     with pytest.raises(HTTPException) as exc_info:
         ensure_can_send("paused_quota", False, playbook="chat")
     assert "quota" in _detail(exc_info)
+
+
+# ── needs_input consumption ──────────────────────────────────────────────────
+
+
+def test_follow_up_turn_consumes_needs_input():
+    from domains.investigations.services.turn_service import consume_needs_input
+
+    # The user replying IS the input the run was waiting on — the flag set by
+    # ask_user must not survive into the next turn.
+    assert consume_needs_input({"needs_input": True, "other": 1}) == {"other": 1}
+    assert consume_needs_input({}) == {}
+    assert consume_needs_input(None) == {}

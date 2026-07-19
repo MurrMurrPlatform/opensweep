@@ -31,7 +31,7 @@ import type { RunDTO, RunPlaybook } from '@/types/api'
 
 /** runStatusVariant predates the shadcn Badge tones (danger/default gone). */
 function statusBadgeVariant(run: RunDTO): BadgeVariants['variant'] {
-  const v = runStatusVariant(run.status)
+  const v = runStatusVariant(run.status, run)
   if (v === 'danger') return 'destructive'
   if (v === 'default') return 'secondary'
   return v
