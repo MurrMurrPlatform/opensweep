@@ -1,8 +1,8 @@
 # Codex subscription token refresh — design
 
 **Date:** 2026-07-20
-**Status:** Approved design, pending spec review
-**Area:** `back_end/domains/llm_providers`, `back_end/domains/runs`, `back_end/infrastructure`
+**Status:** Approved design (revised after external review), pending final spec review
+**Area:** `back_end/domains/llm_providers`, `back_end/domains/runs`, `back_end/infrastructure`, Dockerfiles
 
 ## Problem
 
@@ -15,174 +15,307 @@ on a **stored** `auth.json` credential (mandatory for cloud):
    It is sealed and stored as an **immutable snapshot** in
    `LLMProvider.credential_secret`.
 2. On every run, `runtime_env.build_runtime` writes that *same stored snapshot*
-   to a worker-private `CODEX_HOME/.codex/auth.json`
-   (`runtime_env.py:84-93`); `codex_turn_env` performs the write
-   (`turn_cli.py:197-204`).
-3. Codex's access token (a short-lived JWT) expires. Codex tries to refresh
-   using the `refresh_token` in the snapshot.
-4. OpenAI's OAuth uses **single-use rotating refresh tokens** — every successful
-   refresh invalidates the previous refresh token. The snapshot's refresh token
-   has already been consumed and rotated away (by the user's laptop codex, or by
-   a prior OpenSweep run whose rotated token was never persisted). OpenAI rejects
-   it → *"Your access token could not be refreshed. Please log out and sign in
-   again."*
+   to a worker-private `CODEX_HOME/.codex/auth.json` (`runtime_env.py:84-93`);
+   `codex_turn_env` performs the write (`turn_cli.py:197-204`).
+3. Codex's access token expires; codex refreshes using the snapshot's
+   `refresh_token`.
+4. OpenAI's OAuth uses **single-use rotating refresh tokens** — each refresh
+   invalidates the previous refresh token. The snapshot's token was already
+   consumed and rotated away (by the user's laptop codex, or by a prior OpenSweep
+   run whose rotated token was never persisted). OpenAI rejects it → *"Your
+   access token could not be refreshed. Please log out and sign in again."*
 
 There is **no write-back path**: `provider_secret()` is read-only everywhere, so
-a rotated token is never persisted back into `credential_secret`. The `last_refresh`
-the user sees in their host `~/.codex/auth.json` is fresh because the *host* copy
-keeps winning the rotation race; the stored OpenSweep copy is stale by
-construction.
+a rotated token is never persisted back. The `last_refresh` the user sees in their
+host `~/.codex/auth.json` is fresh because the *host* copy keeps winning the
+rotation race; the stored OpenSweep copy is stale by construction.
 
 The **bind-mount** path (no stored secret — codex owns the host `~/.codex`) works
-correctly and is out of scope for changes.
+and is out of scope for changes.
 
 ## Goals
 
 - Codex subscription works reliably in **local and cloud**, including across
   ephemeral cloud containers (no persistent worker filesystem).
-- Correct under **concurrency**: OpenSweep is a parallel-agent platform and many
-  runs share **one** provider row, so concurrent codex processes against one
-  subscription is the common case, not an edge case.
-- Custody the OAuth secret safely (sealed at rest, never logged).
+- Correct under **concurrency**: many runs share **one** provider row, so
+  concurrent codex processes against one subscription is common.
+- Use **OpenAI's supported** credential-maintenance pattern; do not take ownership
+  of an undocumented OAuth integration.
+- Custody the OAuth secret safely (sealed at rest, never logged, never plaintext
+  in Redis).
 
 ## Non-goals
 
 - Changing the bind-mount path.
 - Solving the case where the **same** ChatGPT login is used simultaneously by
-  OpenSweep *and* an external codex (laptop). That is inherent to sharing one
-  OAuth identity; mitigated by guidance (use a dedicated login for cloud), not code.
+  OpenSweep *and* an external codex (laptop). Inherent to sharing one OAuth
+  identity; mitigated by guidance (dedicated login for cloud), not code.
+- Guaranteeing exactly-once rotation across arbitrary process termination — see
+  "Irreducible crash window".
 
-## Chosen approach — B: OpenSweep owns the refresh
+## Approach — A: let codex refresh, OpenSweep persists (serialized per subscription)
 
-Rejected alternative **A** (let codex refresh, hold a per-subscription lock for
-the whole turn): correct but serializes every concurrent run on a subscription
-for the full turn duration — defeats the parallel-agent model.
+OpenAI's supported CI/CD guidance is: **let codex perform the refresh, persist the
+resulting `auth.json`, and ensure only one serialized execution stream uses a given
+credential copy at a time.** It explicitly says *not* to call the refresh endpoint
+yourself. This design follows that exactly.
 
-Under **B**, OpenSweep refreshes the token itself, proactively, and hands codex
-an access token that is valid for longer than any single turn. Codex therefore
-never refreshes mid-turn; the only refresh that happens is OpenSweep's, which is
-serialized across replicas. Concurrent turns share one valid access token (bearer
-tokens can be used concurrently), so steady-state parallelism is unbounded.
+### Approaches considered and rejected
 
-### Load-bearing invariant
+- **B — OpenSweep calls the OAuth endpoint directly** (hand codex a long-lived
+  access token). Rejected: (a) unsupported and version-coupled to codex's OAuth
+  request/response shape; (b) the generated `auth.json` still contains a refresh
+  token and resolves as managed `chatgpt` auth, so codex can still **reactively
+  refresh on an upstream 401** mid-turn and rotate the token out from under us —
+  the ownership boundary is not actually enforced.
+- **C — app-server external-token mode (`chatgptAuthTokens`) now.** This is the
+  eventual target (see "Fast-follow"), but as an immediate step it combines too
+  much foundational change: a substantial turn-runner rewrite (`codex exec` →
+  app-server JSON-RPC) *and* dependency on an explicitly experimental protocol.
+  Critically, external-token mode still requires the host to *produce* refreshed
+  tokens on a 401 callback — so without a supported way to do that, it merely
+  moves the unsupported refresh from turn start into the middle of the turn.
 
-> OpenSweep always hands codex an access token whose remaining lifetime is
-> **≥ `TURN_TIMEOUT_SECONDS` + buffer**.
+### Why A is safe where B was not
 
-So codex never needs to refresh during a turn. This requires the access-token
-lifetime to exceed the turn timeout. If a token's observed lifetime is *shorter*
-than the turn timeout, we **keep proactively refreshing and log a loud warning**
-(decision: accept the rare mid-turn-refresh race rather than add a whole-turn
-lock fallback). A cheap defensive post-turn check logs if the on-disk
-`last_refresh` ever changed, to detect a wrong margin in the wild.
+Because OpenSweep **serializes all turns that use a given stored subscription**,
+exactly one codex process ever touches that credential copy at a time. Codex is
+free to refresh whenever it needs to (proactively near expiry *or* reactively on a
+401) — it does so with exclusive access, then OpenSweep persists whatever
+`auth.json` codex leaves behind. No two codex processes can race on the rotating
+token. Consequences:
+
+- We do **not** parse the access-token JWT, compute margins, or proactively
+  refresh. We compare the post-turn `auth.json` to the seeded copy and persist if
+  it changed. This removes all coupling to codex's OAuth request/response shape
+  (a concrete benefit over B).
+- The earlier "token lifetime vs. turn timeout" invariant is gone. A codex
+  mid-turn refresh is safe because the turn holds the credential exclusively.
+
+### The cost, made explicit
+
+Concurrent turns on **one** subscription serialize for the full turn duration.
+**Different provider rows remain fully parallel.** This is an intentional
+compatibility phase; the app-server fast-follow removes the whole-turn
+serialization.
 
 ## Design
 
-### 1. New module — `domains/llm_providers/services/codex_auth.py`
+### 1. Lock boundary — the whole refresh transaction
 
-Pure, isolated, unit-testable token logic:
+The per-provider lock MUST cover the entire transaction, not just codex execution:
 
-- `parse_blob(secret: str) -> CodexTokens` — parse auth.json:
-  `tokens.{id_token, access_token, refresh_token, account_id}` + `last_refresh`.
-- `access_expiry(tokens) -> datetime` — decode the access-token JWT `exp` claim
-  (base64 payload only; **no signature verification** — we only read expiry).
-- `needs_refresh(tokens, now, margin) -> bool`.
-- `refresh(tokens) -> CodexTokens` — `POST https://auth.openai.com/oauth/token`
-  with `grant_type=refresh_token`, codex's `client_id`, and the refresh token.
-  Module-level seam so tests monkeypatch without real HTTP. Preserves
-  `account_id`; updates `id_token`/`access_token`/`refresh_token` + `last_refresh`.
-  Raises a typed `CodexReauthRequired` on `400 invalid_grant`.
-- `build_auth_json(tokens) -> str` — serialize in the exact shape codex expects:
-  `{"OPENAI_API_KEY": null, "tokens": {...}, "last_refresh": "<iso8601>"}`.
+```
+acquire per-subscription lock
+  → read DB credential at revision R
+  → seed worker-private CODEX_HOME/.codex/auth.json
+  → run the complete codex turn (codex may refresh here, exclusively)
+  → read the resulting auth.json
+  → validate (parses, non-empty, account_id matches the seeded credential)
+  → if changed: seal → CAS-persist at revision R → bump to R+1 → update caches
+release lock
+```
 
-**Concrete constants to verify during implementation** against the codex version
-pinned in `back_end/Dockerfile.prod`:
-- Token endpoint: `https://auth.openai.com/oauth/token`
-- `client_id`: codex's public CLI client id
-- Request body: `{client_id, grant_type: "refresh_token", refresh_token, scope}`
+The lock is **not** released when codex exits but before write-back — the final
+persistence is part of the refresh transaction.
 
-These are pinned values plus an explicit verification step — not placeholders.
+### 2. Coordination (fail closed for rotating creds)
 
-### 2. Refresh orchestration — `ensure_fresh_blob(provider) -> str`
+- **Distributed single-flight lock** per provider via Redis, modeled on
+  `infrastructure/github_app.py`'s `SET key token NX EX` + compare-and-delete
+  release. Because a turn can run for minutes (up to `TURN_TIMEOUT_SECONDS`), the
+  lease TTL is short and **renewed by a background task** while the turn runs;
+  the lock is released (CAS-delete) in a `finally` path.
+- **Credential-revision fencing.** Add `LLMProvider.credential_revision`
+  (monotonic). Persistence is a **conditional Cypher CAS**:
 
-Mirrors the proven L1/L2/single-flight-lock structure in
-`infrastructure/github_app.py`. Key difference: because the refresh token
-**rotates**, the sealed `LLMProvider.credential_secret` in the DB — not Redis —
-is the **durable source of truth**. Redis is a cache + the lock.
+  ```cypher
+  MATCH (p:LLMProvider {uid: $uid})
+  WHERE p.credential_revision = $expected_revision
+  SET p.credential_secret = $sealed, p.credential_revision = $expected_revision + 1
+  RETURN p
+  ```
 
-1. **Steady state (no lock):** read the current blob (L1 in-process cache → L2
-   Redis cache → DB). If the access token is fresh (`access_expiry > now +
-   margin`), return its auth.json. Concurrent turns all take this path — full
-   parallelism, no lock.
-2. **Refresh needed (locked):** acquire a per-provider Redis single-flight lock
-   (`SET key token NX EX`, poll pattern from `github_app._get_token_via_redis`).
-   Under the lock:
-   - **Re-read the blob from the DB** (a peer replica may have just refreshed →
-     avoids clobbering a newer token) and re-check freshness; return early if now
-     fresh.
-   - Call `refresh()`.
-   - **Persist the rotated blob:** seal → write to
-     `LLMProvider.credential_secret` (durable) → update Redis L2 + L1 caches.
-   - Release the lock (compare-and-delete: only release a lock we still own).
-3. **Redis unreachable:** degrade to a per-process `asyncio.Lock`
-   (like `github_app._mint_under_local_lock`) — correct within a replica,
-   best-effort across replicas. Redis errors never fail a run on their own.
+  The revision represents the **credential**, not general provider-row updates.
+  A CAS miss means the user replaced the credential (or a peer persisted) during
+  the turn → do not overwrite; log and drop the stale write-back.
+- **Fail closed.** OpenSweep is on **Neo4j**, which has no clean advisory-lock
+  primitive, so there is no DB-lock fallback. If globally effective coordination
+  (Redis) is unavailable **at the point refresh coordination is needed**, fail the
+  turn with a **retryable infrastructure error before launching codex** — never
+  degrade to a per-process `asyncio.Lock` in a possibly-multi-replica deployment.
+  A per-process lock is acceptable *only* when the deployment is explicitly
+  configured single-replica.
 
-`margin = TURN_TIMEOUT_SECONDS + buffer`.
+### 3. Write-back rules
 
-### 3. Integration points (localized)
+Write-back runs in a `finally`-style path after **success, failure, cancellation,
+or timeout** — a failed turn may still have successfully refreshed the credential,
+so write-back must not depend on turn success. Before persisting the on-disk
+`auth.json`:
 
-- **`runs/services/turn_service.py:_build_subprocess_turn`** (already async):
-  for `executor == "codex"` with a stored subscription secret,
-  `await ensure_fresh_blob(provider)` and pass the fresh blob into env building.
-- **`llm_providers/services/runtime_env.build_runtime` / `runs/services/turn_cli.codex_turn_env`:**
-  seed `CODEX_HOME/.codex/auth.json` from the **fresh blob** instead of the raw
-  stored secret. `home_override` and existing cleanup semantics are unchanged.
-- **No post-turn read-back** is required (the invariant guarantees codex did not
-  refresh). A cheap defensive check logs if on-disk `last_refresh` changed.
+- It parses as JSON and is non-empty / not partially written.
+- `tokens.account_id` still matches the seeded credential (guard against a swapped
+  identity).
+- **Lossless document:** keep the complete parsed document; replace only
+  `tokens.id_token`, `tokens.access_token`, `tokens.refresh_token`, and
+  `last_refresh` relative to the seed; preserve `auth_mode` and any unknown
+  top-level / token-level fields (forward-compat with future codex versions).
+- Seal via `infrastructure.secretbox` **before** the DB write.
+- Persist via the revision CAS (§2).
+- **Only if it changed** vs. the seeded copy (avoid needless revision churn).
 
-### 4. Re-authentication UX (decision: flag + clear error)
+### 4. Caching & security
 
-When `refresh()` raises `CodexReauthRequired` (dead refresh token — revoked or
-rotated away externally):
-- Fail the run with an actionable message: *"Your Codex subscription needs
-  re-authentication: run `codex login` on your machine and re-paste
-  `~/.codex/auth.json` into the provider."*
-- Set a lightweight `needs_reauth` flag on the `LLMProvider` node (cleared on the
-  next successful credential save / refresh) so the UI can badge the provider.
-  Requires: schema field on `LLMProvider`, surface in the provider DTO
-  (`llm_provider_service`), and a small UI badge/prompt in the provider list.
-
-### 5. Security / custody
-
-- The blob stays sealed via `infrastructure.secretbox` at rest (same as today and
-  as `github_app` cached tokens). Refresh happens over HTTPS. Tokens are never
-  logged (log only expiry timestamps / refresh outcomes).
+- The blob stays sealed at rest (same as today; matches `github_app` L2, which
+  seals). **The plaintext refresh token never enters Redis.** If a hot-path cache
+  is used, cache either the already-sealed DB value or only non-secret fields
+  (access-token/expiry/account-id/revision). The refresh token exists unsealed only
+  transiently, in the process performing write-back.
+- Tokens are never logged — logs carry only timestamps, revisions, and refresh
+  outcomes. No token material in exceptions, HTTP traces, or telemetry.
 - Cloud custodies a full ChatGPT refresh token (higher blast radius than an API
-  key). This is an accepted, documented tradeoff for the cost savings.
-- Docs guidance: for cloud, use a **dedicated Codex login**, not one shared with a
-  laptop running codex, to avoid the external rotation race.
+  key) — an accepted, documented tradeoff. Docs guidance: for cloud, use a
+  **dedicated Codex login**, not one shared with a laptop running codex.
+
+### 5. Failure taxonomy (provider state)
+
+| Category | Examples | State |
+|---|---|---|
+| Permanent credential failure | reused / revoked / expired refresh token, account mismatch | `needs_reauth` |
+| Transient authority failure | timeout, DNS, 429, 5xx | retryable error |
+| Compatibility failure | unexpected `auth.json` schema, missing rotated token | operational alert |
+| Coordination failure | no distributed lock available | retryable infra error |
+| Uncertain | refresh outcome unknown (e.g. lost response after a timeout) | `auth_state_uncertain` |
+
+`needs_reauth` is **never** set from an ambiguous timeout — the authority may have
+consumed the token even though the response was lost. `auth_state_uncertain`
+surfaces that distinctly; blindly retrying can worsen diagnosis. Add both
+`needs_reauth` and `auth_state_uncertain` flags to `LLMProvider`, surface in the
+provider DTO, and badge in the UI; clear on the next successful credential save.
+
+Detection: since we don't call OAuth ourselves, "permanent failure" is inferred
+from codex's own turn output/exit (codex reports the auth failure) plus the
+post-turn `auth.json` state, not from an HTTP status we own.
+
+### 6. Irreducible crash window (documented limitation)
+
+Even under A: if codex rotates the token remotely and the OpenSweep process (or
+container) dies **after** codex wrote the new `auth.json` but **before** OpenSweep
+CAS-persists it, the only durable token is the consumed one → the user must
+re-authenticate. External OAuth + our DB cannot share one transaction, so
+exactly-once rotation is impossible without issuer idempotency/grace.
+
+> **Refresh is concurrency-safe but not crash-atomic.** A process failure after
+> codex's remote rotation and before durable persistence can require user
+> reauthentication.
+
+Mitigations: do no nonessential work between reading `auth.json` and committing;
+have the DB write path ready before reading it back; commit first, then update
+caches; alert on reused-token errors immediately following an interrupted turn.
+
+### 7. Operational UX (make serialization visible)
+
+- Queue turns per subscription; while waiting, report **"Waiting for another run
+  using this Codex subscription."**
+- Telemetry records lock-wait time and execution time **separately**.
+- Support **cancellation while waiting** on the subscription lock.
+- Optional configurable per-subscription queue depth limit.
+- Different provider rows are unaffected and run fully in parallel.
+
+### 8. Integration points
+
+- **`runs/services/turn_service.py`** (`_build_subprocess_turn` + the subprocess
+  lifecycle around `proc.wait()`, lines ~257-383): for `executor == "codex"` with a
+  stored subscription secret, acquire the per-provider lock (with wait-cancellation)
+  before seeding; start the lease-renewal task; run the turn; in the `finally`
+  path, read back + validate + CAS-persist `auth.json`; release the lock. Fail
+  closed if coordination is unavailable.
+- **`llm_providers/services/runtime_env.build_runtime` / `turn_cli.codex_turn_env`:**
+  seed `CODEX_HOME/.codex/auth.json` from the DB credential at the read revision.
+  Since turns are serialized per provider, the deterministic per-provider
+  `CODEX_HOME` now has a single writer at a time. `home_override` unchanged;
+  read-back happens before any dir cleanup.
+- **`infrastructure/`**: a small per-subscription lease/lock helper (Redis
+  `SET NX EX` + renewal + CAS-delete) reused from / modeled on `github_app.py`.
+- **`domains/llm_providers/services/codex_auth.py`** (new): `parse_document`,
+  `account_id`, `validate(seed, result)`, `merge_rotated_fields(seed, result)`,
+  `seal_and_cas_persist(provider, blob, expected_revision)`. No OAuth HTTP client.
+
+### 9. Version pinning
+
+Pin `@openai/codex` to an exact version in `Dockerfile.prod` and `Dockerfile.dev`
+(currently unpinned). A release checklist step re-validates the `auth.json`
+document shape against fixtures from the pinned version before any bump. (We no
+longer couple to the OAuth request/response, only to the on-disk document shape,
+which §3's lossless handling already tolerates.)
+
+## Fast-follow (committed milestone): app-server external-token mode
+
+Target architecture, to remove whole-turn serialization:
+
+```
+parallel turn app-servers  (access tokens only)
+        │ 401 refresh callback
+        ▼
+  short distributed refresh lock
+        ▼
+  codex-managed auth helper refreshes auth.json   ← NOT a direct OAuth call
+        ▼
+  CAS-persist rotated file
+        ▼
+  return new access token to the app-server
+```
+
+Codex never holds the refresh token; on a 401 the host supplies fresh tokens
+within codex's callback window. Crucially, the callback fulfils the refresh via a
+**codex-managed refresh helper**, not a direct OpenAI OAuth call — keeping us on
+supported surface. This serializes only the brief refresh, not entire turns.
+Requires a pinned codex, `experimentalApi`, and generated protocol schemas.
 
 ## Testing
 
-- **Unit (`codex_auth`):** JWT `exp` parsing (valid / malformed → treat as
-  expired); `needs_refresh` boundaries; `refresh()` success rotates all three
-  tokens + bumps `last_refresh`; `refresh()` on `invalid_grant` →
-  `CodexReauthRequired`; `build_auth_json` shape matches codex's expectation.
-- **Concurrency (`ensure_fresh_blob`):** two racing callers → exactly one
-  `refresh()` call, both receive the new token, DB written once; peer-refresh
-  re-read short-circuits (no clobber); Redis-down path uses the local lock.
-- **Integration (turn):** stale stored blob → seed → mocked codex turn → assert
-  the seeded auth.json carries a fresh access token and codex performs no refresh;
-  `needs_reauth` set + run fails with the actionable message on a dead token.
-- Follow existing patterns in `tests/test_codex_continuation.py` and
-  `tests/test_oauth_mcp.py`.
+Ordinary + adversarial:
+
+- Two racing replicas: exactly one refresh stream; both observe the final token;
+  DB written once.
+- Lock expires after codex's rotation but before DB commit (lease renewal covers
+  it; if it still lapses, CAS prevents a stale overwrite).
+- Process terminates immediately after codex writes the new `auth.json` (crash
+  window → `auth_state_uncertain` / reauth; asserted + alerted, not silently
+  "healthy").
+- User saves a new credential while a turn is in flight → in-flight write-back
+  loses the CAS and does not clobber the new credential.
+- Redis unavailable with two simulated replicas → fail closed (retryable), no
+  double refresh.
+- Write-back on failed / cancelled / timed-out turns still persists a valid
+  rotated `auth.json`.
+- `account_id` mismatch → write-back rejected.
+- Redis contains no plaintext refresh token.
+- Unknown top-level / token-level fields survive parse → merge → serialize.
+- Stale-revision cache entry rejected; `needs_reauth` from an old revision cannot
+  mark a newly-saved credential unhealthy.
+- Ambiguous timeout → `auth_state_uncertain`, never `needs_reauth`.
+- Cancellation while waiting on the subscription lock is honoured.
+- No exception / trace / telemetry / structured-log field contains token material.
+
+Follow existing patterns in `tests/test_codex_continuation.py`,
+`tests/test_oauth_mcp.py`, and `github_app` tests.
 
 ## Rollout / repo notes
 
-- Shared product code → lives in the **public `opensweep` repo** (this repo),
-  merged into `opensweep-cloud` via the normal upstream merge. No `if cloud:`
-  branches; the token manager is shared and cloud-agnostic.
-- No data migration for existing stored blobs: on the first run after deploy,
-  `ensure_fresh_blob` refreshes the stale token once (or surfaces `needs_reauth`
-  if it is already dead) and writes back the rotated blob.
+- Shared product code → **public `opensweep` repo** (this repo), merged into
+  `opensweep-cloud` via the normal upstream merge. No `if cloud:` branches.
+- No data migration for existing stored blobs: initialize `credential_revision`
+  to 0; on the first serialized run the credential refreshes (or surfaces
+  `needs_reauth`) and CAS-persists.
+
+## Decision record
+
+Implement A as the initial production mechanism: serialize turns per stored Codex
+subscription, allow codex to manage refresh and reactive retry, and durably
+persist the resulting `auth.json` using globally effective locking,
+credential-revision CAS, and sealed storage. This is an intentional compatibility
+phase; the target is app-server external-token mode, where concurrent turns
+receive access tokens only and reactive refresh is fulfilled through a
+codex-managed refresh helper rather than direct OpenAI OAuth calls.
