@@ -1503,6 +1503,116 @@ export interface ThreadProgress {
   last_verdict: string
 }
 
+// ── Campaigns (partitioned audit sweeps) ────────────────────────────────────
+
+export type CampaignStatus = 'planning' | 'running' | 'finalizing' | 'done' | 'failed' | 'cancelled'
+export type CampaignTemplate = 'full' | 'rotation' | 'focused'
+export type CampaignPartKind = 'area' | 'global'
+export type CampaignPartState = 'pending' | 'running' | 'done' | 'failed'
+
+/** One bounded slice of a campaign — an area sweep or a whole-repo pass. */
+export interface CampaignPart {
+  idx: number
+  kind: CampaignPartKind
+  title: string
+  scope_paths: string[]
+  doc_uids: string[]
+  lens_keys: string[]
+  /** '' until the part's run is dispatched. */
+  run_uid: string
+  state: CampaignPartState
+  file_count: number | null
+}
+
+export interface CampaignCoveragePart {
+  idx: number
+  title: string
+  covered: number
+  skipped: number
+  state: CampaignPartState
+}
+
+/** End-of-campaign digest; {} until finalization. */
+export interface CampaignSummary {
+  counts?: {
+    by_severity: Record<string, number>
+    by_part: Record<string, number>
+    total: number
+  }
+  coverage?: {
+    parts: CampaignCoveragePart[]
+    /** Scope paths of failed/never-run parts — the coverage debt left behind. */
+    holes: string[]
+  }
+  failed_parts?: number[]
+}
+
+/** Append-only lifecycle log entry (created/launched/part_done/finalized/…). */
+export interface CampaignEvent {
+  ts: string
+  type: string
+  [key: string]: unknown
+}
+
+export interface CampaignDTO {
+  uid: string
+  repository_uid: string
+  title: string
+  status: CampaignStatus
+  template: CampaignTemplate
+  /** '' = default tiers (areas normal, global sweeps deep). */
+  effort: AgentEffort | ''
+  lens_keys: string[]
+  parts: CampaignPart[]
+  max_parallel: number
+  created_by: string
+  trigger_provenance: string
+  summary: CampaignSummary
+  events: CampaignEvent[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface CreateCampaignRequest {
+  template: CampaignTemplate
+  /** Empty = every enabled lens; 'focused' reads its focus lens from [0]. */
+  lens_keys?: string[]
+  effort?: AgentEffort | ''
+  /** Rotation only: how many areas this pass covers. */
+  k?: number
+  max_parallel?: number
+  title?: string
+}
+
+// ── Lenses (audit checklist prompts — platform rows, org-tunable) ───────────
+
+export type LensScope = 'local' | 'global'
+
+export interface LensDTO {
+  uid: string
+  key: string
+  title: string
+  scope: LensScope
+  body: string
+  tags: string[]
+  wants: string[]
+  /** Global lenses only: the sweep agent this lens backs. */
+  global_agent_key: string
+  enabled: boolean
+  provenance: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+/** PATCH /lenses/{key} — structure (key/scope/wants) stays platform-owned;
+ *  the tunable surface is the prose and its labels. */
+export interface UpdateLensRequest {
+  title?: string
+  body?: string
+  tags?: string[]
+  enabled?: boolean
+}
+
 // ── Legacy short-name aliases ───────────────────────────────────────────────
 // Components written before the *DTO rename import these. Cheaper to keep the
 // aliases than touch every component.
