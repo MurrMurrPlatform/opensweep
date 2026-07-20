@@ -3,13 +3,11 @@ from domains.executors._shared import budget_briefing
 
 class _P:
     max_tool_turns = 200
-    max_dollars = 20.0
     warn_at_pct = 80
 
 
 class _Unlimited:
     max_tool_turns = None
-    max_dollars = None
     warn_at_pct = 80
 
 

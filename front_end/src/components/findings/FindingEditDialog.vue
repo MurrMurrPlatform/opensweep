@@ -23,9 +23,9 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import type {
-  Effort,
   FindingDTO,
   FindingKind,
+  FindingSize,
   Severity,
   UpdateFindingRequest,
 } from '@/types/api'
@@ -54,7 +54,7 @@ const toast = useToast()
 const title = ref('')
 const kind = ref<FindingKind>('defect')
 const severity = ref<Severity>('medium')
-const effort = ref<Effort>('medium')
+const size = ref<FindingSize>('medium')
 const subtype = ref('')
 const description = ref('')
 const rootCause = ref('')
@@ -78,7 +78,7 @@ const SEVERITY_OPTIONS = [
   { label: 'High', value: 'high' },
   { label: 'Critical', value: 'critical' },
 ]
-const EFFORT_OPTIONS = [
+const SIZE_OPTIONS = [
   { label: 'Trivial', value: 'trivial' },
   { label: 'Small', value: 'small' },
   { label: 'Medium', value: 'medium' },
@@ -94,7 +94,7 @@ watch(
       title.value = f.title
       kind.value = f.kind
       severity.value = f.severity
-      effort.value = f.effort
+      size.value = f.size
       subtype.value = f.subtype || ''
       description.value = f.description || ''
       rootCause.value = f.root_cause || ''
@@ -106,7 +106,7 @@ watch(
       title.value = ''
       kind.value = props.defaultKind
       severity.value = 'medium'
-      effort.value = 'medium'
+      size.value = 'medium'
       subtype.value = ''
       description.value = ''
       rootCause.value = ''
@@ -144,7 +144,7 @@ async function save() {
       title: title.value.trim(),
       kind: kind.value,
       severity: severity.value,
-      effort: effort.value,
+      size: size.value,
       subtype: subtype.value.trim(),
       description: description.value,
       root_cause: rootCause.value,
@@ -209,11 +209,11 @@ async function save() {
             </Select>
           </div>
           <div class="space-y-1">
-            <Label>Effort</Label>
-            <Select :model-value="effort" @update:model-value="effort = $event as Effort">
+            <Label>Size</Label>
+            <Select :model-value="size" @update:model-value="size = $event as FindingSize">
               <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="o in EFFORT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
+                <SelectItem v-for="o in SIZE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
               </SelectContent>
             </Select>
           </div>

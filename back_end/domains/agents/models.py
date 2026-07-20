@@ -66,6 +66,9 @@ AGENT_PROMPT_MAX_BYTES = 32 * 1024
 
 OVERRIDE_MODES = {"append", "replace"}
 
+# Agent.reasoning values — "" = inherit from the effort tier.
+REASONING_LEVELS = {"", "low", "medium", "high"}
+
 # Autonomy levels — how much permission a ScheduledAgent has to run on its
 # own. (Formerly "compute_dial"; renamed because it gates permission, not
 # compute — effort is the compute dial.)
@@ -90,7 +93,9 @@ class Agent(AsyncStructuredNode):
 
     produces = StringProperty(default="findings", index=True)
     default_effort = StringProperty(default="normal")  # short | normal | deep | unlimited
-    default_executor = StringProperty(default="")  # "" = provider-derived
+    # "" = inherit the effort tier's default reasoning level (see
+    # runs.schemas.REASONING_TIER_DEFAULTS) | low | medium | high.
+    reasoning = StringProperty(default="")
 
     tags = JSONProperty(default=[])  # list[str]
 

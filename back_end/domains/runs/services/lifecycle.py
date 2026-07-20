@@ -111,6 +111,11 @@ async def trigger_run(
     executor: Executor | None = None,
     execution_mode: ExecutionMode | None = None,
     run_policy_uid: str | None = None,
+    # Resolved effort tier + reasoning level, stamped on the Run and threaded
+    # into the DispatchRequest. "" = unknown (non-agent callers may not have
+    # a tier to report).
+    effort: str = "",
+    reasoning: str = "",
     trigger: RunTrigger = RunTrigger.MANUAL,
     triggered_by: str = "",
     surface: str = "runs",
@@ -277,6 +282,8 @@ async def trigger_run(
         execution_mode=chosen_mode.value,
         run_policy_uid=resolved.policy.uid,
         provider_uid=(active_provider.uid or "").strip(),
+        effort=effort or "",
+        reasoning=reasoning or "",
         agent_uid=agent_uid,
         agent_rev=agent_rev,
         status=RunStatus.QUEUED.value,
@@ -357,6 +364,8 @@ async def trigger_run(
         provider_uid=(active_provider.uid or "").strip(),
         model_override=overrides["model"],
         max_wall_seconds_override=int(overrides["max_wall_seconds"] or 0),
+        effort=effort or "",
+        reasoning=reasoning or "",
         context=context,
         prepared_sandbox=prepared_sandbox,
         sandbox_factory=sandbox_factory,
@@ -398,6 +407,8 @@ async def _prepare_dispatch_and_finalize(
     sandbox_factory: Callable[[], Awaitable[SandboxDTO]] | None,
     model_override: str = "",
     max_wall_seconds_override: int = 0,
+    effort: str = "",
+    reasoning: str = "",
 ) -> None:
     """Background half of trigger_run: sandbox prep → running → dispatch.
 
@@ -488,6 +499,8 @@ async def _prepare_dispatch_and_finalize(
         provider_uid=provider_uid,
         model_override=model_override,
         max_wall_seconds_override=max_wall_seconds_override,
+        effort=effort,
+        reasoning=reasoning,
     )
     await _dispatch_and_finalize(
         adapter=adapter,
@@ -699,6 +712,11 @@ async def _dispatch_and_finalize(
         succeeded=outcome.get("succeeded"),
         failed=outcome.get("failed"),
         next_steps=outcome.get("next_steps"),
+        # Coverage contract harvested from the trailer complete_run call
+        # (execute_envelope_tool_calls folds it into the outcome dict).
+        covered_paths=outcome.get("covered_paths"),
+        skipped_paths=outcome.get("skipped_paths"),
+        lens_verdicts=outcome.get("lens_verdicts"),
         output_refs=list(result.output_refs or []),
         usage={**(result.usage or {}), **{"warnings": warnings}},
         raw_artifact_uri=result.raw_artifact_uri or None,
@@ -938,6 +956,8 @@ async def redispatch_run(
         provider_uid=(provider.uid or "").strip(),
         model_override=resumed_model_override,
         max_wall_seconds_override=int(wf_overrides.get("max_wall_seconds") or 0),
+        effort=run.effort or "",
+        reasoning=run.reasoning or "",
     )
     await _dispatch_and_finalize(
         adapter=adapter,

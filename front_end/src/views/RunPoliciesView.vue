@@ -9,13 +9,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import {
@@ -47,31 +40,27 @@ const editingUid = ref<string | null>(null)
 type PolicyForm = {
   name: string
   description: string
-  max_dollars: number | ''
-  max_tokens: number | ''
   max_wall_seconds: number | ''
   max_tool_turns: number | ''
   max_files_touched: number | ''
+  max_continuation_passes: number | ''
   cloud_allowed: boolean
   local_only: boolean
   dry_run: boolean
   warn_at_pct: number
-  on_exceed: 'abort' | 'pause_for_approval'
 }
 
 const emptyForm = (): PolicyForm => ({
   name: '',
   description: '',
-  max_dollars: 20,
-  max_tokens: '',
   max_wall_seconds: 600,
   max_tool_turns: 40,
   max_files_touched: 40,
+  max_continuation_passes: 3,
   cloud_allowed: false,
   local_only: true,
   dry_run: false,
   warn_at_pct: 80,
-  on_exceed: 'abort',
 })
 const form = reactive<PolicyForm>(emptyForm())
 
@@ -125,16 +114,14 @@ function startEdit(p: RunPolicyDTO) {
     description: p.description ?? '',
     // Preserve null (unlimited) — don't fall back to a default that would
     // silently cap a previously-unlimited policy on the next save.
-    max_dollars: p.max_dollars ?? '',
-    max_tokens: p.max_tokens ?? '',
     max_wall_seconds: p.max_wall_seconds ?? '',
     max_tool_turns: p.max_tool_turns ?? '',
     max_files_touched: p.max_files_touched ?? '',
+    max_continuation_passes: p.max_continuation_passes ?? '',
     cloud_allowed: p.cloud_allowed,
     local_only: p.local_only,
     dry_run: p.dry_run,
     warn_at_pct: p.warn_at_pct ?? 80,
-    on_exceed: p.on_exceed,
   })
   if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -146,16 +133,14 @@ async function save() {
     const payload = {
       name: form.name,
       description: form.description,
-      max_dollars: numOrNull(form.max_dollars),
-      max_tokens: numOrNull(form.max_tokens),
       max_wall_seconds: numOrNull(form.max_wall_seconds),
       max_tool_turns: numOrNull(form.max_tool_turns),
       max_files_touched: numOrNull(form.max_files_touched),
+      max_continuation_passes: numOrNull(form.max_continuation_passes),
       cloud_allowed: form.cloud_allowed,
       local_only: form.local_only,
       dry_run: form.dry_run,
       warn_at_pct: form.warn_at_pct,
-      on_exceed: form.on_exceed,
     }
     if (editingUid.value) {
       await policies.update(editingUid.value, payload)
@@ -222,14 +207,6 @@ async function confirmRemove() {
             <Input id="policy-description" v-model="form.description" placeholder="Short summary of intent" />
           </div>
           <div>
-            <Label for="policy-dollars" class="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">Max $ / run</Label>
-            <Input id="policy-dollars" v-model.number="form.max_dollars" type="number" step="0.5" min="0" placeholder="∞ unlimited" />
-          </div>
-          <div>
-            <Label for="policy-tokens" class="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">Max tokens</Label>
-            <Input id="policy-tokens" v-model.number="form.max_tokens" type="number" placeholder="∞ unlimited" />
-          </div>
-          <div>
             <Label for="policy-wall" class="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">Max wall (s)</Label>
             <Input id="policy-wall" v-model.number="form.max_wall_seconds" type="number" placeholder="∞ unlimited" />
           </div>
@@ -240,6 +217,10 @@ async function confirmRemove() {
           <div>
             <Label for="policy-files" class="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">Max files</Label>
             <Input id="policy-files" v-model.number="form.max_files_touched" type="number" placeholder="∞ unlimited" />
+          </div>
+          <div>
+            <Label for="policy-passes" class="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">Continuation passes</Label>
+            <Input id="policy-passes" v-model.number="form.max_continuation_passes" type="number" min="0" placeholder="∞ unlimited" />
           </div>
           <div class="sm:col-span-3 flex flex-wrap gap-6 rounded-md border bg-card px-3 py-3">
             <label class="flex items-center gap-2 text-sm">
@@ -254,18 +235,6 @@ async function confirmRemove() {
               <Switch v-model="form.dry_run" />
               dry_run
             </label>
-          </div>
-          <div class="sm:col-span-3">
-            <Label for="policy-on-exceed" class="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">On exceed</Label>
-            <Select v-model="form.on_exceed">
-              <SelectTrigger id="policy-on-exceed" class="w-full sm:w-64">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="abort">abort</SelectItem>
-                <SelectItem value="pause_for_approval">pause_for_approval</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -307,9 +276,9 @@ async function confirmRemove() {
               </div>
               <div class="text-xs text-muted-foreground">{{ p.description }}</div>
               <div class="text-xs text-muted-foreground font-mono mt-1 break-all">
-                {{ formatCeiling(p.max_dollars, '', false, '$') }} · tokens={{ formatCeiling(p.max_tokens, '') }} ·
                 wall={{ formatCeiling(p.max_wall_seconds, 's', true) }} · turns={{ formatCeiling(p.max_tool_turns, '') }} · files={{ formatCeiling(p.max_files_touched, '') }} ·
-                cloud={{ p.cloud_allowed }} · local_only={{ p.local_only }} · dry_run={{ p.dry_run }} · on_exceed={{ p.on_exceed }}
+                passes={{ formatCeiling(p.max_continuation_passes, '') }} ·
+                cloud={{ p.cloud_allowed }} · local_only={{ p.local_only }} · dry_run={{ p.dry_run }}
               </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">

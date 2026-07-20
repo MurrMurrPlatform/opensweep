@@ -61,7 +61,7 @@ class FakeAgent(_Node):
     _store = _AGENTS
     _defaults = dict(
         uid="", org_uid="", title="", description="", prompt="",
-        produces="findings", default_effort="normal", default_executor="",
+        produces="findings", default_effort="normal", reasoning="",
         tags=[], provenance="user", source_url="", source_commit="",
         seed_checksum="", rev=0, enabled=True, created_at=None, updated_at=None,
     )

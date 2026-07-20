@@ -31,6 +31,25 @@ def _outcome_for_run(*, status: str, findings_count: int) -> str:
     return "failed"
 
 
+def _coverage_fields(
+    *, usage: dict[str, Any], target: dict[str, Any]
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    """(covered_paths, skipped_paths, lens_verdicts) for a run's stamps.
+
+    Agent-reported coverage (usage["coverage"], written by complete_run) wins;
+    when the agent didn't report covered_paths we fall back to the dispatched
+    target paths — the run was pointed there, so that is the best available
+    claim of what it looked at. Pure for testability."""
+    coverage = dict(usage.get("coverage") or {})
+    covered = [str(p) for p in (coverage.get("covered_paths") or []) if p]
+    if not covered:
+        raw = target.get("paths") or []
+        covered = [str(p) for p in (raw if isinstance(raw, (list, tuple)) else []) if p]
+    skipped = [str(p) for p in (coverage.get("skipped_paths") or []) if p]
+    verdicts = [v for v in (coverage.get("lens_verdicts") or []) if isinstance(v, dict)]
+    return covered, skipped, verdicts
+
+
 async def record_for_run(*, run_uid: str) -> list[Checked]:
     """Stamp every scope the run touched: the run's target docs plus any
     docs whose watch_paths its findings landed on; the repository itself
@@ -71,6 +90,9 @@ async def record_for_run(*, run_uid: str) -> list[Checked]:
     revision = await _repository_revision(repo, run=run)
     outcome = _outcome_for_run(status=run.status or "", findings_count=len(findings))
     now = run.completed_at or datetime.now(UTC)
+    covered_paths, skipped_paths, lens_verdicts = _coverage_fields(
+        usage=dict(run.usage or {}), target=target
+    )
 
     stamps: list[Checked] = []
     for scope_uid in scopes:
@@ -82,6 +104,9 @@ async def record_for_run(*, run_uid: str) -> list[Checked]:
             revision=revision,
             outcome=outcome,
             checked_at=now,
+            covered_paths=covered_paths,
+            skipped_paths=skipped_paths,
+            lens_verdicts=lens_verdicts,
         )
         await c.save()
         stamps.append(c)

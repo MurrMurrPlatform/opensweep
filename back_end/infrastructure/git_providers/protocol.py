@@ -38,6 +38,13 @@ class GitProviderClient(Protocol):
 
     async def get_branch_head_sha(self, owner: str, repo: str, branch: str) -> str: ...
 
+    async def get_tree(
+        self, owner: str, repo: str, tree_sha: str, *, recursive: bool = True
+    ) -> dict[str, Any]:
+        """{"paths": [blob paths], "truncated": bool} for the tree at
+        `tree_sha` — the repo-wide file listing area planning slices up."""
+        ...
+
     async def get_pull_request(self, owner: str, repo: str, number: int) -> dict[str, Any]: ...
 
     async def list_pull_requests(

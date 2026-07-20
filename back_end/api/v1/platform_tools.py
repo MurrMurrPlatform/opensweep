@@ -8,14 +8,14 @@ of the API); future auth integrates here.
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from api.dependencies import get_current_user
 from api.platform_scope import require_tool_repo_access, require_tool_run_access
 from domains.findings.models import Finding
 from domains.findings.schemas import (
-    Effort,
     FindingKind,
+    FindingSize,
     ParseStatus,
     Severity,
     SourcePath,
@@ -45,7 +45,12 @@ class CreateFindingRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     kind: FindingKind = FindingKind.DEFECT
     severity: Severity = Severity.MEDIUM
-    effort: Effort = Effort.MEDIUM
+    # validation_alias keeps pre-rename callers ("effort") working — seeded
+    # prompts may still name the fix-size estimate that way.
+    size: FindingSize = Field(
+        default=FindingSize.MEDIUM,
+        validation_alias=AliasChoices("size", "effort"),
+    )
     subtype: str = ""
     title: str
     confidence: float = 0.7
@@ -154,6 +159,23 @@ class CompleteRunRequest(BaseModel):
     failed: list[str] = Field(default_factory=list, description="What failed and why.")
     next_steps: list[str] = Field(
         default_factory=list, description="Next steps or future suggestions."
+    )
+    # Coverage contract — stored under Run.usage["coverage"] and stamped onto
+    # the Checked records, so freshness reflects what was ACTUALLY examined.
+    covered_paths: list[str] = Field(
+        default_factory=list,
+        description="Repo-relative paths you actually examined this run.",
+    )
+    skipped_paths: list[str] = Field(
+        default_factory=list,
+        description="Paths in scope you did not examine.",
+    )
+    lens_verdicts: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "[{lens, verdict: checked-clean|checked-findings|skipped, note}] — "
+            "one entry per assigned lens."
+        ),
     )
     output_refs: list[str] = Field(default_factory=list)
     usage: dict[str, Any] = Field(default_factory=dict)

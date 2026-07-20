@@ -135,6 +135,7 @@ async def run_audit(
     custom_intent: Optional[str] = None,
     max_findings: Optional[int] = None,
     run_policy_uid: Optional[str] = None,
+    effort: str = "",
 ) -> AuditResult:
     """Dispatch one scoped audit Run per selected doc page.
 
@@ -184,6 +185,7 @@ async def run_audit(
                 playbook="ask",
                 title="Repository audit",
                 run_policy_uid=run_policy_uid,
+                effort=effort,
                 trigger=RunTrigger.MANUAL,
                 triggered_by=triggered_by or "audit",
             )
@@ -234,6 +236,7 @@ async def run_audit(
                 title=f"Audit — {doc.title or doc.slug}",
                 target={"doc_uids": [doc.uid], "paths": list(doc.watch_paths or [])},
                 run_policy_uid=run_policy_uid,
+                effort=effort,
                 trigger=RunTrigger.MANUAL,
                 triggered_by=triggered_by or "audit",
             )
@@ -278,6 +281,7 @@ async def run_auto_audit(
     custom_intent: Optional[str] = None,
     max_findings: Optional[int] = None,
     run_policy_uid: Optional[str] = None,
+    effort: str = "",
 ) -> AuditResult:
     """Staleness-driven audit (§F): auto-select the pages that most need a
     look (never checked, then longest-stale) and fan out through run_audit.
@@ -311,6 +315,7 @@ async def run_auto_audit(
         custom_intent=custom_intent,
         max_findings=max_findings,
         run_policy_uid=run_policy_uid,
+        effort=effort,
     )
     result.selected = [
         {"doc_uid": t.doc_uid, "slug": t.slug, "reason": t.reason} for t in targets
@@ -346,6 +351,7 @@ async def run_deep_scan(
     custom_intent: Optional[str] = None,
     max_findings: Optional[int] = None,
     run_policy_uid: Optional[str] = None,
+    effort: str = "",
 ) -> DeepScanResult:
     """Dispatch ONE whole-repository deep-scan run (plan → sweep → synthesize).
 
@@ -412,6 +418,7 @@ async def run_deep_scan(
             agent_uid=composed.agent_uid,
             agent_rev=composed.agent_rev,
             run_policy_uid=run_policy_uid,
+            effort=effort,
             trigger=RunTrigger.MANUAL,
             triggered_by=triggered_by or "deep-scan",
         )

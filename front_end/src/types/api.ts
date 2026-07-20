@@ -8,7 +8,8 @@ export type RepositoryMode = 'github'
 
 export type FindingKind = 'defect' | 'improvement' | 'gap' | 'proposal' | 'observation' | 'feature-idea'
 export type Severity = 'low' | 'medium' | 'high' | 'critical'
-export type Effort = 'trivial' | 'small' | 'medium' | 'large'
+/** Fix-size estimate for a finding — distinct from AgentEffort (run compute tier). */
+export type FindingSize = 'trivial' | 'small' | 'medium' | 'large'
 export type FindingStatus =
   | 'open'
   | 'acknowledged'
@@ -40,8 +41,8 @@ export type RunPlaybook = 'chat' | 'ask' | 'review' | 'fix' | 'implement' | 'ver
 export type RunTrigger = 'manual' | 'event' | 'schedule'
 export type RunSurface = 'runs' | 'comment' | 'chat'
 export type AgentEffort = 'short' | 'normal' | 'deep' | 'unlimited'
-
-export type OnExceed = 'abort' | 'pause_for_approval'
+/** Reasoning level on agents/runs; '' = inherit from the effort tier. */
+export type ReasoningLevel = '' | 'low' | 'medium' | 'high'
 
 // ── Repository ──────────────────────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ export interface FindingDTO {
   tags: string[]
   kind: FindingKind
   severity: Severity
-  effort: Effort
+  size: FindingSize
   subtype: string
   title: string
   confidence: number
@@ -175,6 +176,10 @@ export interface FindingDTO {
   affected_paths: string[]
   dedupe_key: string
   source_run_uid?: string | null
+  /** Every run that filed or re-confirmed this finding. */
+  source_run_uids?: string[]
+  /** Last time any run re-found (confirmed) this finding. */
+  last_confirmed_at?: string | null
   executor: string
   source_path: SourcePath
   parse_status: ParseStatus
@@ -192,7 +197,7 @@ export interface FileFindingRequest {
   tags?: string[]
   kind?: FindingKind
   severity?: Severity
-  effort?: Effort
+  size?: FindingSize
   subtype?: string
   title: string
   confidence?: number
@@ -213,7 +218,7 @@ export interface UpdateFindingRequest {
   tags?: string[]
   kind?: FindingKind
   severity?: Severity
-  effort?: Effort
+  size?: FindingSize
   subtype?: string
   title?: string
   description?: string
@@ -300,7 +305,8 @@ export interface AgentDTO {
   prompt: string
   produces: ProducesKind
   default_effort: AgentEffort
-  default_executor: string
+  /** '' = inherit the effort tier's default reasoning level. */
+  reasoning: ReasoningLevel
   tags: string[]
   provenance: AgentProvenance
   /** Stable slug for system rows ("ask", "audit-stale", …); "" for user rows. */
@@ -321,7 +327,7 @@ export interface CreateAgentRequest {
   prompt?: string
   produces?: ProducesKind
   default_effort?: AgentEffort
-  default_executor?: string
+  reasoning?: ReasoningLevel
   tags?: string[]
   enabled?: boolean
 }
@@ -332,7 +338,7 @@ export interface UpdateAgentRequest {
   prompt?: string
   produces?: ProducesKind
   default_effort?: AgentEffort
-  default_executor?: string
+  reasoning?: ReasoningLevel
   tags?: string[]
   enabled?: boolean
 }
@@ -430,6 +436,9 @@ export interface RunDTO {
   executor: Executor
   execution_mode: ExecutionMode
   run_policy_uid?: string | null
+  /** Resolved effort tier + reasoning level at dispatch; '' = unknown/legacy. */
+  effort: string
+  reasoning: string
   status: RunStatus
   linked_pr_uid: string
   linked_ticket_uid: string
@@ -722,18 +731,16 @@ export interface RunPolicyDTO {
   uid: string
   name: string
   description: string
-  max_tokens?: number | null
-  max_dollars?: number | null
   max_wall_seconds?: number | null
   max_tool_turns?: number | null
   max_files_touched?: number | null
-  max_test_seconds?: number | null
+  /** null = unbounded continuation passes (wall-limited only). */
+  max_continuation_passes?: number | null
   cloud_allowed: boolean
   local_only: boolean
   allowed_executors: string[]
   dry_run: boolean
   warn_at_pct: number
-  on_exceed: OnExceed
   daily_repo_run_count?: number | null
   daily_repo_wall_seconds?: number | null
   daily_repo_dollars?: number | null

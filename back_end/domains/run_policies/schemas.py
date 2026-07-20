@@ -1,15 +1,9 @@
 """RunPolicy DTOs."""
 
 from datetime import datetime
-from enum import StrEnum
 from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
-
-
-class OnExceed(StrEnum):
-    ABORT = "abort"
-    PAUSE_FOR_APPROVAL = "pause_for_approval"
 
 
 class RunPolicyDTO(BaseModel):
@@ -17,13 +11,10 @@ class RunPolicyDTO(BaseModel):
     name: str = ""
     description: str = ""
 
-    max_tokens: Optional[int] = None
-    max_dollars: Optional[float] = None
-
     max_wall_seconds: Optional[int] = None
     max_tool_turns: Optional[int] = None
     max_files_touched: Optional[int] = None
-    max_test_seconds: Optional[int] = None
+    max_continuation_passes: Optional[int] = None
 
     cloud_allowed: bool = False
     local_only: bool = False
@@ -31,7 +22,6 @@ class RunPolicyDTO(BaseModel):
 
     dry_run: bool = False
     warn_at_pct: int = 80
-    on_exceed: OnExceed = OnExceed.ABORT
 
     daily_repo_run_count: Optional[int] = None
     daily_repo_wall_seconds: Optional[int] = None
@@ -48,13 +38,10 @@ class CreateRunPolicyRequest(BaseModel):
     name: str
     description: str = ""
 
-    max_tokens: Optional[int] = None
-    max_dollars: Optional[float] = None
-
     max_wall_seconds: Optional[int] = None
     max_tool_turns: Optional[int] = None
     max_files_touched: Optional[int] = None
-    max_test_seconds: Optional[int] = None
+    max_continuation_passes: Optional[int] = None
 
     cloud_allowed: bool = False
     local_only: bool = False
@@ -62,7 +49,6 @@ class CreateRunPolicyRequest(BaseModel):
 
     dry_run: bool = False
     warn_at_pct: int = 80
-    on_exceed: OnExceed = OnExceed.ABORT
 
     daily_repo_run_count: Optional[int] = None
     daily_repo_wall_seconds: Optional[int] = None
@@ -92,13 +78,10 @@ class UpdateRunPolicyRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
-    max_tokens: Optional[int] = None
-    max_dollars: Optional[float] = None
-
     max_wall_seconds: Optional[int] = None
     max_tool_turns: Optional[int] = None
     max_files_touched: Optional[int] = None
-    max_test_seconds: Optional[int] = None
+    max_continuation_passes: Optional[int] = None
 
     cloud_allowed: Optional[bool] = None
     local_only: Optional[bool] = None
@@ -106,7 +89,6 @@ class UpdateRunPolicyRequest(BaseModel):
 
     dry_run: Optional[bool] = None
     warn_at_pct: Optional[int] = None
-    on_exceed: Optional[OnExceed] = None
 
     daily_repo_run_count: Optional[int] = None
     daily_repo_wall_seconds: Optional[int] = None

@@ -32,7 +32,7 @@ from domains.llm_providers.services.llm_provider_service import (
     get_active_provider,
     repository_org_uid,
 )
-from domains.platform_tools.complete_run import extract_outcome
+from domains.platform_tools.complete_run import extract_coverage, extract_outcome
 from domains.platform_tools.dispatcher import dispatch as dispatch_platform_tool
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.services.ceilings import UsageSnapshot
@@ -104,9 +104,6 @@ def budget_briefing(policy, wall_ceiling: int | None) -> str:
     turns = getattr(policy, "max_tool_turns", None) if policy is not None else None
     if turns:
         limits.append(f"~{int(turns)} tool turns")
-    dollars = getattr(policy, "max_dollars", None) if policy is not None else None
-    if dollars:
-        limits.append(f"a ${float(dollars):.2f} spend ceiling (where metered)")
     warn_pct = int(getattr(policy, "warn_at_pct", 80) or 80) if policy is not None else 80
     if limits:
         return (
@@ -489,7 +486,13 @@ async def execute_envelope_tool_calls(
         if not isinstance(name, str) or not name:
             continue
         if name == "complete_run":
-            outcome = extract_outcome(dict(call.get("args") or {}))
+            cr_args = dict(call.get("args") or {})
+            outcome = extract_outcome(cr_args)
+            # Coverage (covered_paths / skipped_paths / lens_verdicts) rides on
+            # the outcome dict so it reaches the lifecycle's finalize
+            # complete_run call unchanged — build_outcome ignores the extra
+            # keys, so the summary itself is not polluted.
+            outcome.update(extract_coverage(cr_args))
             continue
         if name in deny_tools:
             results.append({"tool": name, "error": deny_tools[name]})

@@ -211,7 +211,7 @@ class NewsService:
                 repository_uid=n.repository_uid,
                 kind=req.kind,
                 severity=req.severity,
-                effort=req.effort,
+                size=req.size,
                 title=n.title,
                 description="\n\n".join(p for p in description_parts if p.strip()),
                 why_it_matters=n.relevance or "",

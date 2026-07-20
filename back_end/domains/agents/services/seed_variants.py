@@ -357,7 +357,7 @@ _VARIANTS: dict[str, dict] = {
             "- title: the capability, phrased as what the user gains.\n"
             "- description: what it is and roughly how it would work here.\n"
             "- why_it_matters: the user/business value — this is the field humans triage by.\n"
-            "- effort: honest first-cut estimate; severity stays low.\n"
+            "- size: honest first-cut fix-size estimate; severity stays low.\n"
             "- affected_paths: the code that would host the change, when clear.\n"
             "\n"
             "Do NOT file defects, gaps, or improvements in this run — other playbooks own\n"
@@ -426,6 +426,79 @@ _VARIANTS: dict[str, dict] = {
             "- Use one consistent term per concept across all pages.\n"
             "- Propose full replacement bodies via `propose_doc_edit`; rewrite invalidated\n"
             "  memories via `write_memory` and flag delete-worthy ones in your summary."
+        ),
+    },
+    "architecture-review": {
+        "title": "Architecture review",
+        "description": "Whole-repo architecture sweep: boundaries, dependency direction, "
+        "layering, god modules, coupling hotspots; verifies escalated findings first.",
+        "stage": "ask",
+        "produces": "findings",
+        "default_effort": "deep",
+        "tags": ["opensweep-variant", "ask", "audit", "architecture", "deep"],
+        "body": (
+            "Whole-repo architecture audit: judge the shape of the system, not any\n"
+            "one area.\n"
+            "\n"
+            "Start with the escalation queue: list open findings tagged\n"
+            "escalate:architecture-review — area runs filed these when they noticed\n"
+            "cross-cutting problems outside their scope. Verify each against the\n"
+            "current code first: expand it into a full evidenced finding, or update\n"
+            "it with why it does not hold.\n"
+            "\n"
+            "Then sweep the repository for:\n"
+            "- Module boundaries that leak: internals imported across domain lines,\n"
+            "  shared state reached around its owning module's API.\n"
+            "- Dependency direction violations: lower layers importing upward,\n"
+            "  cyclic imports, infrastructure depending on domain logic.\n"
+            "- Layering violations: business rules in transport handlers, I/O in\n"
+            "  pure-logic layers.\n"
+            "- God modules: files/classes accumulating unrelated responsibilities.\n"
+            "- Coupling hotspots: the modules most changes must touch together.\n"
+            "- Pattern inconsistency: the same problem solved with competing\n"
+            "  patterns across the codebase — name the dominant pattern and the\n"
+            "  divergent sites.\n"
+            "\n"
+            "File evidence-backed findings only: the modules and paths involved, the\n"
+            "boundary or dependency violated, and the concrete cost (bug clusters,\n"
+            "change friction). One finding per structural root cause, listing every\n"
+            "affected path. An architecture with no significant findings is a valid\n"
+            "result — report it rather than inventing problems."
+        ),
+    },
+    "implementation-gaps": {
+        "title": "Implementation gaps",
+        "description": "Promise-vs-reality sweep: what the product/docs/README claim vs what "
+        "the code implements — stubs, dead flags, unfinished flows; verifies escalations first.",
+        "stage": "ask",
+        "produces": "findings",
+        "default_effort": "deep",
+        "tags": ["opensweep-variant", "ask", "audit", "product", "deep"],
+        "body": (
+            "Implementation-gaps audit: compare what the product promises against\n"
+            "what the code delivers.\n"
+            "\n"
+            "Start with the escalation queue: list open findings tagged\n"
+            "escalate:implementation-gaps and verify each against the current code\n"
+            "first — expand it into a full evidenced finding, or update it with why\n"
+            "it does not hold.\n"
+            "\n"
+            "Then read what the product CLAIMS — README, docs pages, UI copy,\n"
+            "public API surface, config reference — and hunt for where the code\n"
+            "falls short:\n"
+            "- Stubs and TODO paths behind advertised features: handlers that\n"
+            "  return placeholders, branches that raise NotImplemented.\n"
+            "- Dead flags: feature flags and config options nothing reads or that\n"
+            "  no code path can enable.\n"
+            "- Unfinished flows: a UI without its backend, an API without a\n"
+            "  consumer, multi-step flows that dead-end halfway.\n"
+            "- Missing error paths on advertised features: the happy path works,\n"
+            "  the documented failure handling does not exist.\n"
+            "\n"
+            "Every finding cites BOTH sides: where the promise is made (file/doc/\n"
+            "copy) and where the implementation falls short (paths + mechanism).\n"
+            "Do not file docs style issues or aspirational roadmap items marked as\n"
+            "such. A product whose promises all hold is a valid result."
         ),
     },
 }

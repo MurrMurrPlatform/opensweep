@@ -2,7 +2,7 @@
 
 Bugs, security issues, gaps, refactors, proposals, and parse-fallback
 observations all share this primitive. They differ only in their facets
-(tags / kind / severity / effort / subtype). `affected_paths` is the code
+(tags / kind / severity / size / subtype). `affected_paths` is the code
 anchor; doc pages relate to findings at read time via watch_paths overlap.
 """
 
@@ -27,8 +27,9 @@ class Finding(AsyncStructuredNode):
     # defect | improvement | gap | proposal | observation | feature-idea
     severity = StringProperty(default="medium", index=True)
     # low | medium | high | critical
-    effort = StringProperty(default="medium")
-    # trivial | small | medium | large
+    size = StringProperty(default="medium")
+    # trivial | small | medium | large — fix-size estimate, NOT the run
+    # effort tier (short/normal/deep/unlimited)
     subtype = StringProperty(default="", index=True)
     # free-form, executor-extracted: "god-file", "missing-timeout",
     # "add-node", "split-node", "unparsed-executor-output", etc.
@@ -49,6 +50,11 @@ class Finding(AsyncStructuredNode):
 
     # Provenance
     source_run_uid = StringProperty(index=True)
+    source_run_uids = JSONProperty(default=[])
+    # Every run that filed OR re-confirmed this finding; lazily backfilled
+    # from source_run_uid on the first confirmation (JSON string in Neo4j).
+    last_confirmed_at = DateTimeProperty()
+    # Last time any run re-found (confirmed) this finding.
     executor = StringProperty(default="manual", index=True)
     # internal_llm | claude_code | codex | opencode | manual
     source_path = StringProperty(default="tool-call")
@@ -76,7 +82,7 @@ FINDING_KINDS = {"defect", "improvement", "gap", "proposal", "observation", "fea
 
 FINDING_SEVERITIES = {"low", "medium", "high", "critical"}
 
-FINDING_EFFORTS = {"trivial", "small", "medium", "large"}
+FINDING_SIZES = {"trivial", "small", "medium", "large"}
 
 FINDING_STATUSES = {
     "open",

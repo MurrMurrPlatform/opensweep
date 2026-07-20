@@ -35,6 +35,7 @@ from domains.executors.base import (
     DispatchResult,
     ExecutorAdapter,
 )
+from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
 from domains.llm_providers.services.llm_executor import (
@@ -106,6 +107,8 @@ class InternalLLMAdapter(ExecutorAdapter):
                     append_event(req.run_uid, "assistant_text", text=delta)
             await recorder.record_total(stream, text)
 
+        # Reasoning level → HTTP request overrides (anthropic thinking block,
+        # OpenAI-compat reasoning_effort, local suppress_thinking).
         try:
             inv = await invoke_provider(
                 provider,
@@ -114,6 +117,7 @@ class InternalLLMAdapter(ExecutorAdapter):
                 timeout_seconds=timeout,
                 on_chunk=_on_chunk,
                 run_uid=req.run_uid,
+                api_overrides=reasoning_args(req.reasoning, provider.kind).get("api") or {},
             )
         finally:
             await recorder.close()

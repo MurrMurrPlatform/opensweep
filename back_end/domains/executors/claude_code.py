@@ -47,6 +47,7 @@ from domains.executors.mcp_bridge import (
     write_claude_mcp_config,
 )
 from domains.executors.quota import detect_quota_exhaustion
+from domains.executors.reasoning import reasoning_args
 from domains.executors.stream_events import ClaudeStreamTranslator, stream_event_delta
 from domains.runs.schemas import (
     ExecutionMode,
@@ -166,6 +167,8 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             template=template,
         )
         env = claude_env(run_uid=req.run_uid, oauth_token=provider_secret(provider))
+        # Reasoning level → the CLI's thinking budget (MAX_THINKING_TOKENS).
+        env.update(reasoning_args(req.reasoning, provider.kind).get("env") or {})
         await record_input(
             req.run_uid,
             system_prompt=system_prompt,
@@ -195,7 +198,15 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         dollars_used = 0.0
         session_id = ""
         quota_hit = False
-        max_extra_passes = int(getattr(settings, "OPENSWEEP_CONTINUATION_PASSES", 3))
+        # Extra continuation passes: the policy's ceiling when one is present
+        # (None = unbounded — the loop is then wall-limited only); the settings
+        # fallback applies only to policy-less dispatches.
+        max_extra_passes: int | None
+        if req.policy is not None:
+            raw_passes = req.policy.max_continuation_passes
+            max_extra_passes = int(raw_passes) if raw_passes is not None else None
+        else:
+            max_extra_passes = int(getattr(settings, "OPENSWEEP_CONTINUATION_PASSES", 3))
         turn_cap = (
             int(req.policy.max_tool_turns)
             if (req.policy and req.policy.max_tool_turns)
@@ -325,7 +336,7 @@ class ClaudeCodeAdapter(ExecutorAdapter):
                 if exit_code not in (0, None):
                     break  # real CLI failure; turn-cap stops are caught by the turns_used check above
                 pass_no += 1
-                if pass_no > max_extra_passes:
+                if max_extra_passes is not None and pass_no > max_extra_passes:
                     break
 
             # Whether the run hit its budget BEFORE the wind-down pass. The

@@ -241,6 +241,7 @@ async def trigger_review_run(
             linked_pr_uid=pr.uid,
             executor=Executor.CLAUDE_CODE,
             run_policy_uid=run_policy.uid,
+            effort=resolved_depth.value,
             trigger=trigger,
             triggered_by=triggered_by,
         )

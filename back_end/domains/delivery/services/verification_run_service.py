@@ -193,6 +193,7 @@ async def trigger_verification_run(
             linked_pr_uid=pr.uid,
             executor=Executor.CLAUDE_CODE,
             run_policy_uid=run_policy.uid,
+            effort=Effort.NORMAL.value,
             trigger=trigger,
             triggered_by=triggered_by,
         )

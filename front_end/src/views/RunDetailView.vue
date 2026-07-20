@@ -469,9 +469,8 @@ const policyLimits = computed(() => {
   if (!p) return ''
   const bits: string[] = []
   if (p.max_wall_seconds) bits.push(`${p.max_wall_seconds}s wall`)
-  if (p.max_tokens) bits.push(`${p.max_tokens.toLocaleString()} tokens`)
-  if (p.max_dollars) bits.push(`$${p.max_dollars}`)
   if (p.max_tool_turns) bits.push(`${p.max_tool_turns} tool turns`)
+  if (p.max_continuation_passes != null) bits.push(`${p.max_continuation_passes} passes`)
   if (p.local_only) bits.push('local-only')
   if (p.dry_run) bits.push('dry-run')
   return bits.join(' · ')
@@ -819,6 +818,10 @@ function firstString(...values: unknown[]): string {
               <dt class="text-muted-foreground">policy</dt>
               <dd :title="runPolicy?.description || ''">
                 {{ policyLabel }}
+                <span v-if="run.effort || run.reasoning" class="ml-1 inline-flex gap-1 align-middle">
+                  <span v-if="run.effort" class="rounded-full border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">{{ run.effort }}</span>
+                  <span v-if="run.reasoning" class="rounded-full border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">reasoning: {{ run.reasoning }}</span>
+                </span>
                 <span v-if="policyLimits" class="block text-muted-foreground">{{ policyLimits }}</span>
               </dd>
               <dt class="text-muted-foreground">turns</dt><dd>{{ run.turns }}</dd>

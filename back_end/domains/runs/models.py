@@ -47,6 +47,10 @@ class Run(AsyncStructuredNode):
     run_policy_uid = StringProperty(index=True)
     provider_uid = StringProperty(default="", index=True)
 
+    # Resolved snapshots at dispatch; "" = unknown/legacy.
+    effort = StringProperty(default="", index=True)  # short|normal|deep|unlimited
+    reasoning = StringProperty(default="")  # low|medium|high
+
     # Agent provenance — which Agent supplied this run's instructions layer,
     # and the org override revision active at dispatch (0 = platform body
     # as-is), so "why did the agent behave differently on this run" stays

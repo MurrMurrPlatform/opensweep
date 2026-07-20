@@ -122,7 +122,7 @@ watch(
         .filter(Boolean)
         .join('\n\n')
       priority.value = SEVERITY_TO_PRIORITY[f.severity] || 'medium'
-      size.value = (SIZE_OPTIONS.some((o) => o.value === f.effort) ? f.effort : '') as TicketSize
+      size.value = (SIZE_OPTIONS.some((o) => o.value === f.size) ? f.size : '') as TicketSize
       // Editable defaults — review runs verify each criterion against the PR,
       // so a promoted ticket should never start without any.
       const topPath = (f.affected_paths || [])[0]

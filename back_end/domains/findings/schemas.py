@@ -33,7 +33,10 @@ class Severity(StrEnum):
     CRITICAL = "critical"
 
 
-class Effort(StrEnum):
+class FindingSize(StrEnum):
+    """Fix-size estimate for a finding (how big the fix is) — distinct from
+    the run effort tier (short/normal/deep/unlimited), which is a compute dial."""
+
     TRIVIAL = "trivial"
     SMALL = "small"
     MEDIUM = "medium"
@@ -68,7 +71,7 @@ class FindingDTO(BaseModel):
     tags: list[str] = Field(default_factory=list)
     kind: FindingKind
     severity: Severity = Severity.MEDIUM
-    effort: Effort = Effort.MEDIUM
+    size: FindingSize = FindingSize.MEDIUM
     subtype: str = ""
 
     title: str
@@ -83,6 +86,10 @@ class FindingDTO(BaseModel):
     dedupe_key: str
 
     source_run_uid: Optional[str] = None
+    # Every run that filed or re-confirmed this finding (lazily backfilled
+    # from source_run_uid) + when it was last re-found.
+    source_run_uids: list[str] = Field(default_factory=list)
+    last_confirmed_at: Optional[datetime] = None
     executor: str = "manual"
     source_path: SourcePath = SourcePath.TOOL_CALL
     parse_status: ParseStatus = ParseStatus.OK
@@ -113,7 +120,7 @@ class FileFindingRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     kind: FindingKind = FindingKind.DEFECT
     severity: Severity = Severity.MEDIUM
-    effort: Effort = Effort.MEDIUM
+    size: FindingSize = FindingSize.MEDIUM
     subtype: str = ""
 
     title: str
@@ -145,7 +152,7 @@ class UpdateFindingRequest(BaseModel):
     tags: Optional[list[str]] = None
     kind: Optional[FindingKind] = None
     severity: Optional[Severity] = None
-    effort: Optional[Effort] = None
+    size: Optional[FindingSize] = None
     subtype: Optional[str] = None
 
     title: Optional[str] = None

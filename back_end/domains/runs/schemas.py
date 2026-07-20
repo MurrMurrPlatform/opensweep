@@ -98,6 +98,25 @@ def normalize_effort(value: str | None) -> Effort:
         return Effort.NORMAL
 
 
+# Default reasoning level per effort tier — used when the agent doesn't pin
+# its own (Agent.reasoning == "").
+REASONING_TIER_DEFAULTS = {
+    Effort.SHORT: "low",
+    Effort.NORMAL: "medium",
+    Effort.DEEP: "high",
+    Effort.UNLIMITED: "high",
+}
+
+
+def resolve_reasoning(agent_reasoning: str, effort: Effort) -> str:
+    """The reasoning level stamped on a Run at dispatch: the agent's explicit
+    override wins; anything else falls back to the effort tier's default."""
+    override = (agent_reasoning or "").strip().lower()
+    if override in {"low", "medium", "high"}:
+        return override
+    return REASONING_TIER_DEFAULTS[effort]
+
+
 class RunDTO(BaseModel):
     uid: str
     repository_uid: str
@@ -107,6 +126,10 @@ class RunDTO(BaseModel):
     executor: Executor
     execution_mode: ExecutionMode = ExecutionMode.ANALYZE_ONLY
     run_policy_uid: str | None = None
+    # Resolved effort tier + reasoning level snapshotted at dispatch;
+    # "" = unknown/legacy.
+    effort: str = ""
+    reasoning: str = ""
     status: RunStatus = RunStatus.QUEUED
     linked_pr_uid: str = ""
     linked_ticket_uid: str = ""

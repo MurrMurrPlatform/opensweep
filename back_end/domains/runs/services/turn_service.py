@@ -742,6 +742,8 @@ def run_to_dto(run: Run):
         executor=_enum_or(Executor, run.executor, Executor.INTERNAL_LLM),
         execution_mode=_enum_or(ExecutionMode, run.execution_mode, ExecutionMode.ANALYZE_ONLY),
         run_policy_uid=run.run_policy_uid,
+        effort=getattr(run, "effort", "") or "",
+        reasoning=getattr(run, "reasoning", "") or "",
         status=_enum_or(RunStatus, run.status, RunStatus.QUEUED),
         linked_pr_uid=run.linked_pr_uid or "",
         linked_ticket_uid=run.linked_ticket_uid or "",

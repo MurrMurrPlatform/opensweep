@@ -36,7 +36,7 @@ import { Switch } from '@/components/ui/switch'
 import AgentRevisionsSheet from '@/components/agents/AgentRevisionsSheet.vue'
 import ProducesBadge from '@/components/agents/ProducesBadge.vue'
 import { PRODUCES_OPTIONS } from '@/lib/produces'
-import type { AgentDTO, AgentEffort, ProducesKind } from '@/types/api'
+import type { AgentDTO, AgentEffort, ProducesKind, ReasoningLevel } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -57,6 +57,8 @@ const description = ref('')
 const prompt = ref('')
 const produces = ref<ProducesKind>('findings')
 const effort = ref<AgentEffort>('normal')
+// '' = inherit the effort tier's default reasoning level.
+const reasoning = ref<ReasoningLevel>('')
 const tagsText = ref('')
 const enabled = ref(true)
 
@@ -86,6 +88,7 @@ function hydrate(a: AgentDTO) {
   produces.value = a.produces
   const legacyEffort: Record<string, string> = { quick: 'short', small: 'short', light: 'short', large: 'deep' }
   effort.value = (legacyEffort[a.default_effort] ?? a.default_effort) as AgentEffort
+  reasoning.value = a.reasoning ?? ''
   tagsText.value = a.tags.join(', ')
   enabled.value = a.enabled
 }
@@ -99,6 +102,7 @@ const dirty = computed(() => {
     prompt.value !== agent.value.prompt ||
     produces.value !== agent.value.produces ||
     effort.value !== agent.value.default_effort ||
+    reasoning.value !== (agent.value.reasoning ?? '') ||
     tagsText.value !== agent.value.tags.join(', ') ||
     enabled.value !== agent.value.enabled
   )
@@ -122,6 +126,7 @@ async function save() {
         prompt: prompt.value,
         produces: produces.value,
         default_effort: effort.value,
+        reasoning: reasoning.value,
         tags: parsedTags(),
         enabled: enabled.value,
       })
@@ -145,6 +150,7 @@ async function save() {
         prompt: prompt.value,
         produces: produces.value,
         default_effort: effort.value,
+        reasoning: reasoning.value,
         tags: parsedTags(),
         enabled: enabled.value,
       })
@@ -303,7 +309,7 @@ async function runNow() {
             />
           </div>
 
-          <div class="grid gap-3 md:grid-cols-3">
+          <div class="grid gap-3 md:grid-cols-4">
             <div class="space-y-1.5">
               <Label>Produces</Label>
               <Select
@@ -332,6 +338,24 @@ async function runNow() {
                   <SelectItem value="normal">Normal</SelectItem>
                   <SelectItem value="deep">Deep</SelectItem>
                   <SelectItem value="unlimited">Unlimited</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="space-y-1.5">
+              <Label>Reasoning</Label>
+              <!-- 'inherit' is a select-only sentinel for '' (empty item values
+                   don't play well with the select's placeholder handling). -->
+              <Select
+                :model-value="reasoning === '' ? 'inherit' : reasoning"
+                :disabled="isSystem"
+                @update:model-value="reasoning = ($event === 'inherit' ? '' : $event) as ReasoningLevel"
+              >
+                <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="inherit">Inherit from effort</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -39,6 +39,64 @@ def test_run_to_dto_maps_missing_surface_to_runs():
     assert run_to_dto(run).surface == "comment"
 
 
+# ── effort / reasoning stamping ──────────────────────────────────────────────
+
+
+def test_run_to_dto_maps_effort_and_reasoning():
+    run = Run(uid="r1", repository_uid="repo1", executor="internal_llm")
+    run.effort = "deep"
+    run.reasoning = "high"
+    dto = run_to_dto(run)
+    assert dto.effort == "deep"
+    assert dto.reasoning == "high"
+
+
+def test_run_to_dto_defaults_effort_and_reasoning_to_empty():
+    run = Run(uid="r1", repository_uid="repo1", executor="internal_llm")
+    run.effort = None  # node predating the fields
+    run.reasoning = None
+    dto = run_to_dto(run)
+    assert dto.effort == ""
+    assert dto.reasoning == ""
+
+
+async def test_dispatch_agent_stamps_effort_and_reasoning(monkeypatch):
+    from domains.agents.models import Agent
+    from domains.agents.services import dispatch as dispatch_module
+    from domains.run_policies.services import effort as effort_module
+    from domains.runs.services import lifecycle
+
+    captured: dict = {}
+
+    async def fake_trigger_run(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(uid="run-1")
+
+    async def fake_policy(tier):
+        captured["policy_tier"] = tier
+        return SimpleNamespace(uid="policy-1")
+
+    async def fake_compose(**kwargs):
+        return SimpleNamespace(text="intent", agent_uid="a1", agent_rev=0)
+
+    monkeypatch.setattr(lifecycle, "trigger_run", fake_trigger_run)
+    monkeypatch.setattr(effort_module, "ensure_policy_for_effort", fake_policy)
+    monkeypatch.setattr(dispatch_module, "compose_agent_intent", fake_compose)
+
+    agent = Agent(
+        uid="a1", org_uid="org-a", title="Deep audit", produces="findings",
+        default_effort="deep", reasoning="", enabled=True,
+    )
+    await dispatch_module.dispatch_agent(agent=agent, repository_uid="repo1")
+    assert captured["effort"] == "deep"
+    assert captured["reasoning"] == "high"  # deep tier default
+
+    # An explicit agent reasoning override wins over the tier default.
+    agent.reasoning = "low"
+    await dispatch_module.dispatch_agent(agent=agent, repository_uid="repo1")
+    assert captured["reasoning"] == "low"
+
+
 # ── trigger_run guard ────────────────────────────────────────────────────────
 
 

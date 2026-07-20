@@ -51,7 +51,56 @@ def build_outcome(
     return outcome
 
 
-_STRUCTURED_KEYS = {"did", "skipped", "succeeded", "failed", "next_steps"}
+_STRUCTURED_KEYS = {"did", "skipped", "succeeded", "failed", "next_steps", "lens_verdicts"}
+
+# Verdicts a lens_verdicts entry may carry: the agent either worked the lens
+# and found nothing, worked it and filed findings, or skipped it entirely.
+LENS_VERDICT_VALUES = frozenset({"checked-clean", "checked-findings", "skipped"})
+
+
+def build_coverage(
+    covered_paths: Any = None,
+    skipped_paths: Any = None,
+    lens_verdicts: Any = None,
+) -> dict[str, Any]:
+    """Normalize the coverage contract (build_outcome's style: coerce, drop
+    empties). Path lists become lists of clean strings; lens_verdicts entries
+    are {lens, verdict, note?} with the verdict validated against
+    LENS_VERDICT_VALUES — invalid entries are DROPPED, never raised on (the
+    input is agent-emitted). Returns {} when everything is empty."""
+    coverage: dict[str, Any] = {}
+    for key, value in (
+        ("covered_paths", covered_paths),
+        ("skipped_paths", skipped_paths),
+    ):
+        items = _clean_items(value)
+        if items:
+            coverage[key] = items
+    verdicts: list[dict[str, str]] = []
+    for entry in lens_verdicts if isinstance(lens_verdicts, (list, tuple)) else []:
+        if not isinstance(entry, dict):
+            continue
+        lens = str(entry.get("lens") or "").strip()
+        verdict = str(entry.get("verdict") or "").strip()
+        if not lens or verdict not in LENS_VERDICT_VALUES:
+            continue
+        row = {"lens": lens, "verdict": verdict}
+        note = str(entry.get("note") or "").strip()
+        if note:
+            row["note"] = note
+        verdicts.append(row)
+    if verdicts:
+        coverage["lens_verdicts"] = verdicts
+    return coverage
+
+
+def extract_coverage(args: dict[str, Any]) -> dict[str, Any]:
+    """Harvest the coverage contract from a trailer complete_run call's args."""
+    return build_coverage(
+        covered_paths=args.get("covered_paths"),
+        skipped_paths=args.get("skipped_paths"),
+        lens_verdicts=args.get("lens_verdicts"),
+    )
 
 # Statuses a finalize call may legally leave a Run in. Validated here (not in
 # the HTTP layer) so the HTTP, MCP, and dispatcher paths are all covered — a
@@ -117,6 +166,11 @@ async def complete_run(
     succeeded: Any = None,
     failed: Any = None,
     next_steps: Any = None,
+    # Coverage contract: what the run actually examined, what it left out,
+    # and a verdict per assigned audit lens (see build_coverage).
+    covered_paths: Any = None,
+    skipped_paths: Any = None,
+    lens_verdicts: Any = None,
     output_refs: Optional[list[str]] = None,
     usage: Optional[dict[str, Any]] = None,
     raw_artifact_uri: Optional[str] = None,
@@ -153,6 +207,13 @@ async def complete_run(
     # self-report so the UI and the notification feed can tell "done" apart
     # from "genuinely waiting on a human".
     r.usage = {**(r.usage or {}), "self_reported_status": self_reported_status}
+    coverage = build_coverage(covered_paths, skipped_paths, lens_verdicts)
+    if coverage:
+        # Merge over any earlier report (MCP self-completion, then the
+        # lifecycle finalize) — a later coverage-less call must not erase
+        # what the agent already reported.
+        prior_coverage = dict((r.usage or {}).get("coverage") or {})
+        r.usage = {**(r.usage or {}), "coverage": {**prior_coverage, **coverage}}
     if output_refs:
         r.output_refs = list({*(r.output_refs or []), *output_refs})
     if raw_artifact_uri:
@@ -169,6 +230,10 @@ async def complete_run(
         failed=failed,
         next_steps=next_steps,
     )
+    # Lens verdicts belong in the human-facing summary too — the run card
+    # shows per-lens results without digging into usage.
+    if coverage.get("lens_verdicts"):
+        outcome["lens_verdicts"] = coverage["lens_verdicts"]
     r.summary = merge_summary(dict(r.summary or {}), outcome)
     if r.started_at and not r.duration_ms:
         delta = (now - r.started_at).total_seconds() * 1000

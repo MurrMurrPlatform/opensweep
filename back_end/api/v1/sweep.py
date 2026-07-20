@@ -157,6 +157,7 @@ async def run_audit_endpoint(
             custom_intent=req.custom_intent,
             max_findings=req.max_findings,
             run_policy_uid=policy.uid,
+            effort=req.effort.value,
         )
         return AuditResultDTO(**result.__dict__)
 
@@ -169,6 +170,7 @@ async def run_audit_endpoint(
         custom_intent=req.custom_intent,
         max_findings=req.max_findings,
         run_policy_uid=policy.uid,
+        effort=req.effort.value,
     )
     return AuditResultDTO(**result.__dict__)
 
@@ -243,6 +245,7 @@ async def run_deep_scan_endpoint(
         custom_intent=req.custom_intent,
         max_findings=req.max_findings,
         run_policy_uid=policy.uid,
+        effort=req.effort.value,
     )
     return DeepScanResultDTO(**result.__dict__)
 

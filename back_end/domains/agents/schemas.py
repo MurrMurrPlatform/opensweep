@@ -50,7 +50,8 @@ class AgentDTO(BaseModel):
     prompt: str = ""
     produces: str = "findings"
     default_effort: str = "normal"
-    default_executor: str = ""
+    # "" = inherit from the effort tier | low | medium | high.
+    reasoning: str = ""
     tags: list[str] = Field(default_factory=list)
     provenance: str = "user"  # system | user | imported
     # Stable slug for system rows ("ask", "review-guidance", "audit-stale" …)
@@ -72,7 +73,7 @@ class CreateAgentRequest(BaseModel):
     prompt: str = ""
     produces: str = "findings"
     default_effort: str = "normal"
-    default_executor: str = ""
+    reasoning: str = ""
     tags: list[str] = Field(default_factory=list)
     enabled: bool = True
 
@@ -83,7 +84,7 @@ class UpdateAgentRequest(BaseModel):
     prompt: Optional[str] = None
     produces: Optional[str] = None
     default_effort: Optional[str] = None
-    default_executor: Optional[str] = None
+    reasoning: Optional[str] = None
     tags: Optional[list[str]] = None
     enabled: Optional[bool] = None
 

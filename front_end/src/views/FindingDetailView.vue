@@ -424,7 +424,7 @@ watch(
               {{ item.severity }} · {{ item.kind }}
             </Badge>
             <Badge v-for="t in item.tags || []" :key="t" variant="outline">{{ t }}</Badge>
-            <Badge variant="outline">effort: {{ item.effort }}</Badge>
+            <Badge variant="outline">size: {{ item.size }}</Badge>
             <Badge v-if="item.subtype" variant="outline">{{ item.subtype }}</Badge>
             <Badge :variant="statusTone">status: {{ item.status }}</Badge>
           </div>
@@ -683,6 +683,18 @@ watch(
                 <template v-if="item.updated_at">
                   <dt class="text-muted-foreground">updated</dt>
                   <dd>{{ item.updated_at }}</dd>
+                </template>
+                <template v-if="item.last_confirmed_at">
+                  <dt class="text-muted-foreground">confirmed</dt>
+                  <dd>
+                    {{ item.last_confirmed_at }}
+                    <span
+                      v-if="(item.source_run_uids?.length ?? 0) > 1"
+                      class="text-muted-foreground"
+                    >
+                      · {{ item.source_run_uids!.length }} runs
+                    </span>
+                  </dd>
                 </template>
               </dl>
             </CardContent>

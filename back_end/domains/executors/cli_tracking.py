@@ -28,6 +28,7 @@ from domains.executors._shared import (
 )
 from domains.executors.base import AdapterRegistry, DispatchRequest, DispatchResult, ExecutorAdapter
 from domains.executors.quota import detect_quota_exhaustion
+from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
 from domains.llm_providers.services.llm_executor import (
@@ -139,6 +140,10 @@ class _CLITrackingAdapter(ExecutorAdapter):
                     append_event(req.run_uid, "assistant_text", text=delta)
             await recorder.record_total(stream, text)
 
+        # Reasoning level → codex `-c model_reasoning_effort=…` argv override
+        # (empty for opencode and for unset levels).
+        reasoning_cli_args = reasoning_args(req.reasoning, provider.kind).get("cli_config") or []
+
         try:
             inv = await invoke_provider(
                 provider,
@@ -148,6 +153,7 @@ class _CLITrackingAdapter(ExecutorAdapter):
                 working_dir=req.repository_local_path,
                 on_chunk=_on_chunk,
                 run_uid=req.run_uid,
+                extra_cli_args=reasoning_cli_args,
             )
         finally:
             await recorder.close()
@@ -204,8 +210,14 @@ class _CLITrackingAdapter(ExecutorAdapter):
         continuation_pass = False
         if self.provider_kind == "codex_subscription":
             remaining_wall = (timeout - wall) if timeout is not None else None
+            # Policy gate: max_continuation_passes=0 disables the (single)
+            # codex continuation; None/>=1 allows it.
+            policy_passes = (
+                req.policy.max_continuation_passes if req.policy is not None else None
+            )
             if (
                 inv.ok  # gate: a crashed/timed-out first pass must NOT be re-prompted
+                and (policy_passes is None or int(policy_passes) >= 1)
                 and not envelope_has_complete_run(envelope)
                 and not await _completed_via_mcp(req.run_uid)
                 and (remaining_wall is None or remaining_wall > _MIN_CONTINUATION_WALL_SECONDS)
@@ -237,6 +249,7 @@ class _CLITrackingAdapter(ExecutorAdapter):
                         working_dir=req.repository_local_path,
                         on_chunk=_on_cont_chunk,
                         run_uid=req.run_uid,
+                        extra_cli_args=reasoning_cli_args,
                     )
                 finally:
                     await cont_recorder.close()

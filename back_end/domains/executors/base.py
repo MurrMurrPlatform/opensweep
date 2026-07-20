@@ -53,6 +53,11 @@ class DispatchRequest:
     # local-provider skip — an explicit per-stage ceiling always applies.
     model_override: str = ""
     max_wall_seconds_override: int = 0
+    # Resolved effort tier + reasoning level snapshotted at dispatch
+    # ("" = unknown). Adapters translate `reasoning` into provider knobs via
+    # executors/reasoning.reasoning_args.
+    effort: str = ""
+    reasoning: str = ""
 
 
 @dataclass

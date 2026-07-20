@@ -112,7 +112,7 @@ async def opensweep_get_finding(*, uid: str) -> Optional[dict[str, Any]]:
         return None
     return {
         **_finding_to_dict(f),
-        "effort": f.effort,
+        "size": f.size,
         "description": f.description or "",
         "root_cause": f.root_cause or "",
         "why_it_matters": f.why_it_matters or "",

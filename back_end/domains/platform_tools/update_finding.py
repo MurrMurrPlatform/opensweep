@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from domains.findings.models import Finding
 from domains.findings.schemas import (
-    Effort,
+    FindingSize,
     FindingStatus,
     Severity,
 )
@@ -17,7 +17,7 @@ from infrastructure.audit import write_audit
 
 _CHANGEABLE_FIELDS = {
     "severity",
-    "effort",
+    "size",
     "subtype",
     "title",
     "confidence",
@@ -51,9 +51,14 @@ async def update_finding(
     """Update facets on an existing Finding.
 
     Unknown fields are rejected — Findings have a fixed faceted shape;
-    free-form notes belong in `evidence`.
+    free-form notes belong in `evidence`. `effort` is accepted as a legacy
+    alias for `size` (seeded prompts may still use the old name).
     """
     changes = dict(changes or {})
+    if "effort" in changes and "size" not in changes:
+        changes["size"] = changes.pop("effort")
+    else:
+        changes.pop("effort", None)
     f = await Finding.nodes.get_or_none(uid=finding_uid)
     if f is None:
         raise HTTPException(status_code=404, detail=f"Finding {finding_uid} not found")
@@ -66,8 +71,8 @@ async def update_finding(
 
     if "severity" in changes:
         changes["severity"] = _enum_value(Severity, changes["severity"], "severity")
-    if "effort" in changes:
-        changes["effort"] = _enum_value(Effort, changes["effort"], "effort")
+    if "size" in changes:
+        changes["size"] = _enum_value(FindingSize, changes["size"], "size")
     if "status" in changes:
         changes["status"] = _enum_value(FindingStatus, changes["status"], "status")
     if "evidence" in changes and isinstance(changes["evidence"], dict):

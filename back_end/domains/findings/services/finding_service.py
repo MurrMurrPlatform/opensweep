@@ -12,10 +12,10 @@ from fastapi import HTTPException
 
 from domains.findings.models import Finding
 from domains.findings.schemas import (
-    Effort,
     FileFindingRequest,
     FindingDTO,
     FindingKind,
+    FindingSize,
     FindingStatus,
     ParseStatus,
     Severity,
@@ -70,7 +70,7 @@ def finding_to_dto(f: Finding) -> FindingDTO:
         tags=list(f.tags or []),
         kind=FindingKind(f.kind),
         severity=Severity(f.severity or "medium"),
-        effort=Effort(f.effort or "medium"),
+        size=FindingSize(f.size or "medium"),
         subtype=f.subtype or "",
         title=f.title,
         confidence=float(f.confidence or 0.7),
@@ -82,6 +82,8 @@ def finding_to_dto(f: Finding) -> FindingDTO:
         affected_paths=list(f.affected_paths or []),
         dedupe_key=f.dedupe_key,
         source_run_uid=f.source_run_uid,
+        source_run_uids=list(f.source_run_uids or ([f.source_run_uid] if f.source_run_uid else [])),
+        last_confirmed_at=f.last_confirmed_at,
         executor=f.executor or "manual",
         source_path=SourcePath(f.source_path or "tool-call"),
         parse_status=ParseStatus(f.parse_status or "ok"),
@@ -104,7 +106,7 @@ class FindingService:
         exclude_kind: str | None = None,
         status: str | None = None,
         severity: str | None = None,
-        effort: str | None = None,
+        size: str | None = None,
         detected_by_tool: str | None = None,
         sort_by: str = "updated_at",
         sort_dir: str = "desc",
@@ -126,7 +128,7 @@ class FindingService:
                 continue
             if severity and (f.severity or "medium") != severity:
                 continue
-            if effort and (f.effort or "medium") != effort:
+            if size and (f.size or "medium") != size:
                 continue
             if detected_by_tool and (f.detected_by_tool or "") != detected_by_tool:
                 continue
@@ -173,7 +175,7 @@ class FindingService:
             tags=normalize_tags(req.tags),
             kind=req.kind.value,
             severity=req.severity.value,
-            effort=req.effort.value,
+            size=req.size.value,
             subtype=req.subtype or "",
             title=req.title,
             confidence=req.confidence,
@@ -213,7 +215,7 @@ class FindingService:
         for key, value in fields.items():
             if key == "tags":
                 value = normalize_tags(value)
-            elif key in ("kind", "severity", "effort") and value is not None:
+            elif key in ("kind", "severity", "size") and value is not None:
                 value = value.value  # StrEnum → stored string
             setattr(f, key, value)
         f.updated_at = datetime.now(UTC)
