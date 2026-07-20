@@ -20,6 +20,7 @@ from domains.findings.schemas import (
 )
 from domains.findings.services.dedupe import build_dedupe_key, titles_similar
 from infrastructure.audit import write_audit
+from logging_config import logger
 
 
 def _enum_member(enum_cls, value: str, field: str):
@@ -166,41 +167,48 @@ async def create_finding(
     # Similarity fallback: the dedupe key missed (rephrased title or a
     # different top path), but a same-kind open finding touching one of the
     # same files with a near-identical title is the same issue re-found.
+    # Best-effort: a failure here degrades to "maybe file a duplicate" —
+    # it must never lose the finding the agent has in hand.
     if paths:
-        incoming_paths = {p for p in paths if p}
-        candidates = await Finding.nodes.filter(
-            repository_uid=repository_uid,
-            status=FindingStatus.OPEN.value,
-            kind=kind_member.value,
-        )
-        for candidate in candidates:
-            if not incoming_paths & {p for p in (candidate.affected_paths or []) if p}:
-                continue
-            if not titles_similar(candidate.title or "", title):
-                continue
-            await _merge_into(
-                candidate,
-                confidence=confidence,
-                evidence=evidence,
-                clean_tags=clean_tags,
-                description=description,
-                root_cause=root_cause,
-                why_it_matters=why_it_matters,
-                suggested_fix=suggested_fix,
-                detected_by_tool=detected_by_tool,
-                detected_by_rule=detected_by_rule,
-                source_run_uid=source_run_uid,
+        try:
+            incoming_paths = {p for p in paths if p}
+            candidates = await Finding.nodes.filter(
+                repository_uid=repository_uid,
+                status=FindingStatus.OPEN.value,
+                kind=kind_member.value,
             )
-            return {
-                "finding_uid": candidate.uid,
-                "dedupe_key": candidate.dedupe_key,
-                "deduplicated": True,
-                "note": (
-                    "similar open finding matched (same kind, overlapping path, "
-                    "near-identical title); confirmation recorded instead of "
-                    "creating a duplicate"
-                ),
-            }
+            for candidate in candidates:
+                if not incoming_paths & {p for p in (candidate.affected_paths or []) if p}:
+                    continue
+                if not titles_similar(candidate.title or "", title):
+                    continue
+                await _merge_into(
+                    candidate,
+                    confidence=confidence,
+                    evidence=evidence,
+                    clean_tags=clean_tags,
+                    description=description,
+                    root_cause=root_cause,
+                    why_it_matters=why_it_matters,
+                    suggested_fix=suggested_fix,
+                    detected_by_tool=detected_by_tool,
+                    detected_by_rule=detected_by_rule,
+                    source_run_uid=source_run_uid,
+                )
+                return {
+                    "finding_uid": candidate.uid,
+                    "dedupe_key": candidate.dedupe_key,
+                    "deduplicated": True,
+                    "note": (
+                        "similar open finding matched (same kind, overlapping path, "
+                        "near-identical title); confirmation recorded instead of "
+                        "creating a duplicate"
+                    ),
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"create_finding: similarity dedup skipped ({type(exc).__name__}: {exc})"
+            )
 
     now = datetime.now(timezone.utc)
     f = Finding(

@@ -480,7 +480,8 @@ async def execute_envelope_tool_calls(
         if not isinstance(name, str) or not name:
             continue
         if name == "complete_run":
-            cr_args = dict(call.get("args") or {})
+            raw_cr = call.get("args")
+            cr_args = raw_cr if isinstance(raw_cr, dict) else {}
             outcome = extract_outcome(cr_args)
             # Coverage (covered_paths / skipped_paths / lens_verdicts) rides on
             # the outcome dict so it reaches the lifecycle's finalize
@@ -491,7 +492,15 @@ async def execute_envelope_tool_calls(
         if name in deny_tools:
             results.append({"tool": name, "error": deny_tools[name]})
             continue
-        args = dict(call.get("args") or {})
+        raw_args = call.get("args")
+        if raw_args is not None and not isinstance(raw_args, dict):
+            # Model-emitted text: a malformed args entry fails THIS call,
+            # never the whole envelope (later calls still dispatch).
+            err = "args must be a JSON object"
+            results.append({"tool": name, "error": err})
+            append_event(req.run_uid, "tool_result", name=name, output=err, is_error=True)
+            continue
+        args = dict(raw_args or {})
         if name in _BY_UID_TOOLS:
             target_repo = await _envelope_target_repository_uid(name, args)
             if not target_repo or target_repo != req.repository_uid:

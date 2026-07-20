@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from domains.runs.models import Run
 from infrastructure.audit import write_audit
+from logging_config import logger
 
 
 def _clean_items(value: Any) -> list[str]:
@@ -208,6 +209,16 @@ async def complete_run(
     # from "genuinely waiting on a human".
     r.usage = {**(r.usage or {}), "self_reported_status": self_reported_status}
     coverage = build_coverage(covered_paths, skipped_paths, lens_verdicts)
+    supplied_verdicts = len(lens_verdicts) if isinstance(lens_verdicts, (list, tuple)) else 0
+    kept_verdicts = len(coverage.get("lens_verdicts") or [])
+    if supplied_verdicts > kept_verdicts:
+        # Lenient dropping is deliberate (agent-emitted input), but silent
+        # dropping is not — without this line a misspelled verdict makes a
+        # whole campaign part's lens results vanish untraceably.
+        logger.warning(
+            f"complete_run {run_uid}: dropped {supplied_verdicts - kept_verdicts} "
+            f"of {supplied_verdicts} lens_verdicts entries (unknown verdict value or missing lens)"
+        )
     if coverage:
         # Merge over any earlier report (MCP self-completion, then the
         # lifecycle finalize) — a later coverage-less call must not erase

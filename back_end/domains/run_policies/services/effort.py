@@ -150,6 +150,11 @@ async def _migrate_legacy_policy(effort: Effort) -> RunPolicy | None:
             if legacy_name == config["name"]:
                 return row  # human-tuned current-name row: use as-is
             return None  # human-tuned old-name row: leave it; caller seeds the new policy
+        if legacy_name != config["name"] and await _find_by_name(config["name"]) is not None:
+            # A current-name row already exists (e.g. from a prior partial
+            # seed) — renaming this old row too would create two rows with
+            # the same name. Leave the old row; the caller uses the current one.
+            return None
         row.name = config["name"]
         row.description = config["description"]
         for field_name in _TIER_FIELDS:

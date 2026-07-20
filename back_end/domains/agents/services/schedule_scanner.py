@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from croniter import croniter
+from fastapi import HTTPException
 
 from domains.agents.models import Agent, ScheduledAgent
 from domains.agents.schemas import parse_trigger
@@ -112,6 +113,7 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
             from domains.campaigns.services import campaign_service
 
             tgt = dict(sa.target or {})
+            campaign = None
             try:
                 campaign = await campaign_service.create(
                     sa.repository_uid,
@@ -128,6 +130,21 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
                 await campaign_service.launch(campaign.uid)
             except Exception as exc:  # noqa: BLE001 — one bad repo never stops the scan
                 result.errors.append(f"{sa.uid}: {type(exc).__name__}: {exc}")
+                if campaign is not None:
+                    # Created but not launched: cancel it, or every retry
+                    # tick strands another campaign in `planning`.
+                    try:
+                        await campaign_service.cancel(
+                            campaign.uid, reason="scheduled launch failed"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                if isinstance(exc, HTTPException) and 400 <= exc.status_code < 500:
+                    # Deterministic misconfig (bad template/lenses in target):
+                    # retrying every minute cannot help — stamp the tick so
+                    # the binding waits for its next cron slot.
+                    sa.last_scheduled_at = moment
+                    await sa.save()
                 continue
             sa.last_scheduled_at = moment
             await sa.save()

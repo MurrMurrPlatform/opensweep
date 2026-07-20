@@ -165,6 +165,15 @@ class FindingService:
         if existing is not None:
             existing.confidence = max(float(existing.confidence or 0.0), req.confidence)
             existing.evidence = {**(existing.evidence or {}), **(req.evidence or {})}
+            # Confirmation ledger — keep this path in step with the platform
+            # tool's _merge_into (create_finding.py).
+            run_uids = [u for u in (existing.source_run_uids or []) if u]
+            if not run_uids and existing.source_run_uid:
+                run_uids = [existing.source_run_uid]
+            if req.source_run_uid and req.source_run_uid not in run_uids:
+                run_uids.append(req.source_run_uid)
+            existing.source_run_uids = run_uids
+            existing.last_confirmed_at = datetime.now(UTC)
             existing.updated_at = datetime.now(UTC)
             await existing.save()
             return finding_to_dto(existing)
@@ -189,6 +198,8 @@ class FindingService:
             detected_by_tool=req.detected_by_tool or "",
             detected_by_rule=req.detected_by_rule or "",
             source_run_uid=req.source_run_uid,
+            source_run_uids=[req.source_run_uid] if req.source_run_uid else [],
+            last_confirmed_at=datetime.now(UTC),
             executor=req.executor or "manual",
             source_path=SourcePath.TOOL_CALL.value,
             parse_status=ParseStatus.OK.value,

@@ -117,16 +117,11 @@ async def finalize_campaign(campaign) -> None:
     fresh = await Campaign.nodes.get_or_none(uid=campaign.uid) or campaign
     if not is_legal_status_transition(fresh.status or "", to_status):
         return  # already finalized by a concurrent tick
-    now = datetime.now(UTC)
-    fresh.summary = summary
-    fresh.status = to_status
-    fresh.events = [
-        *(fresh.events or []),
-        {"ts": now.isoformat(), "type": "finalized", "status": to_status},
-    ]
-    fresh.updated_at = now
-    await fresh.save()
 
+    # Audit BEFORE the status save: the notification feed derives from the
+    # audit stream, and a crash between save and audit would be unrecoverable
+    # (done→done is illegal, so re-entry returns above without ever
+    # auditing). The reverse crash merely re-audits once — the lesser evil.
     await write_audit(
         kind="campaign.failed" if all_failed else "campaign.completed",
         subject_uid=fresh.uid,
@@ -139,3 +134,13 @@ async def finalize_campaign(campaign) -> None:
             "failed_parts": summary["failed_parts"],
         },
     )
+
+    now = datetime.now(UTC)
+    fresh.summary = summary
+    fresh.status = to_status
+    fresh.events = [
+        *(fresh.events or []),
+        {"ts": now.isoformat(), "type": "finalized", "status": to_status},
+    ]
+    fresh.updated_at = now
+    await fresh.save()

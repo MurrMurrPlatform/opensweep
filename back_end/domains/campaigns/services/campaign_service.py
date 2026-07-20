@@ -79,30 +79,52 @@ async def record_event(campaign: Campaign, type: str, **payload) -> None:
         campaign.updated_at = fresh.updated_at
 
 
-async def _file_tree_paths(repo) -> list[str]:
-    """The repository's blob paths at the default branch head; [] on ANY
-    failure (missing provider, truncated tree errors, network) — the plan
-    degrades to watch-path-only areas instead of failing."""
+async def _file_tree_paths(repo) -> tuple[list[str], str]:
+    """(blob paths at the default branch head, degraded_reason — "" = full).
+
+    Empty paths + a reason on ANY failure (missing provider, no head sha,
+    network) — the plan degrades to watch-path-only areas instead of
+    failing. A truncated tree (very large repo) keeps the partial paths but
+    still carries a reason: file counts and the remainder part are computed
+    against a partial universe, and the plan must say so."""
     from infrastructure.git_providers import get_provider_client
 
     try:
         client = get_provider_client(repo)
         if not (client.is_active and repo.github_owner and repo.github_repo):
-            return []
+            logger.warning(
+                f"campaign planning: no active git provider for {repo.uid} — "
+                "planning from watch paths only",
+                extra={"tag": "campaigns"},
+            )
+            return [], "no active git provider connection"
         sha = await client.get_branch_head_sha(
             repo.github_owner, repo.github_repo, repo.default_branch or "main"
         )
         if not sha:
-            return []
+            logger.warning(
+                f"campaign planning: no head sha for {repo.uid} — "
+                "planning from watch paths only",
+                extra={"tag": "campaigns"},
+            )
+            return [], f"no head sha for branch {repo.default_branch or 'main'}"
         tree = await client.get_tree(repo.github_owner, repo.github_repo, sha)
-        return [str(p) for p in (tree.get("paths") or [])]
+        paths = [str(p) for p in (tree.get("paths") or [])]
+        if tree.get("truncated"):
+            logger.warning(
+                f"campaign planning: tree truncated for {repo.uid} "
+                f"({len(paths)} paths) — plan covers a partial file list",
+                extra={"tag": "campaigns"},
+            )
+            return paths, "file tree truncated (very large repo) — partial file list"
+        return paths, ""
     except Exception as exc:  # noqa: BLE001 — degrade, never fail planning
         logger.warning(
             f"campaign planning: tree unavailable for {repo.uid}: "
             f"{type(exc).__name__}: {exc}",
             extra={"tag": "campaigns"},
         )
-        return []
+        return [], f"file tree unavailable ({type(exc).__name__})"
 
 
 async def create(
@@ -133,7 +155,7 @@ async def create(
         )
 
     docs = [d for d in await Doc.nodes.all() if d.repository_uid == repository_uid]
-    file_paths = await _file_tree_paths(repo)
+    file_paths, degraded_reason = await _file_tree_paths(repo)
 
     lenses = [
         {
@@ -186,14 +208,19 @@ async def create(
         trigger_provenance=trigger_provenance or "manual",
     )
     await c.save()
-    await record_event(c, "planned", parts=len(parts))
+    # A degraded plan (no/partial file tree) must be distinguishable from a
+    # real one — users approve the plan's scope, so mark it on the record.
+    planned_payload = {"parts": len(parts)}
+    if degraded_reason:
+        planned_payload["degraded"] = degraded_reason
+    await record_event(c, "planned", **planned_payload)
     await write_audit(
         kind="campaign.planned",
         subject_uid=c.uid,
         subject_type="Campaign",
         actor_uid=created_by,
         repository_uid=repository_uid,
-        payload={"template": template, "parts": len(parts)},
+        payload={"template": template, "parts": len(parts), **({"degraded": degraded_reason} if degraded_reason else {})},
     )
     return c
 

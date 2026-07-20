@@ -41,11 +41,15 @@ def _coverage_fields(
     target paths — the run was pointed there, so that is the best available
     claim of what it looked at. Pure for testability."""
     coverage = dict(usage.get("coverage") or {})
-    covered = [str(p) for p in (coverage.get("covered_paths") or []) if p]
+
+    def _paths(value: Any) -> list[str]:
+        # Shape guard: a stray string here would iterate per character.
+        return [str(p) for p in (value if isinstance(value, (list, tuple)) else []) if p]
+
+    covered = _paths(coverage.get("covered_paths"))
     if not covered:
-        raw = target.get("paths") or []
-        covered = [str(p) for p in (raw if isinstance(raw, (list, tuple)) else []) if p]
-    skipped = [str(p) for p in (coverage.get("skipped_paths") or []) if p]
+        covered = _paths(target.get("paths"))
+    skipped = _paths(coverage.get("skipped_paths"))
     verdicts = [v for v in (coverage.get("lens_verdicts") or []) if isinstance(v, dict)]
     return covered, skipped, verdicts
 
