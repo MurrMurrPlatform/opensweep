@@ -542,7 +542,7 @@ def _audit_intent(
 # Code-owned tooling contract for generate-docs runs — lands in the
 # structural slot so an org overlay can never displace it. The task
 # instructions themselves are the seeded "generate-docs" agent base
-# (agent_prompts/services/seed_agent_bases.py). The existing-pages listing
+# (agents/services/seed_agent_bases.py). The existing-pages listing
 # arrives via build_intent's existing-state slot.
 _GENERATE_DOCS_TOOLING_CONTRACT = """# Tooling
 
@@ -576,7 +576,7 @@ rather than padding."""
 # Code-owned Analysis authoring contract for deep-scan runs — lands in the
 # structural slot so an org overlay can never displace it (a deep scan that
 # forgets these tools produces no Analysis). The sweep guidance itself is the
-# seeded "deep-scan" agent base (agent_prompts/services/seed_agent_bases.py).
+# seeded "deep-scan" agent base (agents/services/seed_agent_bases.py).
 _DEEP_SCAN_ANALYSIS_CONTRACT = """# How you record the Analysis (tools)
 
 You are building ONE Analysis for this run. Author it incrementally so partial

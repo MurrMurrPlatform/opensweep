@@ -3,7 +3,7 @@
 When a commit lands, ScheduledAgents with an `on-event` trigger whose
 target paths overlap the touched paths become eligible (an empty
 `target.paths` means repo-wide: eligible on any change). Whether an
-eligible binding actually runs is its own `compute_dial`:
+eligible binding actually runs is its own `autonomy`:
 
     disabled / suggest / ask-before-run  → candidate only (never auto-run)
     auto-run-cheap                       → run when the active provider is local (free)
@@ -91,10 +91,10 @@ async def candidates_for_change(
     return out
 
 
-_AUTO_RUN_DIALS = {"auto-run-cheap", "auto-run-any"}
+_AUTO_RUN_LEVELS = {"auto-run-cheap", "auto-run-any"}
 
 
-async def _dial_allows_run(dial: str, repository_uid: str) -> bool:
+async def _autonomy_allows_run(dial: str, repository_uid: str) -> bool:
     if dial == "auto-run-any":
         return True
     if dial == "auto-run-cheap":
@@ -113,7 +113,7 @@ async def _dial_allows_run(dial: str, repository_uid: str) -> bool:
 async def auto_run_candidates_for_change(
     *, repository_uid: str, changed_paths: list[str]
 ) -> list[str]:
-    """Dispatch eligible on-event ScheduledAgents whose compute_dial allows
+    """Dispatch eligible on-event ScheduledAgents whose autonomy allows
     auto-running. Returns the dispatched run uids. Per-candidate failures
     (in-flight guards, no provider) are logged and skipped — one bad
     binding never blocks the rest."""
@@ -130,9 +130,9 @@ async def auto_run_candidates_for_change(
     dispatched: list[str] = []
     for c in candidates:
         sa = await ScheduledAgent.nodes.get_or_none(uid=c.scheduled_agent_uid)
-        if sa is None or (sa.compute_dial or "") not in _AUTO_RUN_DIALS:
+        if sa is None or (sa.autonomy or "") not in _AUTO_RUN_LEVELS:
             continue
-        if not await _dial_allows_run(sa.compute_dial or "", repository_uid):
+        if not await _autonomy_allows_run(sa.autonomy or "", repository_uid):
             continue
         in_flight = await active_runs_for(repository_uid=repository_uid)
         if any(r.scheduled_agent_uid == sa.uid for r in in_flight):
@@ -162,7 +162,7 @@ async def refresh_docs_for_change(
     *, repository_uid: str, changed_paths: list[str], source: str = ""
 ) -> None:
     """Tie a set of changed paths to doc upkeep: mark the watching Doc pages
-    stale, then auto-run any on-event doc bindings the compute_dial permits.
+    stale, then auto-run any on-event doc bindings the autonomy permits.
     Shared by the GitHub push webhook and the write-run finalize so
     freshness fires the moment code changes — whether the change arrives as a
     redelivered push or as a run that just pushed. Best-effort: never raises.

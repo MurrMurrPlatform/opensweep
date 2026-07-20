@@ -35,7 +35,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { AnimatedNumber } from '@/components/ui/animated-number'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
-import type { ComputeDial, DocDTO, ScheduledAgentDTO, ScopeFreshnessDTO } from '@/types/api'
+import type { Autonomy, DocDTO, ScheduledAgentDTO, ScopeFreshnessDTO } from '@/types/api'
 
 const docs = useDocStore()
 const analyses = useAnalysisStore()
@@ -144,7 +144,7 @@ const auditScheduleBinding = ref<ScheduledAgentDTO | null>(null)
 type ScheduleMode = 'manual' | 'cron'
 const scheduleMode = ref<ScheduleMode>('manual')
 const cronExpr = ref('')
-const dial = ref<ComputeDial>('ask-before-run')
+const dial = ref<Autonomy>('ask-before-run')
 const schedulePagesPerTick = ref('3')
 
 const SCHEDULE_OPTIONS = [
@@ -168,7 +168,7 @@ const CRON_PRESETS = [
 const scheduleSummary = computed(() => {
   const sa = auditScheduleBinding.value
   if (!sa || !sa.trigger.startsWith('cron:')) return null
-  if (sa.compute_dial === 'disabled') return 'scheduled · disabled'
+  if (sa.autonomy === 'disabled') return 'scheduled · disabled'
   return `cron ${sa.trigger.slice('cron:'.length)}`
 })
 
@@ -187,7 +187,7 @@ async function openSchedule() {
       scheduleMode.value = 'manual'
       cronExpr.value = ''
     }
-    dial.value = sa?.compute_dial ?? 'ask-before-run'
+    dial.value = sa?.autonomy ?? 'ask-before-run'
     const rawLimit = sa?.target?.limit
     schedulePagesPerTick.value = String(
       typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 3,
@@ -211,7 +211,7 @@ async function saveSchedule() {
     const limit = Number.parseInt(schedulePagesPerTick.value, 10)
     const payload = {
       trigger: scheduleMode.value === 'cron' ? `cron:${cronExpr.value.trim()}` : '',
-      compute_dial: dial.value,
+      autonomy: dial.value,
       target: { limit: Number.isFinite(limit) && limit > 0 ? limit : 3 },
     }
     if (!auditScheduleBinding.value) {
@@ -428,7 +428,7 @@ function outcomeVariant(outcome: string): BadgeVariants['variant'] {
                 <Label>Compute</Label>
                 <Select
                   :model-value="dial"
-                  @update:model-value="dial = $event as ComputeDial"
+                  @update:model-value="dial = $event as Autonomy"
                 >
                   <SelectTrigger class="w-full">
                     <SelectValue />

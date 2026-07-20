@@ -36,10 +36,10 @@ def is_due(expression: str, *, last: datetime | None, now: datetime) -> bool:
     return prev_fire > last
 
 
-def should_auto_audit(key: str, compute_dial: str) -> bool:
+def should_auto_audit(key: str, autonomy: str) -> bool:
     """audit-stale bindings fan out via run_auto_audit instead of a single
     dispatch; `disabled` is the kill-safety even with a cron set."""
-    return (key or "") == "audit-stale" and (compute_dial or "") != "disabled"
+    return (key or "") == "audit-stale" and (autonomy or "") != "disabled"
 
 
 async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
@@ -75,7 +75,7 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
         if key == "audit-stale":
             # Staleness-driven fan-out (§F): one scoped audit per selected
             # page instead of a single run off this binding.
-            if not should_auto_audit(key, sa.compute_dial or ""):
+            if not should_auto_audit(key, sa.autonomy or ""):
                 sa.last_scheduled_at = moment
                 await sa.save()
                 continue

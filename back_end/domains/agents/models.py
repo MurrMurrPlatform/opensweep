@@ -66,7 +66,10 @@ AGENT_PROMPT_MAX_BYTES = 32 * 1024
 
 OVERRIDE_MODES = {"append", "replace"}
 
-COMPUTE_DIALS = {
+# Autonomy levels — how much permission a ScheduledAgent has to run on its
+# own. (Formerly "compute_dial"; renamed because it gates permission, not
+# compute — effort is the compute dial.)
+AUTONOMY_LEVELS = {
     "disabled",
     "suggest",
     "ask-before-run",
@@ -86,7 +89,7 @@ class Agent(AsyncStructuredNode):
     prompt = StringProperty(default="")  # markdown instructions body
 
     produces = StringProperty(default="findings", index=True)
-    default_effort = StringProperty(default="normal")  # quick | normal | deep
+    default_effort = StringProperty(default="normal")  # short | normal | deep | unlimited
     default_executor = StringProperty(default="")  # "" = provider-derived
 
     tags = JSONProperty(default=[])  # list[str]
@@ -149,9 +152,9 @@ class ScheduledAgent(AsyncStructuredNode):
     effort = StringProperty(default="")
     run_policy_uid = StringProperty(default="", index=True)
 
-    # Compute-permission dial: disabled | suggest | ask-before-run |
+    # Autonomy (run-permission) level: disabled | suggest | ask-before-run |
     # auto-run-cheap | auto-run-any.
-    compute_dial = StringProperty(default="ask-before-run")
+    autonomy = StringProperty(default="ask-before-run")
 
     enabled = BooleanProperty(default=True)
 

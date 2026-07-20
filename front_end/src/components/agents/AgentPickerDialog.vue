@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import ProducesBadge from '@/components/agents/ProducesBadge.vue'
-import type { AgentDTO, ComputeDial, ScheduledAgentDTO } from '@/types/api'
+import type { AgentDTO, Autonomy, ScheduledAgentDTO } from '@/types/api'
 
 const props = defineProps<{
   open: boolean
@@ -49,7 +49,7 @@ const creating = ref(false)
 type TriggerMode = 'manual' | 'on-event' | 'cron'
 const mode = ref<TriggerMode>('manual')
 const cronExpr = ref('0 2 * * *')
-const dial = ref<ComputeDial>('ask-before-run')
+const dial = ref<Autonomy>('ask-before-run')
 
 watch(
   () => props.open,
@@ -101,7 +101,7 @@ async function create() {
       agent_uid: selected.value.uid,
       repository_uid: props.repositoryUid,
       trigger: trigger.value,
-      compute_dial: dial.value,
+      autonomy: dial.value,
     })
     toast.success('Agent scheduled', `“${sa.agent_title || sa.title}” added to this repository.`)
     emit('created', sa)
@@ -173,7 +173,7 @@ async function create() {
           </div>
           <div class="space-y-1.5">
             <Label>Compute dial</Label>
-            <Select :model-value="dial" @update:model-value="dial = $event as ComputeDial">
+            <Select :model-value="dial" @update:model-value="dial = $event as Autonomy">
               <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="disabled">Disabled</SelectItem>

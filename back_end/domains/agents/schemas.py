@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class Produces(StrEnum):
@@ -134,7 +134,7 @@ class ScheduledAgentDTO(BaseModel):
     target: dict[str, Any] = Field(default_factory=dict)
     effort: str = ""
     run_policy_uid: str | None = None
-    compute_dial: str = "ask-before-run"
+    autonomy: str = "ask-before-run"
     enabled: bool = True
     provenance: str = "user"
     last_scheduled_at: Optional[datetime] = None
@@ -154,7 +154,11 @@ class CreateScheduledAgentRequest(BaseModel):
     target: dict[str, Any] = Field(default_factory=dict)
     effort: str = ""
     run_policy_uid: str | None = None
-    compute_dial: str = "ask-before-run"
+    # validation_alias keeps pre-rename API clients ("compute_dial") working.
+    autonomy: str = Field(
+        default="ask-before-run",
+        validation_alias=AliasChoices("autonomy", "compute_dial"),
+    )
     enabled: bool = True
 
 
@@ -166,7 +170,9 @@ class UpdateScheduledAgentRequest(BaseModel):
     target: Optional[dict[str, Any]] = None
     effort: Optional[str] = None
     run_policy_uid: Optional[str] = None
-    compute_dial: Optional[str] = None
+    autonomy: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("autonomy", "compute_dial")
+    )
     enabled: Optional[bool] = None
 
 

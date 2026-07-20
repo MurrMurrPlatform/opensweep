@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from domains.agents.models import COMPUTE_DIALS, Agent, ScheduledAgent
+from domains.agents.models import AUTONOMY_LEVELS, Agent, ScheduledAgent
 from domains.agents.schemas import (
     CreateScheduledAgentRequest,
     ScheduledAgentDTO,
@@ -54,12 +54,12 @@ def validate_trigger(trigger: str) -> str:
     return raw
 
 
-def validate_dial(dial: str) -> str:
+def validate_autonomy(dial: str) -> str:
     d = (dial or "").strip()
-    if d not in COMPUTE_DIALS:
+    if d not in AUTONOMY_LEVELS:
         raise HTTPException(
             status_code=422,
-            detail=f"invalid compute_dial {dial!r}; valid: {sorted(COMPUTE_DIALS)}",
+            detail=f"invalid autonomy {dial!r}; valid: {sorted(AUTONOMY_LEVELS)}",
         )
     return d
 
@@ -77,7 +77,7 @@ async def to_dto(s: ScheduledAgent, *, agent: Agent | None = None) -> ScheduledA
         target=dict(s.target or {}),
         effort=s.effort or "",
         run_policy_uid=s.run_policy_uid or None,
-        compute_dial=s.compute_dial or "ask-before-run",
+        autonomy=s.autonomy or "ask-before-run",
         enabled=bool(s.enabled),
         provenance=s.provenance or "user",
         last_scheduled_at=s.last_scheduled_at,
@@ -125,7 +125,7 @@ async def create_scheduled_agent(
         target=dict(req.target or {}),
         effort=req.effort or "",
         run_policy_uid=req.run_policy_uid or "",
-        compute_dial=validate_dial(req.compute_dial),
+        autonomy=validate_autonomy(req.autonomy),
         enabled=bool(req.enabled),
         provenance="user",
     )
@@ -139,7 +139,7 @@ async def create_scheduled_agent(
             "agent_uid": s.agent_uid,
             "repository_uid": s.repository_uid,
             "trigger": s.trigger,
-            "compute_dial": s.compute_dial,
+            "autonomy": s.autonomy,
         },
     )
     return await to_dto(s, agent=agent)
@@ -164,8 +164,8 @@ async def update_scheduled_agent(
     data = req.model_dump(exclude_unset=True)
     if "trigger" in data and data["trigger"] is not None:
         data["trigger"] = validate_trigger(data["trigger"])
-    if "compute_dial" in data and data["compute_dial"] is not None:
-        data["compute_dial"] = validate_dial(data["compute_dial"])
+    if "autonomy" in data and data["autonomy"] is not None:
+        data["autonomy"] = validate_autonomy(data["autonomy"])
     for key, value in data.items():
         if value is None:
             continue
@@ -218,7 +218,7 @@ async def seed_keep_docs_current(repository_uid: str) -> ScheduledAgent | None:
         title=KEEP_DOCS_CURRENT_TITLE,
         trigger="on-event",
         target={},  # empty = repo-wide: any change makes it a candidate
-        compute_dial="suggest",
+        autonomy="suggest",
         provenance="system",
     )
     await s.save()
@@ -248,7 +248,7 @@ async def seed_audit_stale(repository_uid: str) -> ScheduledAgent | None:
         title=AUDIT_STALE_TITLE,
         trigger="",
         target={"limit": 3},
-        compute_dial="ask-before-run",
+        autonomy="ask-before-run",
         provenance="system",
     )
     await s.save()
@@ -288,7 +288,7 @@ async def _seed_binding(
         title=title,
         trigger=trigger,
         target={},  # empty = repo-wide
-        compute_dial="ask-before-run",
+        autonomy="ask-before-run",
         enabled=enabled,
         provenance="system",
     )
@@ -304,7 +304,7 @@ async def seed_audit_agents(repository_uid: str) -> list[ScheduledAgent]:
     - Daily deep issue hunt (Tue–Sat 06:00)         — seeded DISABLED; flip
       `enabled` on to opt into the higher-frequency (higher-cost) daily sweep.
 
-    All seed with compute_dial="ask-before-run": an enabled binding's cron tick
+    All seed with autonomy="ask-before-run": an enabled binding's cron tick
     proposes a run for approval rather than auto-billing. Dial up to
     auto-run-cheap/auto-run-any for unattended operation.
     """

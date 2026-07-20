@@ -12,13 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { ComputeDial } from '@/types/api'
+import type { Autonomy } from '@/types/api'
 
 const props = withDefaults(
   defineProps<{
     /** "" manual | "on-event" | "cron:<expr>" */
     trigger: string
-    computeDial: ComputeDial
+    autonomyLevel: Autonomy
     saving?: boolean
     /** Hide the on-push option (e.g. HealthView's scheduled-audit dialog). */
     hideOnEvent?: boolean
@@ -28,13 +28,13 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  save: [payload: { trigger: string; compute_dial: ComputeDial }]
+  save: [payload: { trigger: string; autonomy: Autonomy }]
 }>()
 
 type TriggerMode = 'manual' | 'on-event' | 'cron'
 const mode = ref<TriggerMode>('manual')
 const cronExpr = ref('')
-const dial = ref<ComputeDial>(props.computeDial)
+const dial = ref<Autonomy>(props.autonomyLevel)
 
 const TRIGGER_OPTIONS = computed(() =>
   [
@@ -69,9 +69,9 @@ function hydrate() {
     mode.value = 'manual'
     cronExpr.value = ''
   }
-  dial.value = props.computeDial
+  dial.value = props.autonomyLevel
 }
-watch(() => [props.trigger, props.computeDial], hydrate, { immediate: true })
+watch(() => [props.trigger, props.autonomyLevel], hydrate, { immediate: true })
 
 const nextTrigger = computed(() =>
   mode.value === 'cron'
@@ -82,14 +82,14 @@ const nextTrigger = computed(() =>
 )
 
 const dirty = computed(
-  () => nextTrigger.value !== props.trigger || dial.value !== props.computeDial,
+  () => nextTrigger.value !== props.trigger || dial.value !== props.autonomyLevel,
 )
 
 const cronMissing = computed(() => mode.value === 'cron' && !cronExpr.value.trim())
 
 function save() {
   if (cronMissing.value) return
-  emit('save', { trigger: nextTrigger.value, compute_dial: dial.value })
+  emit('save', { trigger: nextTrigger.value, autonomy: dial.value })
 }
 </script>
 
@@ -116,7 +116,7 @@ function save() {
         </div>
         <div class="space-y-1.5">
           <Label>Compute dial</Label>
-          <Select :model-value="dial" @update:model-value="dial = $event as ComputeDial">
+          <Select :model-value="dial" @update:model-value="dial = $event as Autonomy">
             <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem v-for="o in DIAL_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>

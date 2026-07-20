@@ -23,7 +23,7 @@ export type ParseStatus = 'ok' | 'degraded'
 
 export type Executor = 'internal_llm' | 'claude_code' | 'codex' | 'opencode' | 'manual'
 export type ExecutionMode = 'analyze_only' | 'implement'
-export type ComputeDial = 'disabled' | 'suggest' | 'ask-before-run' | 'auto-run-cheap' | 'auto-run-any'
+export type Autonomy = 'disabled' | 'suggest' | 'ask-before-run' | 'auto-run-cheap' | 'auto-run-any'
 export type AgentProvenance = 'system' | 'user' | 'imported'
 /** V3 run states (PLATFORM_V3_DESIGN.md §2). 'awaiting_input' = turn done,
  *  follow-ups accepted; 'ended' = workspace destroyed (a follow-up reopens). */
@@ -373,7 +373,7 @@ export interface ScheduledAgentDTO {
   /** "" = inherit the agent's default effort. */
   effort: AgentEffort | ''
   run_policy_uid?: string | null
-  compute_dial: ComputeDial
+  autonomy: Autonomy
   enabled: boolean
   provenance: 'system' | 'user'
   last_scheduled_at?: string | null
@@ -392,7 +392,7 @@ export interface CreateScheduledAgentRequest {
   target?: Record<string, unknown>
   effort?: AgentEffort | ''
   run_policy_uid?: string | null
-  compute_dial?: ComputeDial
+  autonomy?: Autonomy
   enabled?: boolean
 }
 
@@ -403,7 +403,7 @@ export interface UpdateScheduledAgentRequest {
   target?: Record<string, unknown>
   effort?: AgentEffort | ''
   run_policy_uid?: string | null
-  compute_dial?: ComputeDial
+  autonomy?: Autonomy
   enabled?: boolean
 }
 

@@ -21,11 +21,11 @@ A stage's prompt supplies *guidance* (what to look for, what good looks
 like); the structural contract of each run (checkout steps, ledger calls,
 verdict rules) stays in the trigger's intent builder and cannot be
 overridden. On-event Investigations auto-run through their own
-`compute_dial`, not through this config.
+`autonomy`, not through this config.
 
 Defaults are themselves prompt-library entries: every stage a repo hasn't
 explicitly configured resolves to the seeded platform prompt for that stage
-(agent_prompts/services/seed_defaults.py, source_url=opensweep://workflow/<stage>)
+(agents/services/seed_defaults.py, source_url=opensweep://workflow/<stage>)
 — editable, replaceable, disableable like any other prompt. Only when that
 seeded prompt is deleted or disabled does a stage fall back to running with
 no guidance beyond the structural intent.
