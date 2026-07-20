@@ -7,6 +7,15 @@ from typing import Any, Optional
 from pydantic import AliasChoices, BaseModel, Field
 
 
+class OverlayMode(StrEnum):
+    """How an org override revision composes with the system agent's prompt:
+    `replace` substitutes it, `append` stacks under it as
+    "## Organization guidance"."""
+
+    REPLACE = "replace"
+    APPEND = "append"
+
+
 class Produces(StrEnum):
     FINDINGS = "findings"
     ANSWER = "answer"

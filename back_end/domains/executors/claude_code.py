@@ -27,13 +27,14 @@ from config import settings
 from domains.executors._shared import (
     StreamRecorder,
     _completed_via_mcp,
-    budget_briefing,
     ceiling_warnings,
     execute_envelope_tool_calls,
+    extract_envelope,
     record_input,
     resolve_provider,
     resolve_wall_ceiling,
 )
+from domains.executors.prompt_kit import stance_block, system_prompt
 from domains.executors.base import (
     AdapterRegistry,
     DispatchRequest,
@@ -61,7 +62,6 @@ from domains.llm_providers.services.credentials import provider_secret
 from domains.llm_providers.services.llm_executor import with_model_flag
 from domains.run_policies.services.ceilings import UsageSnapshot
 from infrastructure import artifact_store
-from infrastructure.code_graph import CODE_GRAPH_PROMPT as _CODE_GRAPH_BRIEFING
 from infrastructure.process_tree import kill_tree, process_group_kwargs
 from infrastructure.run_tokens import run_token_config_error
 from logging_config import logger
@@ -399,7 +399,20 @@ class ClaudeCodeAdapter(ExecutorAdapter):
         # Tool calls usually write Findings/Knowledge into the platform during
         # the run via MCP. We also parse a structured trailer if the agent
         # emitted one and execute those platform tool calls server-side.
-        parse_status, parsed_meta = self._parse_trailer(raw_stdout)
+        # extract_envelope handles fenced blocks, trailing objects, and bare
+        # tool-call arrays (wrapped as {"tool_calls": [...]}).
+        envelope = extract_envelope(raw_stdout)
+        parsed_meta: dict[str, Any] = {"trailer": envelope} if envelope else {}
+        stripped = (raw_stdout or "").strip()
+        if not stripped:
+            parse_status = "failed"
+        elif envelope is not None or len(stripped) > 32:
+            # No structured trailer — but if the run used MCP tool calls,
+            # that's the preferred path and parse_status is still ok. We
+            # record `degraded` only if the transcript is essentially empty.
+            parse_status = "ok"
+        else:
+            parse_status = "degraded"
 
         # Quota is a state, not a failure (§8): pause instead of failing when
         # the CLI died on a usage/rate limit. An agent SUCCESS (exit 0 with a
@@ -511,39 +524,13 @@ class ClaudeCodeAdapter(ExecutorAdapter):
             context=ctx_blob,
             run_uid=req.run_uid,
             repository_uid=req.repository_uid,
-            budget=budget_briefing(req.policy, wall_ceiling),
+            budget=stance_block(
+                req.policy,
+                wall_ceiling,
+                req.effort,
+                write_run=req.mode == ExecutionMode.IMPLEMENT,
+            ),
         )
-
-    def _parse_trailer(self, raw_stdout: str) -> tuple[str, dict[str, Any]]:
-        """Best-effort: look for a final JSON object/array in the transcript."""
-        s = (raw_stdout or "").strip()
-        if not s:
-            return "failed", {}
-        # Strip a fenced ```json block if present.
-        if "```" in s:
-            parts = s.split("```")
-            for i in range(len(parts) - 2, 0, -2):
-                block = parts[i]
-                if block.startswith("json"):
-                    block = block[4:]
-                try:
-                    return "ok", {"trailer": json.loads(block.strip())}
-                except json.JSONDecodeError:
-                    continue
-        # Look for trailing { ... } or [ ... ].
-        for opener, closer in (("{", "}"), ("[", "]")):
-            start = s.rfind(opener)
-            end = s.rfind(closer)
-            if start != -1 and end != -1 and end > start:
-                try:
-                    return "ok", {"trailer": json.loads(s[start : end + 1])}
-                except json.JSONDecodeError:
-                    continue
-        # No structured trailer — but if the run used MCP tool calls, that's the
-        # preferred path and parse_status is still ok. We can't easily tell from
-        # the transcript alone whether tool calls fired; we record `degraded`
-        # only if the transcript is essentially empty.
-        return ("ok" if len(s) > 32 else "degraded", {})
 
 
 def ensure_stream_json_flags(argv: list[str]) -> list[str]:
@@ -642,93 +629,10 @@ async def _persist_session_id(run_uid: str, session_id: str) -> None:
         await run.save()
 
 
-# Shared between the read and write prompts: MCP servers can still be
-# mid-handshake when the turn starts, and there is no human in a headless
-# run to answer a "should I retry?" question.
-_MCP_STARTUP_NOTE = """Your MCP servers may still be connecting when you start. If the
-`opensweep-platform` tools are not yet in your tool list (or a tool search finds
-none), continue the task with your native tools and retry loading them later
-in the run — they usually appear within seconds. This is a headless run with
-NO human present: never ask whether to retry or wait for confirmation, and
-never finish without calling the required opensweep-platform tools."""
-
-
-_SYSTEM_PROMPT = """You are a Claude Code agent running inside OpenSweep — a tracking-only repo
-intelligence platform. You have access to OpenSweep's platform-tool MCP server
-(`opensweep-platform`) with the following write tools:
-
-  create_finding, update_finding, propose_doc_edit, confirm_doc_current,
-  write_memory, attach_artifact, complete_run
-
-and read tools for platform state: list_docs, read_doc, search_memory.
-
-""" + _CODE_GRAPH_BRIEFING + """
-
-""" + _MCP_STARTUP_NOTE + """
-
-You MUST record durable output through OpenSweep tools. For every bug, docs gap,
-missing capability, stale assumption, or improvement you discover, call the
-MCP tool `mcp__opensweep-platform__opensweep_platform_create_finding` immediately
-(shown in some prompts as `opensweep_platform_create_finding` or
-`create_finding`). Do not wait until the end and do not leave observations
-only in prose.
-
-Subagents may inspect code and docs, but the top-level agent is responsible
-for filing OpenSweep findings. A subagent summary is not a durable result.
-
-If you find no actionable issue, still call the create-finding tool once with
-kind=`observation`, severity=`low`, subtype=`no-actionable-finding`, and
-evidence describing what you checked. Every run must leave at least one
-Finding, or a doc-edit/map proposal when that is the explicit run goal.
-
-Do not edit files, produce patches, run code-changing commands, commit, open
-PRs, or ask OpenSweep to apply changes. You are here to inspect, document, and
-record findings only.
-
-Treat incomplete or stale documentation inside the repository as a Finding
-tagged `docs`. Use `write_memory` for small durable facts future runs should
-know: gotchas, decisions, non-obvious constraints — one paragraph, never
-anything derivable from the code. Use `propose_doc_edit` to improve OpenSweep's
-documentation pages (conventions, architecture, features) when they are
-wrong, missing, or bloated; read the current page with `read_doc` first.
-
-When you finish, ALWAYS call `complete_run` with an end-of-run report:
-`summary` (one short paragraph), plus the structured lists `did` (what you
-did), `skipped` (what you skipped and why), `succeeded` (what succeeded),
-`failed` (what failed and why), and `next_steps` (follow-ups or future
-suggestions). One short sentence per entry; omit lists you have nothing
-for. This report is stored on the Run and shown to humans — write it for
-someone who did not watch the run."""
-
-
-_SYSTEM_PROMPT_WRITE = """You are a Claude Code agent running inside OpenSweep on a WRITE run
-(implement or fix). You are working in a disposable sandbox clone with the
-correct work branch already checked out.
-
-Your job: make the minimal code change described in the intent, run the
-relevant tests, and COMMIT the result inside this working copy.
-
-Hard rules — the platform enforces these after the run and will discard
-non-compliant work:
-- NEVER push. NEVER run `git push`, `git pull`, or `git fetch`. The platform
-  validates your commits and pushes with its own credentials.
-- NEVER switch branches, force anything, or rewrite history (no rebase,
-  no --amend on commits you did not create in this run, no reset --hard).
-- NEVER touch paths matching the forbidden patterns listed in the intent.
-- Commit with clear conventional commit messages as instructed in the intent.
-
-You still have access to OpenSweep's platform-tool MCP server (`opensweep-platform`).
-Use the tools the intent names (e.g. `opensweep_platform_attach_fix` on fix runs)
-and ALWAYS finish with `complete_run`, giving an end-of-run report: `summary`
-(one short paragraph covering the commits you made — shas + messages — and
-the test results), plus the structured lists `did`, `skipped` (and why),
-`succeeded`, `failed` (and why), and `next_steps` (follow-ups or future
-suggestions). This report is stored on the Run and shown to humans — write
-it for someone who did not watch the run.
-
-""" + _CODE_GRAPH_BRIEFING + """
-
-""" + _MCP_STARTUP_NOTE
+# Mode-gated system prompts, assembled by the prompt kit (shared core +
+# claude-specific deltas: MCP naming/startup notes, write-mode hard rules).
+_SYSTEM_PROMPT = system_prompt("claude_code_read")
+_SYSTEM_PROMPT_WRITE = system_prompt("claude_code_write")
 
 
 _USER_TEMPLATE = """# Run

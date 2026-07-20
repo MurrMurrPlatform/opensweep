@@ -323,6 +323,23 @@ _AGENT_BASES: dict[str, dict] = {
             "to each page's watch_paths."
         ),
     },
+    "run-campaign": {
+        "title": "OpenSweep agent — Run campaign",
+        "description": (
+            "Scheduling anchor for audit campaigns: bind it to a repository "
+            "with a cron trigger and each due tick plans + launches a campaign "
+            "from the binding's target (template/k/lens_keys/effort)."
+        ),
+        "produces": "findings",
+        "tags": ["opensweep-agent-base", "run-campaign"],
+        "body": (
+            "Scheduling anchor whose bindings launch audit campaigns: a due cron "
+            "tick plans a campaign from the binding's target (template, k, "
+            "lens_keys, effort, max_parallel) and launches it immediately. The "
+            "campaign's own area and global-sweep runs carry their instructions; "
+            "this prompt is never composed into a run."
+        ),
+    },
 }
 
 

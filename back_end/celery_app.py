@@ -28,6 +28,7 @@ app = Celery(
     include=[
         "domains.execution.tasks.cleanup_sandboxes",
         "domains.agents.tasks.schedule_tick",
+        "domains.campaigns.tasks.campaign_tick",
         "domains.runs.tasks.resume_paused",
         "domains.runs.tasks.reconcile_runs",
         "domains.delivery.tasks.sync_pull_requests",
@@ -56,6 +57,14 @@ app.conf.update(
         "agent-schedule-tick": {
             "task": "opensweep.agents.schedule_tick",
             "schedule": 60.0,  # every minute — finest cron resolution
+        },
+        # Advance running audit campaigns: mark finished parts, dispatch the
+        # next pending ones up to max_parallel, finalize completed ones. Only
+        # campaigns a user (or a due scheduled binding) explicitly launched
+        # are ever ticked forward — the tick itself starts nothing new.
+        "campaign-tick": {
+            "task": "opensweep.campaigns.tick",
+            "schedule": 60.0,  # every minute — parts chain promptly
         },
         # Quota pause/resume (PLATFORM_V2_DESIGN.md §8): the beat task only
         # SELECTS eligible paused runs and enqueues one

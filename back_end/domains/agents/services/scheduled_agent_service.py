@@ -35,9 +35,11 @@ AUDIT_STALE_TITLE = "Audit stale code"
 # it is the higher-frequency, higher-cost sweep.
 DEEP_ISSUE_HUNT_KEY = "deep-issue-hunt"
 SECURITY_AUDIT_KEY = "security-audit"
+RUN_CAMPAIGN_KEY = "run-campaign"
 DEEP_HUNT_WEEKLY_TITLE = "Weekly FULL deep issue hunt (Mon)"
 DEEP_HUNT_DAILY_TITLE = "Daily deep issue hunt (Tue–Sat)"
 SECURITY_AUDIT_WEEKLY_TITLE = "Weekly security audit (Mon)"
+ROTATION_CAMPAIGN_WEEKLY_TITLE = "Weekly rotation campaign"
 
 
 def validate_trigger(trigger: str) -> str:
@@ -262,6 +264,7 @@ async def _seed_binding(
     title: str,
     trigger: str,
     enabled: bool,
+    target: dict | None = None,
 ) -> ScheduledAgent | None:
     """Idempotent one-off: bind system agent `key` to a repo on `trigger`.
 
@@ -287,7 +290,7 @@ async def _seed_binding(
         repository_uid=repository_uid,
         title=title,
         trigger=trigger,
-        target={},  # empty = repo-wide
+        target=dict(target or {}),  # empty = repo-wide
         autonomy="ask-before-run",
         enabled=enabled,
         provenance="system",
@@ -303,19 +306,34 @@ async def seed_audit_agents(repository_uid: str) -> list[ScheduledAgent]:
     - Weekly security audit (Mondays 08:00)         — enabled.
     - Daily deep issue hunt (Tue–Sat 06:00)         — seeded DISABLED; flip
       `enabled` on to opt into the higher-frequency (higher-cost) daily sweep.
+    - Weekly rotation campaign (Mondays 07:00)      — seeded DISABLED; each
+      due tick plans + launches a rotation campaign over the k least-recently
+      covered areas (run-campaign anchor).
 
     All seed with autonomy="ask-before-run": an enabled binding's cron tick
     proposes a run for approval rather than auto-billing. Dial up to
     auto-run-cheap/auto-run-any for unattended operation.
     """
     seeded: list[ScheduledAgent] = []
-    for key, title, trigger, enabled in (
-        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_WEEKLY_TITLE, "cron:0 6 * * 1", True),
-        (SECURITY_AUDIT_KEY, SECURITY_AUDIT_WEEKLY_TITLE, "cron:0 8 * * 1", True),
-        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_DAILY_TITLE, "cron:0 6 * * 2-6", False),
+    for key, title, trigger, enabled, target in (
+        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_WEEKLY_TITLE, "cron:0 6 * * 1", True, {}),
+        (SECURITY_AUDIT_KEY, SECURITY_AUDIT_WEEKLY_TITLE, "cron:0 8 * * 1", True, {}),
+        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_DAILY_TITLE, "cron:0 6 * * 2-6", False, {}),
+        (
+            RUN_CAMPAIGN_KEY,
+            ROTATION_CAMPAIGN_WEEKLY_TITLE,
+            "cron:0 7 * * 1",
+            False,
+            {"template": "rotation", "k": 3},
+        ),
     ):
         s = await _seed_binding(
-            repository_uid, key=key, title=title, trigger=trigger, enabled=enabled
+            repository_uid,
+            key=key,
+            title=title,
+            trigger=trigger,
+            enabled=enabled,
+            target=target,
         )
         if s is not None:
             seeded.append(s)

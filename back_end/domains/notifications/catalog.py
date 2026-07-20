@@ -107,6 +107,19 @@ CATALOG: tuple[NotificationEvent, ...] = (
         "bar_chart",
     ),
     NotificationEvent(
+        "campaign.completed",
+        "Campaign completed",
+        "An audit campaign finished — all parts ran and the coverage digest is ready.",
+        "checkered_flag",
+    ),
+    NotificationEvent(
+        "campaign.failed",
+        "Campaign failed",
+        "An audit campaign ended with every part failing — its scope was not covered.",
+        "rotating_light",
+        CATEGORY_ATTENTION,
+    ),
+    NotificationEvent(
         "docs.exported",
         "Docs exported",
         "The documentation tree was exported (AGENTS.md PR).",
@@ -169,6 +182,8 @@ _KIND_MAP: dict[str, tuple[str, ...]] = {
     "sweep.auto_audit_completed": ("analysis.completed",),
     "sweep.deep_scan_completed": ("analysis.completed",),
     "sweep.generate_docs_completed": ("analysis.completed",),
+    "campaign.completed": ("campaign.completed",),
+    "campaign.failed": ("campaign.failed",),
     "docs.exported": ("docs.exported",),
     "news.filed": ("news.filed",),
     "repository.registered": ("repository.registered",),

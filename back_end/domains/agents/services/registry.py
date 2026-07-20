@@ -96,6 +96,7 @@ AGENT_KEYS = (
     "deep-scan",
     "generate-docs",
     "audit-stale",
+    "run-campaign",
 )
 
 
@@ -112,7 +113,7 @@ def stage_for_agent_key(key: str, playbook: str) -> str:
         return "discover"
     if k == "deep-scan":
         return "analysis"
-    if k in {"audit-stale"}:
+    if k in {"audit-stale", "run-campaign"}:
         return "ask"
     if k in STAGES:
         return k

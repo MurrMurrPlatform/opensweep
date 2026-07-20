@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 from domains.agents.models import Agent
+from domains.agents.schemas import OverlayMode
 
 OPENSWEEP_FRAMING_HEADER = """# Role
 
@@ -123,13 +124,13 @@ def build_intent(
     base = (custom_intent or prompt_body or platform_instructions or default_intent).strip()
     overlay_mode = (org_overlay_mode or "").strip().lower()
     overlay_body = (org_overlay_body or "").strip()
-    if overlay_mode == "replace" and overlay_body and not custom_intent:
+    if overlay_mode == OverlayMode.REPLACE and overlay_body and not custom_intent:
         base = overlay_body
     parts: list[str] = []
     if include_header:
         parts.append(OPENSWEEP_FRAMING_HEADER.strip())
     parts.append(base)
-    if overlay_mode == "append" and overlay_body:
+    if overlay_mode == OverlayMode.APPEND and overlay_body:
         parts.append(f"{ORG_GUIDANCE_HEADING}\n\n{overlay_body}")
     if repo_guidance_section.strip():
         parts.append(repo_guidance_section.strip())

@@ -35,6 +35,7 @@ from domains.executors.base import (
     DispatchResult,
     ExecutorAdapter,
 )
+from domains.executors.prompt_kit import stance_block, system_prompt
 from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
@@ -79,16 +80,18 @@ class InternalLLMAdapter(ExecutorAdapter):
         except Exception:
             prior = []
 
-        system_prompt = _SYSTEM_PROMPT
-        instruction = _instruction(req, prior=prior)
+        # Resolve the wall ceiling FIRST so the instruction can include the
+        # budget+stance block (which needs the actual ceiling value).
+        timeout = resolve_wall_ceiling(req, provider.kind)
+
+        sys_prompt = _SYSTEM_PROMPT
+        instruction = _instruction(req, prior=prior, wall_ceiling=timeout)
         await record_input(
             req.run_uid,
-            system_prompt=system_prompt,
+            system_prompt=sys_prompt,
             instruction=instruction,
         )
         append_event(req.run_uid, "user_message", text=instruction)
-
-        timeout = resolve_wall_ceiling(req, provider.kind)
 
         # on_chunk delivers the running TOTAL per stream; the transcript wants
         # only the new tail, as assistant_text chunks (merged in the UI).
@@ -112,7 +115,7 @@ class InternalLLMAdapter(ExecutorAdapter):
         try:
             inv = await invoke_provider(
                 provider,
-                system_prompt=system_prompt,
+                system_prompt=sys_prompt,
                 instruction=instruction,
                 timeout_seconds=timeout,
                 on_chunk=_on_chunk,
@@ -208,85 +211,17 @@ class InternalLLMAdapter(ExecutorAdapter):
         )
 
 
-_SYSTEM_PROMPT = """You are an investigative agent inside OpenSweep — a tracking-only repo
-intelligence platform. You have:
-
-  - READ tools — file/code readers (read_code, trace, prior_findings),
-    OpenSweep-data readers (opensweep_list_findings, opensweep_search_findings,
-    opensweep_get_finding), docs/memory readers (list_docs, read_doc,
-    search_memory), and news/web readers (list_news_items, list_interests,
-    web_search, fetch_url). Request them via your `tool_calls` envelope.
-  - WRITE tools — the platform tool surface: create_finding, update_finding,
-    propose_doc_edit, confirm_doc_current, write_memory, attach_artifact,
-    complete_run, and create_news_item (only when the intent asks for a news
-    scan; news→finding conversion is human-only).
-  - DEEP-SCAN tools — when the run's intent asks you to author an Analysis
-    (a whole-repo report), use upsert_analysis (verdict + scorecard),
-    set_analysis_section (one report section per call), add_analysis_note
-    (coverage/strength/validation rows), and ask_question (unresolved
-    questions for a human). Ignore these on runs that don't ask for a report.
-
-# Look-before-write contract (non-optional)
-
-Before any WRITE tool, you MUST:
-  1. SEARCH for what already exists (`opensweep_list_*` / `opensweep_search_*`).
-  2. For each plausible match, GET its full detail (`opensweep_get_*`).
-  3. DECIDE explicitly: skip (already covered) / update (refresh the
-     existing entry) / merge (two existing entries describe one thing) /
-     create (genuinely new) / supersede (existing is now wrong).
-  4. CALL the write tool, including `evidence.rationale` stating your choice
-     ("create — no doc page covers queue workers yet" or
-     "update of uid=abc123 — same subject, refined description").
-
-Skip step 1/2 only when you are explicitly asked to read no OpenSweep state (rare).
-
-Do not edit repository files, create patches, commit changes, or suggest that
-OpenSweep can apply code changes. Record bugs, gaps, and improvements only. Treat
-missing or stale documentation inside the repository as a `create_finding`
-tagged `docs`. Use `write_memory` for small durable facts future runs should
-know: gotchas, decisions, non-obvious constraints — one paragraph, never
-anything derivable from the code. Use `propose_doc_edit` to improve OpenSweep's
-documentation pages (conventions, architecture, features) when they are
-wrong, missing, or bloated; read the current page with `read_doc` first.
-
-Respond with ONE JSON object at the end of your message:
-
-```json
-{
-  "summary": "<one-line summary>",
-  "tool_calls": [
-    {"tool": "create_finding", "args": {...}},
-    ...,
-    {"tool": "complete_run", "args": {
-      "summary": "<one short paragraph on the run outcome>",
-      "did": ["<what you did>"],
-      "skipped": ["<what you skipped and why>"],
-      "succeeded": ["<what succeeded>"],
-      "failed": ["<what failed and why>"],
-      "next_steps": ["<follow-ups or future suggestions>"]
-    }}
-  ]
-}
-```
-
-Always end the tool_calls with that `complete_run` entry — one short sentence
-per list item, omitting lists you have nothing for. It is stored on the Run
-and shown to humans who did not watch the run.
-
-The platform will execute each tool_call in order, server-side. Use full,
-valid args. Do NOT speculate about whether a tool succeeded — just queue
-the calls.
-
-Your JSON envelope MUST contain durable OpenSweep output. Include
-`create_finding` for each bug, docs gap, stale assumption, missing capability,
-or improvement you discover. If you find no actionable issue, include one
-low-severity `create_finding` observation with subtype
-`no-actionable-finding` and evidence describing what you checked. Do not
-finish with an empty `tool_calls` array.
-"""
+# Assembled by the prompt kit: shared core + the internal_llm delta (three
+# tool groups rendered from the registry, JSON envelope output contract).
+_SYSTEM_PROMPT = system_prompt("internal_llm")
 
 
-def _instruction(req: DispatchRequest, *, prior: list[dict[str, Any]]) -> str:
+def _instruction(
+    req: DispatchRequest,
+    *,
+    prior: list[dict[str, Any]],
+    wall_ceiling: int | None = None,
+) -> str:
     return _USER_TEMPLATE.format(
         intent=req.intent,
         mode=req.mode.value,
@@ -296,6 +231,7 @@ def _instruction(req: DispatchRequest, *, prior: list[dict[str, Any]]) -> str:
         repository_uid=req.repository_uid,
         prior=json.dumps(prior, indent=2),
         read_tools=", ".join(read_tool_names()),
+        budget=stance_block(req.policy, wall_ceiling, req.effort),
     )
 
 
@@ -326,6 +262,8 @@ mode:           {mode}
 # Read tools available
 
 {read_tools}
+
+{budget}
 
 # Instructions
 

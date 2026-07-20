@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from domains.agents.schemas import OverlayMode
 from logging_config import logger
 
 # Agent key → workflow stage whose per-repo prompt stacks as repo guidance.
@@ -209,10 +210,10 @@ async def chat_instruction_layers(org_uid: str) -> str:
     if base is None:
         base = agent_base_fallback("chat")
     _agent, override = await _resolve_override(org_uid, "chat")
-    if override is not None and (override.mode or "") == "replace":
+    if override is not None and (override.mode or "") == OverlayMode.REPLACE:
         base = override.body or ""
     parts = [p for p in [(base or "").strip()] if p]
-    if override is not None and (override.mode or "") == "append" and (override.body or "").strip():
+    if override is not None and (override.mode or "") == OverlayMode.APPEND and (override.body or "").strip():
         parts.append(f"{ORG_GUIDANCE_HEADING}\n\n{override.body.strip()}")
     return "\n\n".join(parts)
 

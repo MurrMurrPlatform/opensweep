@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from domains.runs.services.audit_selection import PageInfo, rank_targets
+from domains.runs.services.audit_selection import PageInfo, path_recency, rank_targets
 
 NOW = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
 
@@ -52,3 +52,36 @@ def test_limit_truncates_and_zero_is_safe():
     pages = [_page(f"p{i}") for i in range(5)]
     assert len(rank_targets(pages, limit=2)) == 2
     assert rank_targets(pages, limit=0) == []
+
+
+# ── path_recency (campaign rotation input) ───────────────────────────────────
+
+
+def _stamp(paths, *, checked, outcome="clean"):
+    return {"covered_paths": paths, "checked_at": checked, "outcome": outcome}
+
+
+def test_path_recency_keeps_the_latest_stamp_per_exact_path():
+    old, new = NOW - timedelta(days=10), NOW - timedelta(days=1)
+    out = path_recency(
+        [
+            _stamp(["a.py", "b.py"], checked=old),
+            _stamp(["b.py"], checked=new, outcome="findings"),
+        ]
+    )
+    assert out == {"a.py": old, "b.py": new}
+
+
+def test_path_recency_ignores_failed_stamps():
+    out = path_recency(
+        [
+            _stamp(["a.py"], checked=NOW, outcome="failed"),
+            _stamp(["b.py"], checked=NOW - timedelta(days=5)),
+        ]
+    )
+    assert out == {"b.py": NOW - timedelta(days=5)}
+
+
+def test_path_recency_skips_stamps_without_a_timestamp():
+    assert path_recency([_stamp(["a.py"], checked=None)]) == {}
+    assert path_recency([]) == {}

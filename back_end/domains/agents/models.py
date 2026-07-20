@@ -44,6 +44,8 @@ from neomodel import (
     StringProperty,
 )
 
+from domains.agents.schemas import OverlayMode
+
 AGENT_PROVENANCES = {"system", "user", "imported"}
 
 # What an Agent produces — the user-facing replacement for job_type AND for
@@ -64,7 +66,9 @@ PRODUCES = {
 # service with a clear 422.
 AGENT_PROMPT_MAX_BYTES = 32 * 1024
 
-OVERRIDE_MODES = {"append", "replace"}
+# Derived from the OverlayMode enum so the model constant and the DTO/service
+# validation surface can never disagree.
+OVERRIDE_MODES = {mode.value for mode in OverlayMode}
 
 # Agent.reasoning values — "" = inherit from the effort tier.
 REASONING_LEVELS = {"", "low", "medium", "high"}

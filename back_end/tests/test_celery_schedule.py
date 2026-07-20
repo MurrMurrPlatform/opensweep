@@ -35,3 +35,13 @@ def test_global_limits_unchanged_for_ticks():
 
 def test_beat_scan_task_registered():
     assert app.tasks.get("opensweep.runs.resume_paused_runs") is not None
+
+
+def test_campaign_tick_is_scheduled_every_minute():
+    import domains.campaigns.tasks.campaign_tick as campaign_tick_module  # noqa: F401 — registers task
+
+    entry = app.conf.beat_schedule.get("campaign-tick")
+    assert entry is not None, "campaign tick must be beat-scheduled or parts never chain"
+    assert entry["task"] == "opensweep.campaigns.tick"
+    assert entry["schedule"] == 60.0
+    assert app.tasks.get("opensweep.campaigns.tick") is not None

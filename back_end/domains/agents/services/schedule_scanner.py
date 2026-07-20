@@ -99,6 +99,44 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
                 extra={"tag": "schedule"},
             )
             continue
+        if key == "run-campaign":
+            # Campaign anchor: a due tick plans + launches a campaign from
+            # the binding's target instead of dispatching a single run. A
+            # scheduled campaign is pre-approved — launch immediately;
+            # `disabled` stays the kill-safety even with a cron set.
+            if (sa.autonomy or "") == "disabled":
+                sa.last_scheduled_at = moment
+                await sa.save()
+                continue
+            from domains.campaigns.schemas import CreateCampaignRequest
+            from domains.campaigns.services import campaign_service
+
+            tgt = dict(sa.target or {})
+            try:
+                campaign = await campaign_service.create(
+                    sa.repository_uid,
+                    CreateCampaignRequest(
+                        template=str(tgt.get("template") or "rotation"),
+                        k=int(tgt.get("k") or 3),
+                        lens_keys=[str(k) for k in (tgt.get("lens_keys") or [])],
+                        effort=str(tgt.get("effort") or ""),
+                        max_parallel=int(tgt.get("max_parallel") or 2),
+                    ),
+                    created_by=f"scheduled-agent:{sa.uid}",
+                    trigger_provenance=sa.trigger or "",
+                )
+                await campaign_service.launch(campaign.uid)
+            except Exception as exc:  # noqa: BLE001 — one bad repo never stops the scan
+                result.errors.append(f"{sa.uid}: {type(exc).__name__}: {exc}")
+                continue
+            sa.last_scheduled_at = moment
+            await sa.save()
+            result.dispatched += 1
+            logger.info(
+                f"schedule campaign sa={sa.uid} expr={payload} campaign={campaign.uid}",
+                extra={"tag": "schedule"},
+            )
+            continue
         try:
             await trigger_scheduled_agent(
                 sa.uid,

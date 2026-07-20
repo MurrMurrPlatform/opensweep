@@ -14,7 +14,7 @@ from domains.agents.services.seed_variants import _VARIANTS, variant_source_url
 
 def test_bases_cover_every_agent_key_exactly():
     assert set(_AGENT_BASES) == set(AGENT_KEYS)
-    assert len(AGENT_KEYS) == 12
+    assert len(AGENT_KEYS) == 13  # + run-campaign (campaign scheduling anchor)
 
 
 def test_base_specs_are_well_formed():

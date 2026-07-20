@@ -218,6 +218,24 @@ def test_extract_envelope_requires_tool_calls_key():
     assert extract_envelope("") is None
 
 
+def test_extract_envelope_bare_array_wraps_as_tool_calls():
+    env = extract_envelope('narration [{"tool": "create_finding", "args": {}}]')
+    assert env == {"tool_calls": [{"tool": "create_finding", "args": {}}]}
+
+
+def test_extract_envelope_fenced_array_wraps_as_tool_calls():
+    text = 'prose\n```json\n[{"tool": "complete_run", "args": {}}]\n```\n'
+    env = extract_envelope(text)
+    assert env == {"tool_calls": [{"tool": "complete_run", "args": {}}]}
+
+
+def test_extract_envelope_object_wins_over_its_inner_array():
+    """The array INSIDE {"tool_calls": [...]} must not shadow its envelope —
+    the object carries the summary the adapters harvest."""
+    env = extract_envelope('{"summary": "s", "tool_calls": [{"tool": "x", "args": {}}]}')
+    assert env is not None and env.get("summary") == "s"
+
+
 # ── Wall-kill detection (audit #33) + ceiling_warnings (Task 5) ──────────
 
 

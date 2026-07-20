@@ -51,6 +51,9 @@ async def dispatch_agent(
     trigger: RunTrigger = RunTrigger.MANUAL,
     triggered_by: str = "",
     title: str = "",
+    # Extra code-owned structural material appended after the scope block
+    # (e.g. a campaign's escalation digest) — same slot, never displaceable.
+    structural_extra: str = "",
 ):
     """Compose and dispatch one run of an Agent on a repository."""
     from domains.run_policies.services.effort import ensure_policy_for_effort
@@ -69,13 +72,16 @@ async def dispatch_agent(
     target = dict(target or {})
 
     is_system = (agent.provenance or "") == "system" and key
+    structural = _scope_summary(target)
+    if structural_extra.strip():
+        structural = f"{structural}\n\n{structural_extra.strip()}"
     composed = await compose_agent_intent(
         repository_uid=repository_uid,
         agent_key=key if is_system else playbook,
         # A user/imported agent's own prompt takes the instructions slot; a
         # system agent's prompt IS the platform base and resolves by key.
         prompt_body=None if is_system else (agent.prompt or ""),
-        structural=_scope_summary(target),
+        structural=structural,
     )
 
     resolved_effort = (effort or agent.default_effort or "normal").strip()

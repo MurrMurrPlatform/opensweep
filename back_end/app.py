@@ -476,6 +476,8 @@ def _include_routers(application: FastAPI):
         "api.v1.run_policies",
         # Lenses — the decomposed audit vocabulary (read for all, admin tuning)
         "api.v1.lenses",
+        # Campaigns — partitioned whole-repo audit efforts (plan/launch/tick)
+        "api.v1.campaigns",
         "api.v1.platform_tools",
         "api.v1.platform_read",
         "api.v1.audit",

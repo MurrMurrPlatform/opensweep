@@ -103,3 +103,36 @@ async def select_audit_targets(repository_uid: str, *, limit: int = 3) -> list[A
         if d.uid not in in_flight
     ]
     return rank_targets(pages, limit=limit)
+
+
+def path_recency(stamps: list[dict]) -> dict[str, datetime]:
+    """Per-path coverage recency: the latest non-failed stamp covering each
+    EXACT path. Pure — stamps are {covered_paths, checked_at, outcome} dicts
+    (a failed look never counts as coverage)."""
+    out: dict[str, datetime] = {}
+    for stamp in stamps:
+        if (stamp.get("outcome") or "") == "failed":
+            continue
+        checked_at = stamp.get("checked_at")
+        if not checked_at:
+            continue
+        for raw in stamp.get("covered_paths") or []:
+            path = str(raw)
+            prev = out.get(path)
+            if prev is None or checked_at > prev:
+                out[path] = checked_at
+    return out
+
+
+async def coverage_recency_for(repository_uid: str) -> dict[str, datetime]:
+    """path_recency over the repository's Checked stamps — campaign rotation
+    planning ranks areas by their least-recently-covered scope path."""
+    stamps = [
+        {
+            "covered_paths": list(c.covered_paths or []),
+            "checked_at": c.checked_at,
+            "outcome": c.outcome or "",
+        }
+        for c in await Checked.nodes.filter(repository_uid=repository_uid)
+    ]
+    return path_recency(stamps)
