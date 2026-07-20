@@ -60,6 +60,21 @@ class LLMProvider(AsyncStructuredNode):
     # TODO(encryption-at-rest): wrap this in a KMS-backed seal before production use.
     credential_secret = StringProperty(default="")
 
+    # Codex-subscription credential lifecycle (see
+    # docs/superpowers/specs/2026-07-20-codex-subscription-token-refresh-design.md).
+    # Codex owns the rotating-refresh-token exchange; OpenSweep serializes turns
+    # per subscription and persists codex's rotated auth.json back here under a
+    # compare-and-swap on `credential_revision` (monotonic — a mid-turn write-back
+    # that loses the CAS never clobbers a credential the user just re-pasted).
+    credential_revision = IntegerProperty(default=0)
+    # True once codex reports the refresh token is permanently dead (revoked /
+    # rotated away): the user must re-paste ~/.codex/auth.json. Cleared on save.
+    needs_reauth = BooleanProperty(default=False)
+    # True when a turn was interrupted while codex may have been mid-rotation, so
+    # the durable token's health is unknown (distinct from a confirmed-dead token
+    # — never blindly reauth from this). Cleared on save.
+    auth_state_uncertain = BooleanProperty(default=False)
+
     last_health_check_at = DateTimeProperty()
     last_health_status = StringProperty(default="unknown")  # ok | degraded | unreachable | unknown
     last_health_detail = StringProperty(default="")

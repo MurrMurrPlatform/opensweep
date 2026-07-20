@@ -119,33 +119,42 @@ release lock
 The lock is **not** released when codex exits but before write-back — the final
 persistence is part of the refresh transaction.
 
-### 2. Coordination (fail closed for rotating creds)
+### 2. Coordination — a Neo4j lease (globally effective, fail-closed by construction)
 
-- **Distributed single-flight lock** per provider via Redis, modeled on
-  `infrastructure/github_app.py`'s `SET key token NX EX` + compare-and-delete
-  release. Because a turn can run for minutes (up to `TURN_TIMEOUT_SECONDS`), the
-  lease TTL is short and **renewed by a background task** while the turn runs;
-  the lock is released (CAS-delete) in a `finally` path.
-- **Credential-revision fencing.** Add `LLMProvider.credential_revision`
-  (monotonic). Persistence is a **conditional Cypher CAS**:
+**Implementation refinement over the reviewed plan:** rather than a Redis lock
+with a per-process fallback, the per-provider lease is a **Neo4j lock node**,
+modeled on the existing `infrastructure/seeding/lock.py` (`MERGE` a
+`CodexCredLock {id: <provider uid>}`, taken only when
+`holder IS NULL OR expires_at < timestamp()`, self-expiring TTL). Coordination
+therefore lives in the **same durable store as the credential**: if Neo4j is
+unreachable no turn runs at all, so there is no split-brain window and no
+local-lock fallback to get wrong — it is fail-closed by construction, strictly
+stronger than "Redis normally, fail closed if Redis is down." A crashed holder's
+lease self-expires after the TTL.
+
+- Because a turn can run up to `TURN_TIMEOUT_SECONDS` (3600) while the lease TTL
+  is short (120s), a **background task renews** the lease while the turn runs; the
+  lease is released in a `finally` path (only by the holder — `WHERE holder =
+  $token`).
+- A queued turn waits up to a short, configurable budget
+  (`OPENSWEEP_CODEX_LOCK_WAIT_SECONDS`, default 120s) for the subscription, then
+  returns a **retryable 503** — a request never blocks for a whole long turn. The
+  wait is cancellable.
+- **Credential-revision fencing.** `LLMProvider.credential_revision` (monotonic).
+  Persistence is a **conditional Cypher CAS**:
 
   ```cypher
   MATCH (p:LLMProvider {uid: $uid})
-  WHERE p.credential_revision = $expected_revision
-  SET p.credential_secret = $sealed, p.credential_revision = $expected_revision + 1
-  RETURN p
+  WHERE coalesce(p.credential_revision, 0) = $expected_revision
+  SET p.credential_secret = $sealed, p.credential_revision = $expected_revision + 1,
+      p.needs_reauth = false, p.auth_state_uncertain = false
+  RETURN p.credential_revision
   ```
 
-  The revision represents the **credential**, not general provider-row updates.
-  A CAS miss means the user replaced the credential (or a peer persisted) during
-  the turn → do not overwrite; log and drop the stale write-back.
-- **Fail closed.** OpenSweep is on **Neo4j**, which has no clean advisory-lock
-  primitive, so there is no DB-lock fallback. If globally effective coordination
-  (Redis) is unavailable **at the point refresh coordination is needed**, fail the
-  turn with a **retryable infrastructure error before launching codex** — never
-  degrade to a per-process `asyncio.Lock` in a possibly-multi-replica deployment.
-  A per-process lock is acceptable *only* when the deployment is explicitly
-  configured single-replica.
+  The revision represents the **credential**, not general provider-row updates. A
+  CAS miss means the user re-pasted (which bumps the revision) or a peer persisted
+  during the turn → the stale write-back is dropped, never overwriting the newer
+  value.
 
 ### 3. Write-back rules
 
@@ -223,24 +232,33 @@ caches; alert on reused-token errors immediately following an interrupted turn.
 - Optional configurable per-subscription queue depth limit.
 - Different provider rows are unaffected and run fully in parallel.
 
-### 8. Integration points
+### 8. Integration points (as built)
 
-- **`runs/services/turn_service.py`** (`_build_subprocess_turn` + the subprocess
-  lifecycle around `proc.wait()`, lines ~257-383): for `executor == "codex"` with a
-  stored subscription secret, acquire the per-provider lock (with wait-cancellation)
-  before seeding; start the lease-renewal task; run the turn; in the `finally`
-  path, read back + validate + CAS-persist `auth.json`; release the lock. Fail
-  closed if coordination is unavailable.
-- **`llm_providers/services/runtime_env.build_runtime` / `turn_cli.codex_turn_env`:**
-  seed `CODEX_HOME/.codex/auth.json` from the DB credential at the read revision.
-  Since turns are serialized per provider, the deterministic per-provider
-  `CODEX_HOME` now has a single writer at a time. `home_override` unchanged;
-  read-back happens before any dir cleanup.
-- **`infrastructure/`**: a small per-subscription lease/lock helper (Redis
-  `SET NX EX` + renewal + CAS-delete) reused from / modeled on `github_app.py`.
-- **`domains/llm_providers/services/codex_auth.py`** (new): `parse_document`,
-  `account_id`, `validate(seed, result)`, `merge_rotated_fields(seed, result)`,
-  `seal_and_cas_persist(provider, blob, expected_revision)`. No OAuth HTTP client.
+- **`runs/services/turn_service.py`**: `run_turn` loads the provider and wraps the
+  turn in `async with codex_credential.codex_credential_txn(provider)`, delegating
+  the body (workspace prep → subprocess spawn/stream → finalize) to a new
+  `_run_turn_body` async generator via `contextlib.aclosing`. `aclosing`
+  guarantees the codex subprocess is torn down **before** the transaction reads
+  `auth.json` back. A 503 from the lease frees the reserved slot and propagates.
+  The codex re-auth message is detected at finalize and turned into an actionable
+  error + `mark_needs_reauth`.
+- **`domains/llm_providers/services/codex_credential.py`** (new): the transaction
+  — Neo4j per-provider lease (`CodexCredLock`) with renewal + cancellable wait,
+  seed-baseline write under the lease, and the read-back + `decide_write_back` +
+  revision-CAS persist. `is_codex_managed`, `mark_needs_reauth`.
+- **`domains/llm_providers/services/codex_auth.py`** (new): pure parse/validate/
+  compare helpers + `decide_write_back` (PERSIST / NOOP / UNCERTAIN /
+  REJECT_ACCOUNT) + `looks_like_reauth`. No OAuth HTTP client — the stored
+  document is codex's own file, persisted verbatim (lossless).
+- **`runtime_env` / `turn_cli.codex_turn_env`**: unchanged seeding — it re-seeds
+  `CODEX_HOME/.codex/auth.json` from `provider.credential_secret`, which the
+  transaction refreshed to the current revision under the lease. Since turns are
+  serialized per provider, the deterministic per-provider `CODEX_HOME` has a
+  single writer at a time.
+- **`models.py` / `schemas.py` / `llm_provider_service.py`**: `credential_revision`,
+  `needs_reauth`, `auth_state_uncertain` on the node; the two flags surfaced in the
+  DTO; a credential re-paste clears the flags and bumps the revision (invalidating
+  any in-flight write-back CAS). Migration `m0009` initializes existing rows.
 
 ### 9. Version pinning
 
@@ -309,6 +327,23 @@ Follow existing patterns in `tests/test_codex_continuation.py`,
 - No data migration for existing stored blobs: initialize `credential_revision`
   to 0; on the first serialized run the credential refreshes (or surfaces
   `needs_reauth`) and CAS-persists.
+
+## v1 scope vs. deferred
+
+**Built in this change:** the Neo4j per-subscription lease (+ renewal +
+cancellable bounded wait → 503), seed-under-lease, read-back + revision-CAS
+write-back on every exit path, the account-id / lossless / uncertain guards,
+`needs_reauth` detection from codex output, the three `LLMProvider` fields + DTO
+exposure + flag-clear-on-resave, migration `m0009`, codex version pin, and unit
+tests for the pure helpers and the lease/CAS/write-back logic (fake `adb`).
+
+**Deferred (follow-up):** the richer operational UX from §7 — a streamed
+"waiting for another run using this Codex subscription" status event (the context
+manager can't yield), separate lock-wait vs. execution telemetry, and a
+configurable per-subscription queue-depth limit; the **front-end badge** for
+`needs_reauth` / `auth_state_uncertain` (the API exposes both fields; the Vue
+badge is not yet wired); and the **app-server external-token fast-follow**. None
+affect correctness of the v1 mechanism.
 
 ## Decision record
 

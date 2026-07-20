@@ -42,6 +42,9 @@ class LLMProviderDTO(BaseModel):
     fallback_priority: int = 100  # §8 fallback chain — lower runs first
     notes: str = ""
     has_credential_secret: bool = False   # never returns the secret itself
+    # Codex-subscription credential state (see codex token-refresh design).
+    needs_reauth: bool = False             # refresh token dead — re-paste auth.json
+    auth_state_uncertain: bool = False     # health unknown after an interrupted turn
     last_health_check_at: datetime | None = None
     last_health_status: LLMProviderHealth = LLMProviderHealth.UNKNOWN
     last_health_detail: str = ""

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -30,6 +31,9 @@ from fastapi import HTTPException
 from config import settings
 from domains.executors.mcp_bridge import claude_env, codex_mcp_overrides, write_claude_mcp_config
 from domains.executors.stream_events import ClaudeStreamTranslator, stream_event_delta
+from domains.llm_providers.models import LLMProvider
+from domains.llm_providers.services import codex_auth, codex_credential
+from domains.llm_providers.services.credentials import provider_secret
 from domains.runs.models import Run
 from domains.runs.schemas import FOLLOW_UP_STATUSES, RunStatus
 from domains.runs.services import playbooks as playbook_registry
@@ -47,8 +51,6 @@ from domains.runs.services.turn_cli import (
     extract_claude_meta,
     parse_codex_deltas,
 )
-from domains.llm_providers.models import LLMProvider
-from domains.llm_providers.services.credentials import provider_secret
 from infrastructure.audit import write_audit
 from infrastructure.code_graph import CODE_GRAPH_PROMPT, code_graph_available
 from infrastructure.process_tree import kill_tree, process_group_kwargs, terminate_tree
@@ -207,6 +209,33 @@ class TurnService:
         if (run.status or "") == RunStatus.QUEUED.value:
             run = await self._wait_for_chat_prep(uid)
 
+        provider = (
+            await LLMProvider.nodes.get_or_none(uid=run.provider_uid)
+            if run.provider_uid
+            else None
+        )
+        # Codex subscriptions serialize per credential and durably persist any
+        # rotation codex performs during the turn (inert for every other
+        # provider — see codex_credential.codex_credential_txn).
+        try:
+            async with codex_credential.codex_credential_txn(provider):
+                # aclosing guarantees the body (and its codex subprocess) is torn
+                # down BEFORE the transaction reads auth.json back for write-back.
+                async with aclosing(self._run_turn_body(uid, text, run, provider)) as _body:
+                    async for _ev in _body:
+                        yield _ev
+        except HTTPException:
+            # Subscription lease unavailable (or another pre-spawn HTTP error):
+            # free the reserved turn slot so follow-ups don't 409 forever.
+            if _RUNNING.get(uid) is _STARTING:
+                _RUNNING.pop(uid, None)
+            raise
+
+    async def _run_turn_body(
+        self, uid: str, text: str, run, provider
+    ) -> AsyncGenerator[dict, None]:
+        """The turn body — workspace prep, subprocess spawn/stream, finalize —
+        wrapped by run_turn in the codex-subscription credential transaction."""
         turn_no = int(run.turns or 0) + 1
         deltas: list[str] = []
         result_text: str | None = None
@@ -218,12 +247,6 @@ class TurnService:
         proc: asyncio.subprocess.Process | None = None
         setup_ok = False
         try:
-            provider = (
-                await LLMProvider.nodes.get_or_none(uid=run.provider_uid)
-                if run.provider_uid
-                else None
-            )
-
             # Ensure the workspace BEFORE flipping to running — recreation is
             # a clone and can fail; the run must stay followable.
             cwd: str | None = None
@@ -397,6 +420,21 @@ class TurnService:
             stderr_tail = "".join(stderr_parts)[-2000:]
             program = argv[0] if argv else (run.executor or "agent")
             error_detail = f"{program} exited {exit_code}" + (f": {stderr_tail}" if stderr_tail else "")
+        # A codex subscription whose refresh token is permanently dead surfaces
+        # as a re-auth message in codex's output — flag the provider so the UI
+        # can prompt for a fresh ~/.codex/auth.json, and make the run error
+        # actionable rather than a raw exit code.
+        if (
+            error_detail
+            and (run.executor or "") == "codex"
+            and codex_credential.is_codex_managed(provider)
+            and codex_auth.looks_like_reauth(error_detail)
+        ):
+            await codex_credential.mark_needs_reauth(provider.uid)
+            error_detail = (
+                "Your Codex subscription needs re-authentication: run `codex login` "
+                "on your machine and re-paste ~/.codex/auth.json into the provider."
+            )
         if error_detail:
             yield {"type": "error", "detail": error_detail}
         yield {"type": "message_complete", "content": content, "interrupted": interrupted}

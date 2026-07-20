@@ -151,6 +151,13 @@ class LLMProviderService:
             if field == "credential_secret":
                 # Credentials are sealed at rest (infrastructure/secretbox.py).
                 value = sealed_secret(value or "")
+                # A re-paste clears any dead/uncertain state and bumps the
+                # credential revision, so a codex write-back still in flight
+                # from a prior turn loses its compare-and-swap and cannot
+                # clobber the credential the user just supplied.
+                n.needs_reauth = False
+                n.auth_state_uncertain = False
+                n.credential_revision = int(getattr(n, "credential_revision", 0) or 0) + 1
             setattr(n, field, value)
         if not (n.cli_command_template or "").strip():
             # Clearing the template (or switching kind without one) means
@@ -246,6 +253,8 @@ def _to_dto(n: LLMProvider) -> LLMProviderDTO:
         fallback_priority=int(getattr(n, "fallback_priority", None) or 100),
         notes=n.notes or "",
         has_credential_secret=bool((n.credential_secret or "").strip()),
+        needs_reauth=bool(getattr(n, "needs_reauth", False)),
+        auth_state_uncertain=bool(getattr(n, "auth_state_uncertain", False)),
         last_health_check_at=n.last_health_check_at,
         last_health_status=n.last_health_status or "unknown",
         last_health_detail=n.last_health_detail or "",
