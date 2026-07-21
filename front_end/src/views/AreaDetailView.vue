@@ -14,7 +14,7 @@ import {
 import { useAreaStore } from '@/stores/areaStore'
 import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
-import { areaKindVariant, areaStaleTitle } from '@/lib/areas'
+import { areaKindHelp, areaKindVariant, areaStaleTitle } from '@/lib/areas'
 import { formatRelativeTime } from '@/lib/utils'
 import AreaEditDialog from '@/components/areas/AreaEditDialog.vue'
 import AreaEditReviewCard from '@/components/areas/AreaEditReviewCard.vue'
@@ -241,7 +241,7 @@ async function confirmDelete() {
                 <span :class="{ 'text-foreground': i === keySegments.length - 1 }">{{ seg }}</span>
               </template>
             </span>
-            <Badge :variant="areaKindVariant(area.kind)" class="px-1.5 text-[10px]">{{ area.kind }}</Badge>
+            <Badge :variant="areaKindVariant(area.kind)" class="px-1.5 text-[10px]" :title="areaKindHelp(area.kind)">{{ area.kind }}</Badge>
             <span
               v-if="area.stale"
               class="h-2 w-2 shrink-0 rounded-full bg-amber-500"

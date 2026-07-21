@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   FolderTree,
+  HelpCircle,
   Map as MapIcon,
   TriangleAlert,
   X,
@@ -15,7 +16,7 @@ import { useCampaignStore } from '@/stores/campaignStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
-import { areaStaleTitle } from '@/lib/areas'
+import { AREA_KIND_HELP, areaStaleTitle } from '@/lib/areas'
 import AreaEditReviewCard from '@/components/areas/AreaEditReviewCard.vue'
 import { MarkdownView } from '@/components/ui/markdown'
 import { PageHeader } from '@/components/ui/page-header'
@@ -466,7 +467,10 @@ async function confirmResolveAll() {
         <!-- ── Partition: the subsystem tree ─────────────────────────────── -->
         <Card>
           <CardHeader class="flex-row items-center justify-between space-y-0">
-            <CardTitle class="text-base">Partition</CardTitle>
+            <CardTitle class="flex items-center gap-1.5 text-base">
+              Partition
+              <HelpCircle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" :title="AREA_KIND_HELP.subsystem" />
+            </CardTitle>
             <span class="text-xs text-muted-foreground">
               {{ subsystems.length }} subsystem area{{ subsystems.length === 1 ? '' : 's' }}
             </span>
@@ -558,7 +562,10 @@ async function confirmResolveAll() {
         <!-- ── Features: cross-cutting spec overlays ─────────────────────── -->
         <Card v-if="features.length">
           <CardHeader class="flex-row items-center justify-between space-y-0">
-            <CardTitle class="text-base">Features</CardTitle>
+            <CardTitle class="flex items-center gap-1.5 text-base">
+              Features
+              <HelpCircle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" :title="AREA_KIND_HELP.feature" />
+            </CardTitle>
             <span class="text-xs text-muted-foreground">
               {{ features.length }} overlay{{ features.length === 1 ? '' : 's' }} — audited against their spec, on top of the partition
             </span>
@@ -620,7 +627,10 @@ async function confirmResolveAll() {
           <CardContent class="p-0">
             <details>
               <summary class="cursor-pointer select-none px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground">
-                Ignored ({{ ignored.length }}) — not auditable; the reason lives in the spec
+                <span class="inline-flex items-center gap-1.5">
+                  Ignored ({{ ignored.length }}) — not auditable; the reason lives in the spec
+                  <HelpCircle class="h-3.5 w-3.5 shrink-0" :title="AREA_KIND_HELP.ignore" />
+                </span>
               </summary>
               <ul class="divide-y divide-border border-t border-border">
                 <li v-for="a in ignored" :key="a.uid">

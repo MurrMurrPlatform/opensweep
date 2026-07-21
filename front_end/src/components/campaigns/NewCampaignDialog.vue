@@ -313,6 +313,9 @@ async function create() {
             <p v-if="template === 'rotation' && areaCount" class="mt-1 pl-5 text-xs text-muted-foreground">
               Rotation covers {{ rotationCovers }} of {{ areaCount }} areas this pass.
             </p>
+            <p v-if="previewSource === 'area-map'" class="mt-1 pl-5 text-xs text-muted-foreground">
+              Small sibling areas are bundled into shared runs at plan time — the final run count appears on the plan.
+            </p>
             <CollapsibleContent>
               <ul class="mt-2 max-h-48 space-y-0.5 overflow-y-auto pl-5">
                 <li
@@ -332,6 +335,9 @@ async function create() {
 
         <div class="space-y-1.5">
           <Label>{{ template === 'focused' ? 'Lens' : 'Lenses' }}</Label>
+          <p class="text-xs text-muted-foreground">
+            Lenses narrow what area runs check. Global sweeps (architecture, implementation gaps) always run on full campaigns.
+          </p>
           <div class="max-h-56 overflow-y-auto rounded-md border">
             <div v-if="loadingLenses" class="p-3 text-sm text-muted-foreground">Loading…</div>
             <div v-else-if="!localLenses.length" class="p-3 text-sm text-muted-foreground">

@@ -10,6 +10,7 @@ import {
   Globe,
   RefreshCw,
   Rocket,
+  TriangleAlert,
   User,
   Zap,
 } from 'lucide-vue-next'
@@ -31,7 +32,7 @@ import {
   partStateVariant,
 } from '@/lib/campaignStatus'
 import { formatRelativeTime } from '@/lib/utils'
-import type { CampaignDTO, CampaignEvent } from '@/types/api'
+import type { CampaignDTO, CampaignEvent, CampaignPlanSummary } from '@/types/api'
 
 const route = useRoute()
 const campaigns = useCampaignStore()
@@ -141,6 +142,57 @@ const progressPct = computed(() =>
 const hasSummary = computed(
   () => Object.keys(campaign.value?.summary ?? {}).length > 0,
 )
+
+// ── Plan explanation ("How this plan was built", set at plan time) ───────────
+
+const planSummary = computed<CampaignPlanSummary>(() => campaign.value?.plan_summary ?? {})
+const hasPlanSummary = computed(() => Object.keys(planSummary.value).length > 0)
+
+/** The planner's reconciliation as plain sentences — zero clauses are omitted.
+ *  (Oversized/degraded/prefix render separately with their own emphasis.) */
+function planSentences(s: CampaignPlanSummary): string[] {
+  const n = (x: number) => x.toLocaleString('en-US')
+  const count = (x: number, word: string, pluralWord = `${word}s`) =>
+    `${n(x)} ${x === 1 ? word : pluralWord}`
+  const lines: string[] = []
+
+  if (s.source === 'area-map') {
+    lines.push('Planned from the area map.')
+    if (s.map_areas) {
+      const excluded = [
+        s.groupings ? count(s.groupings, 'grouping') : '',
+        s.ignored ? count(s.ignored, 'ignore area') : '',
+      ].filter(Boolean)
+      lines.push(
+        `${count(s.map_areas, 'area')} on the map → ${count(s.leaves ?? 0, 'auditable leaf', 'auditable leaves')}` +
+          (excluded.length ? ` (${excluded.join(' and ')} excluded).` : '.'),
+      )
+    }
+    if (s.area_parts) {
+      const bundled = s.bundled_leaves
+        ? ` — ${n(s.bundled_leaves)} small sibling leaves share runs with their neighbors`
+        : ''
+      lines.push(`Bundled into ${count(s.area_parts, 'area run')} of roughly 50–150 files${bundled}.`)
+    }
+  } else {
+    lines.push('Planned from doc-derived areas — no area map yet.')
+    if (s.area_parts) {
+      lines.push(`Partitioned into ${count(s.area_parts, 'area run')} of roughly 50–150 files.`)
+    }
+  }
+
+  const rides = [
+    s.feature_parts ? count(s.feature_parts, 'feature spec-audit') : '',
+    s.global_parts ? count(s.global_parts, 'global sweep') : '',
+  ].filter(Boolean)
+  if (rides.length) {
+    const total = (s.feature_parts ?? 0) + (s.global_parts ?? 0)
+    lines.push(`${rides.join(' and ')} ride${total === 1 ? 's' : ''} along.`)
+  }
+  return lines
+}
+
+const planLines = computed(() => planSentences(planSummary.value))
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low']
 const severityCounts = computed(() => {
@@ -258,6 +310,40 @@ function scopePathsLabel(paths: string[]): string {
           {{ progress.finished }}/{{ progress.total }} parts
         </span>
       </div>
+
+      <!-- How this plan was built (plan-time reconciliation) -->
+      <Card v-if="hasPlanSummary">
+        <CardHeader class="pb-2">
+          <h2 class="text-sm font-semibold">How this plan was built</h2>
+        </CardHeader>
+        <CardContent class="space-y-1">
+          <p v-for="(line, i) in planLines" :key="i" class="text-sm text-muted-foreground">
+            {{ line }}
+          </p>
+          <p
+            v-if="planSummary.area_prefix"
+            class="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground"
+          >
+            Sliced to areas under
+            <span class="rounded-full border border-border px-2 py-0.5 font-mono text-xs">
+              {{ planSummary.area_prefix }}
+            </span>
+          </p>
+          <p
+            v-if="planSummary.oversized?.length"
+            class="flex items-start gap-1.5 text-sm text-warn"
+            :title="planSummary.oversized.join('\n')"
+          >
+            <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {{ planSummary.oversized.length }} area{{ planSummary.oversized.length === 1 ? ' exceeds' : 's exceed' }}
+            the target size — ask Map areas to split {{ planSummary.oversized.length === 1 ? 'it' : 'them' }}.
+          </p>
+          <p v-if="planSummary.degraded" class="flex items-start gap-1.5 text-sm text-warn">
+            <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {{ planSummary.degraded }}
+          </p>
+        </CardContent>
+      </Card>
 
       <!-- Parts -->
       <Card>

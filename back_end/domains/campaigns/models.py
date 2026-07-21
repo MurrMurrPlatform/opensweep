@@ -53,6 +53,13 @@ class Campaign(AsyncStructuredNode):
     # tick.plan_tick).
     parts = JSONProperty(default=[])
 
+    # How the planner reconciled the area map into `parts` — {source,
+    # map_areas, leaves, groupings, features, ignored, area_parts,
+    # bundled_leaves, feature_parts, global_parts, oversized, degraded,
+    # area_prefix} (campaign_service._plan_parts). Set at create and again
+    # by a launch-time replan that changed the parts.
+    plan_summary = JSONProperty(default={})
+
     # How many parts may be in flight at once.
     max_parallel = IntegerProperty(default=2)
 

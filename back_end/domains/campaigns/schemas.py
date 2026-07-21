@@ -26,6 +26,11 @@ class CampaignDTO(BaseModel):
     created_by: str = ""
     trigger_provenance: str = ""
     summary: dict = Field(default_factory=dict)
+    # How the planner reconciled the area map into `parts`: {source,
+    # map_areas, leaves, groupings, features, ignored, area_parts,
+    # bundled_leaves, feature_parts, global_parts, oversized, degraded,
+    # area_prefix}. {} on campaigns planned before this field existed.
+    plan_summary: dict = Field(default_factory=dict)
     events: list[dict] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

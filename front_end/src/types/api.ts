@@ -1549,6 +1549,35 @@ export interface CampaignSummary {
   failed_parts?: number[]
 }
 
+/** How the planner reconciled the area map into the part list — set at plan
+ *  time (and again by a launch-time replan); {} on campaigns planned before
+ *  the field existed. Map-level counts are whole-map; part counts describe
+ *  the actual plan. */
+export interface CampaignPlanSummary {
+  source?: 'area-map' | 'docs'
+  /** Total enabled areas on the map (all kinds). */
+  map_areas?: number
+  /** Auditable subsystem leaves. */
+  leaves?: number
+  /** Subsystem non-leaves — groupings, not audit targets. */
+  groupings?: number
+  /** Enabled feature areas. */
+  features?: number
+  /** Enabled ignore areas. */
+  ignored?: number
+  area_parts?: number
+  /** Leaves that share a part with siblings (bundled at plan time). */
+  bundled_leaves?: number
+  feature_parts?: number
+  global_parts?: number
+  /** Titles of areas exceeding the target part size. */
+  oversized?: string[]
+  /** '' = planned against the full tree; else why planning degraded. */
+  degraded?: string
+  /** '' = the whole map; else the plan was sliced to this key prefix. */
+  area_prefix?: string
+}
+
 /** Append-only lifecycle log entry (created/launched/part_done/finalized/…). */
 export interface CampaignEvent {
   ts: string
@@ -1574,6 +1603,7 @@ export interface CampaignDTO {
   created_by: string
   trigger_provenance: string
   summary: CampaignSummary
+  plan_summary: CampaignPlanSummary
   events: CampaignEvent[]
   created_at?: string | null
   updated_at?: string | null

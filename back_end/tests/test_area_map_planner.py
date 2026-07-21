@@ -264,7 +264,13 @@ def plan_seams(monkeypatch):
     import domains.lenses.services.lens_service as lens_service_mod
     import domains.repositories.models as repo_models
 
-    state = SimpleNamespace(areas=[], features=[], source="area-map", degraded="")
+    state = SimpleNamespace(
+        areas=[],
+        features=[],
+        source="area-map",
+        degraded="",
+        map_stats={"map_areas": 0, "leaves": 0, "groupings": 0, "features": 0, "ignored": 0},
+    )
 
     class _Nodes:
         @staticmethod
@@ -281,6 +287,7 @@ def plan_seams(monkeypatch):
             state.source,
             state.features,
             {"overlapping_files": 0, "dead_ignore_scopes": []},
+            state.map_stats,
         )
 
     monkeypatch.setattr(campaign_service, "_plan_areas", fake_plan_areas)
@@ -288,6 +295,7 @@ def plan_seams(monkeypatch):
     async def fake_list_lenses(enabled_only=True):
         return [
             SimpleNamespace(key="bugs", scope="local", global_agent_key="", enabled=True),
+            SimpleNamespace(key="perf", scope="local", global_agent_key="", enabled=True),
             SimpleNamespace(
                 key="architecture-review",
                 scope="global",
@@ -310,7 +318,7 @@ async def test_area_prefix_slices_the_plan_and_decorates_globals(plan_seams):
         {**FEATURE, "area_key": "backend/api/checkout"},
         {**FEATURE, "title": "Theming", "area_key": "frontend/theming"},
     ]
-    parts, degraded, source = await campaign_service._plan_parts(
+    parts, degraded, source, _summary = await campaign_service._plan_parts(
         "repo1", template="full", lens_keys=[], k=3, area_prefix="backend"
     )
     assert source == "area-map" and degraded == ""
@@ -330,7 +338,7 @@ async def test_area_prefix_slices_the_plan_and_decorates_globals(plan_seams):
 
 async def test_prefix_that_matches_nothing_is_legal_but_noted(plan_seams):
     plan_seams.areas = [_map_area("backend", ["be"])]
-    parts, degraded, source = await campaign_service._plan_parts(
+    parts, degraded, source, _summary = await campaign_service._plan_parts(
         "repo1", template="full", lens_keys=[], k=3, area_prefix="nope"
     )
     assert source == "area-map"
@@ -340,7 +348,83 @@ async def test_prefix_that_matches_nothing_is_legal_but_noted(plan_seams):
 
 async def test_no_prefix_leaves_global_parts_undecorated(plan_seams):
     plan_seams.areas = [_map_area("backend", ["be"])]
-    parts, _degraded, _source = await campaign_service._plan_parts(
+    parts, _degraded, _source, _summary = await campaign_service._plan_parts(
         "repo1", template="full", lens_keys=[], k=3
     )
     assert all("scope_hint" not in p for p in parts)
+
+
+# ── _plan_parts: lens selection + plan_summary ───────────────────────────────
+
+
+async def test_lens_selection_narrows_locals_but_never_drops_globals(plan_seams):
+    """The campaign dialog only offers LOCAL lenses — a selection must
+    narrow those while every enabled global lens keeps its sweep part
+    (regression: full campaigns silently lost all global sweeps)."""
+    plan_seams.areas = [_map_area("backend", ["be"])]
+    parts, _degraded, _source, _summary = await campaign_service._plan_parts(
+        "repo1", template="full", lens_keys=["bugs"], k=3
+    )
+    assert [p["lens_keys"] for p in parts if p["kind"] == "area"] == [["bugs"]]
+    assert [p["lens_keys"] for p in parts if p["kind"] == "global"] == [
+        ["architecture-review"]
+    ]
+
+
+async def test_plan_summary_narrates_an_area_map_plan(plan_seams):
+    plan_seams.areas = [
+        _map_area("backend/api", ["be/api"]),  # 10 files — bundles with core
+        _map_area("backend/core", ["be/core"]),
+        {**_map_area("frontend", ["fe"]), "file_count": 400, "oversized": True},
+    ]
+    plan_seams.features = [FEATURE]
+    plan_seams.map_stats = {
+        "map_areas": 8,
+        "leaves": 3,
+        "groupings": 1,
+        "features": 1,
+        "ignored": 2,
+    }
+    _parts, _degraded, _source, summary = await campaign_service._plan_parts(
+        "repo1", template="full", lens_keys=[], k=3
+    )
+    assert summary == {
+        "source": "area-map",
+        "map_areas": 8,
+        "leaves": 3,
+        "groupings": 1,
+        "features": 1,
+        "ignored": 2,
+        "area_parts": 2,  # backend bundle + frontend
+        "bundled_leaves": 2,  # backend/api + backend/core share one part
+        "feature_parts": 1,
+        "global_parts": 1,
+        "oversized": ["frontend"],
+        "degraded": "",
+        "area_prefix": "",
+    }
+
+
+async def test_plan_summary_keeps_its_shape_for_docs_plans(plan_seams):
+    plan_seams.source = "docs"
+    plan_seams.areas = [
+        {"title": "API", "scope_paths": ["src/api"], "doc_uids": ["d1"], "file_count": 60}
+    ]
+    _parts, _degraded, _source, summary = await campaign_service._plan_parts(
+        "repo1", template="full", lens_keys=[], k=3
+    )
+    assert summary == {
+        "source": "docs",
+        "map_areas": 0,
+        "leaves": 0,
+        "groupings": 0,
+        "features": 0,
+        "ignored": 0,
+        "area_parts": 1,
+        "bundled_leaves": 0,
+        "feature_parts": 0,
+        "global_parts": 1,
+        "oversized": [],
+        "degraded": "",
+        "area_prefix": "",
+    }

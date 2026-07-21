@@ -93,12 +93,18 @@ async def test_launch_replaces_parts_and_records_event_when_plan_changed(
     seams.campaign = _campaign(parts=[_part(0)])
     fresh = [_part(0), _part(1)]
     captured = {}
-    _plan_stub(monkeypatch, ([dict(p) for p in fresh], "", "docs"), captured=captured)
+    _plan_stub(
+        monkeypatch,
+        ([dict(p) for p in fresh], "", "docs", {"source": "docs", "area_parts": 2}),
+        captured=captured,
+    )
 
     out = await campaign_service.launch("c1", actor_uid="u1")
 
     assert out.parts == fresh  # DTO carries what will actually run
     assert out.status == "running"
+    # The stored explanation follows the parts it explains.
+    assert out.plan_summary == {"source": "docs", "area_parts": 2}
     assert [e["type"] for e in seams.events] == ["replanned", "launched"]
     assert seams.events[0]["parts"] == 2 and seams.events[0]["was"] == 1
     # Replan reuses the campaign's stored inputs — create and launch can't drift.
@@ -114,7 +120,7 @@ async def test_launch_replaces_parts_and_records_event_when_plan_changed(
 async def test_launch_stays_silent_when_plan_unchanged(seams, monkeypatch):
     original = [_part(0), _part(1)]
     seams.campaign = _campaign(parts=[dict(p) for p in original])
-    _plan_stub(monkeypatch, ([dict(p) for p in original], "", "docs"))
+    _plan_stub(monkeypatch, ([dict(p) for p in original], "", "docs", {}))
 
     out = await campaign_service.launch("c1")
 
@@ -125,7 +131,7 @@ async def test_launch_stays_silent_when_plan_unchanged(seams, monkeypatch):
 async def test_replan_passes_the_stored_area_prefix_through(seams, monkeypatch):
     seams.campaign = _campaign(area_prefix="backend")
     captured = {}
-    _plan_stub(monkeypatch, ([_part(0)], "", "area-map"), captured=captured)
+    _plan_stub(monkeypatch, ([_part(0)], "", "area-map", {}), captured=captured)
 
     out = await campaign_service.launch("c1")
 
@@ -136,7 +142,7 @@ async def test_replan_passes_the_stored_area_prefix_through(seams, monkeypatch):
 async def test_degraded_replan_keeps_existing_parts(seams, monkeypatch):
     original = [_part(0)]
     seams.campaign = _campaign(parts=[dict(p) for p in original])
-    _plan_stub(monkeypatch, ([], "file tree unavailable (BoomError)", "docs"))
+    _plan_stub(monkeypatch, ([], "file tree unavailable (BoomError)", "docs", {}))
 
     out = await campaign_service.launch("c1")
 
@@ -247,6 +253,7 @@ async def test_preview_areas_uses_the_area_map_when_present(preview_seams):
             }
         ],
         "ignore_scopes": ["scripts"],
+        "counts": {"map_areas": 3, "groupings": 0, "ignored": 1},
     }
     preview_seams.tree = (["src/api/a.py", "src/api/b.py", "scripts/x.sh"], "")
 
@@ -289,6 +296,7 @@ async def test_preview_areas_features_only_map_plans_from_docs_but_keeps_feature
             }
         ],
         "ignore_scopes": [],
+        "counts": {"map_areas": 1, "groupings": 0, "ignored": 0},
     }
     preview_seams.tree = (["src/api/a.py", "src/api/b.py"], "")
 
@@ -341,6 +349,7 @@ async def test_preview_areas_reports_partition_health(preview_seams):
         ],
         "features": [],
         "ignore_scopes": ["vendor"],
+        "counts": {"map_areas": 2, "groupings": 0, "ignored": 1},
     }
     preview_seams.tree = (["src/api/a.py", "src/b.py"], "")
 
@@ -378,6 +387,7 @@ async def test_preview_areas_area_prefix_slices_the_listing(preview_seams):
             }
         ],
         "ignore_scopes": [],
+        "counts": {"map_areas": 3, "groupings": 0, "ignored": 0},
     }
     preview_seams.tree = (["src/api/a.py", "fe/app.ts"], "")
 
