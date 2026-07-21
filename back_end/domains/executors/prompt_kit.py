@@ -43,6 +43,7 @@ PLATFORM_WRITE_TOOLS = (
     "propose_doc_edit",
     "propose_area_edit",
     "confirm_doc_current",
+    "confirm_area_current",
     "write_memory",
     "attach_artifact",
     "complete_run",

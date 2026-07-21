@@ -7,6 +7,7 @@ import type {
   AreaDTO,
   AreaEditDTO,
   AreaEditStatus,
+  GenerateSpecsResponse,
   MapAreasResponse,
   UpdateAreaRequest,
   UpdateAreaResponse,
@@ -101,7 +102,6 @@ export const useAreaStore = defineStore('areas', () => {
     return result
   }
 
-  /** One LLM run that proposes the area map (409 when already running). */
   /** Destructive: deletes every area + edit for the repo. */
   async function resetAll(repoUid: string): Promise<{ areas_deleted: number; edits_deleted: number }> {
     const result = await apiPost<{ areas_deleted: number; edits_deleted: number }>(
@@ -114,6 +114,12 @@ export const useAreaStore = defineStore('areas', () => {
 
   async function mapNow(repoUid: string): Promise<MapAreasResponse> {
     return apiPost<MapAreasResponse>(`/repositories/${repoUid}/sweep/map-areas`)
+  }
+
+  /** One LLM run that drafts specs for feature leaves lacking one and refreshes
+   *  stale feature specs (as pending AreaEdits). 409 when nothing needs a spec. */
+  async function generateSpecs(repoUid: string): Promise<GenerateSpecsResponse> {
+    return apiPost<GenerateSpecsResponse>(`/repositories/${repoUid}/sweep/generate-specs`)
   }
 
   return {
@@ -131,6 +137,7 @@ export const useAreaStore = defineStore('areas', () => {
     bulkAccept,
     bulkReject,
     mapNow,
+    generateSpecs,
     resetAll,
   }
 })

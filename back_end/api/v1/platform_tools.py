@@ -445,8 +445,8 @@ async def http_submit_thread_plan(
         resolve_thread,
     )
 
-    executor = request.headers.get("x-opensweep-run-uid") or "manual"
-    thread = await resolve_thread(thread_uid, run_uid=executor)
+    run_uid = request.headers.get("x-opensweep-run-uid") or ""
+    thread = await resolve_thread(thread_uid, run_uid=run_uid)
     if thread is None:
         raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
     await require_tool_repo_access(request, user, thread.repository_uid)
@@ -455,7 +455,8 @@ async def http_submit_thread_plan(
         submit_thread_plan,
         thread_uid=thread.uid,
         plan_markdown=req.plan_markdown,
-        executor=executor,
+        run_uid=run_uid,
+        executor=run_uid or "manual",
     )
 
 

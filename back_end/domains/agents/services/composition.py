@@ -52,37 +52,56 @@ class ComposedIntent:
     text: str
     agent_uid: str = ""
     agent_rev: int = 0
+    # A layer resolver hit its except-fallback (missing dependency, DB error…).
+    # The run still gets a usable intent, but it was composed from in-code
+    # fallbacks rather than the real layer — so the Run can mark itself
+    # degraded instead of reporting a clean compose.
+    composed_degraded: bool = False
+    degraded_layers: tuple[str, ...] = ()
 
 
-async def _resolve_platform_base(agent_key: str) -> str | None:
+def _note_degraded(sink: list[str] | None, layer: str) -> None:
+    if sink is not None:
+        sink.append(layer)
+
+
+async def _resolve_platform_base(
+    agent_key: str, *, degraded: list[str] | None = None
+) -> str | None:
     """Enabled system body; None (→ in-code fallback) on miss/failure."""
     try:
         from domains.agents.services.registry import agent_body_by_key
 
         return await agent_body_by_key(agent_key)
     except Exception as exc:  # noqa: BLE001 — degrade to the in-code fallback
-        logger.warning(
+        logger.error(
             f"system agent resolution failed for {agent_key}: {type(exc).__name__}: {exc}",
             extra={"tag": "agents"},
         )
+        _note_degraded(degraded, "platform_base")
         return None
 
 
-async def _resolve_org_uid(repository_uid: str) -> str:
+async def _resolve_org_uid(
+    repository_uid: str, *, degraded: list[str] | None = None
+) -> str:
     try:
         from domains.llm_providers.services.llm_provider_service import repository_org_uid
 
         return await repository_org_uid(repository_uid) or ""
     except Exception as exc:  # noqa: BLE001 — no org ⇒ no override layer
-        logger.warning(
+        logger.error(
             f"org resolution failed for repository {repository_uid}: "
             f"{type(exc).__name__}: {exc}",
             extra={"tag": "agents"},
         )
+        _note_degraded(degraded, "org_uid")
         return ""
 
 
-async def _resolve_override(org_uid: str, agent_key: str):
+async def _resolve_override(
+    org_uid: str, agent_key: str, *, degraded: list[str] | None = None
+):
     """(agent, active override revision | None) — never raises."""
     try:
         from domains.agents.services.agent_service import resolve_enabled_override
@@ -93,15 +112,18 @@ async def _resolve_override(org_uid: str, agent_key: str):
             return None, None
         return agent, await resolve_enabled_override(org_uid, agent)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
+        logger.error(
             f"override resolution failed ({org_uid}/{agent_key}): "
             f"{type(exc).__name__}: {exc}",
             extra={"tag": "agents"},
         )
+        _note_degraded(degraded, "override")
         return None, None
 
 
-async def _resolve_repo_guidance_section(repository_uid: str, stage: str) -> str:
+async def _resolve_repo_guidance_section(
+    repository_uid: str, stage: str, *, degraded: list[str] | None = None
+) -> str:
     """Rendered '## <Stage> guidance' section; "" on miss/failure."""
     if not stage or not repository_uid:
         return ""
@@ -113,11 +135,12 @@ async def _resolve_repo_guidance_section(repository_uid: str, stage: str) -> str
 
         return guidance_section(stage, await stage_prompt_body(repository_uid, stage))
     except Exception as exc:  # noqa: BLE001 — guidance is a layer, not a dependency
-        logger.warning(
+        logger.error(
             f"repo stage guidance resolution failed ({repository_uid}/{stage}): "
             f"{type(exc).__name__}: {exc}",
             extra={"tag": "agents"},
         )
+        _note_degraded(degraded, "repo_guidance")
         return ""
 
 
@@ -170,12 +193,21 @@ async def compose_agent_intent(
     if stage is None:
         stage = _KEY_STAGE.get(agent_key, "")
 
-    resolved_org = org_uid if org_uid is not None else await _resolve_org_uid(repository_uid)
-    platform_body = await _resolve_platform_base(agent_key)
-    agent, override = await _resolve_override(resolved_org, agent_key)
+    degraded: list[str] = []
+    resolved_org = (
+        org_uid
+        if org_uid is not None
+        else await _resolve_org_uid(repository_uid, degraded=degraded)
+    )
+    platform_body = await _resolve_platform_base(agent_key, degraded=degraded)
+    agent, override = await _resolve_override(
+        resolved_org, agent_key, degraded=degraded
+    )
 
     if repo_guidance is None:
-        guidance_block = await _resolve_repo_guidance_section(repository_uid, stage)
+        guidance_block = await _resolve_repo_guidance_section(
+            repository_uid, stage, degraded=degraded
+        )
     else:
         guidance_block = _render_repo_guidance(stage, repo_guidance)
 
@@ -196,6 +228,8 @@ async def compose_agent_intent(
         text=text,
         agent_uid=agent.uid if agent else "",
         agent_rev=int(override.rev or 0) if override else 0,
+        composed_degraded=bool(degraded),
+        degraded_layers=tuple(degraded),
     )
 
 

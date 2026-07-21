@@ -56,7 +56,13 @@ def seams(monkeypatch):
 
     async def fake_compose(**kwargs):
         captured["compose"] = kwargs
-        return SimpleNamespace(text="COMPOSED", agent_uid="agent1", agent_rev=2)
+        return SimpleNamespace(
+            text="COMPOSED",
+            agent_uid="agent1",
+            agent_rev=2,
+            composed_degraded=False,
+            degraded_layers=(),
+        )
 
     async def fake_policy(tier):
         return SimpleNamespace(uid="policy1")
@@ -170,13 +176,24 @@ async def test_degraded_feature_part_dispatches_as_plain_area_no_raise(
     assert "Do not investigate outside this scope." in structural
     assert "## Audit lenses for this scope" in structural
     assert "lens_verdicts" in structural
-    # …and to operators: one campaign.feature_part_degraded audit event.
-    (audit,) = audits
-    assert audit["kind"] == "campaign.feature_part_degraded"
-    assert audit["subject_uid"] == "c1" and audit["subject_type"] == "Campaign"
-    assert audit["repository_uid"] == "repo1"
-    assert audit["payload"] == {
+    # …and to operators: the generic degrade audit event always fires.
+    degrade = next(a for a in audits if a["kind"] == "campaign.feature_part_degraded")
+    assert degrade["subject_uid"] == "c1" and degrade["subject_type"] == "Campaign"
+    assert degrade["repository_uid"] == "repo1"
+    assert degrade["payload"] == {
         "part": 0,
         "area_key": "features/checkout",
         "reason": reason,
     }
+    # The no-spec case (feature exists but was never spec'd) ALSO emits the
+    # visible, actionable campaign.feature_no_spec signal (→ feature.spec_missing
+    # notification); not-found/disabled do not.
+    no_spec = [a for a in audits if a["kind"] == "campaign.feature_no_spec"]
+    if reason == "has no spec":
+        (signal,) = no_spec
+        assert signal["subject_uid"] == "c1"
+        assert signal["repository_uid"] == "repo1"
+        assert signal["payload"]["area_key"] == "features/checkout"
+        assert signal["payload"]["part"] == 0
+    else:
+        assert no_spec == []

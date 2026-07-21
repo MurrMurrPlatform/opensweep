@@ -31,9 +31,12 @@ def _doc(code_changed_at=None, last_reviewed_at=None):
     )
 
 
-def _watch_doc(uid, repository_uid, watch_paths):
+def _watch_doc(uid, repository_uid, watch_paths, archived=False):
     return SimpleNamespace(
-        uid=uid, repository_uid=repository_uid, watch_paths=watch_paths
+        uid=uid,
+        repository_uid=repository_uid,
+        watch_paths=watch_paths,
+        archived=archived,
     )
 
 
@@ -55,6 +58,14 @@ async def test_docs_watching_paths_matches_only_watching_docs_in_repo(monkeypatc
         @staticmethod
         async def all():
             return docs
+
+        @staticmethod
+        async def filter(**kwargs):
+            return [
+                d
+                for d in docs
+                if all(getattr(d, k) == v for k, v in kwargs.items())
+            ]
 
     monkeypatch.setattr(doc_freshness, "Doc", SimpleNamespace(nodes=_Nodes))
 

@@ -6,7 +6,10 @@ memories are live immediately (KNOWLEDGE_V3).
 """
 
 from domains.platform_tools.add_analysis_note import add_analysis_note
-from domains.platform_tools.areas_tools import propose_area_edit
+from domains.platform_tools.areas_tools import (
+    confirm_area_current,
+    propose_area_edit,
+)
 from domains.platform_tools.ask_question import ask_question
 from domains.platform_tools.ask_user import ask_user
 from domains.platform_tools.attach_artifact import attach_artifact
@@ -37,6 +40,7 @@ __all__ = [
     "propose_doc_edit",
     "propose_area_edit",
     "confirm_doc_current",
+    "confirm_area_current",
     "write_memory",
     "list_docs",
     "read_doc",

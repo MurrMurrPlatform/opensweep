@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
-import { Sparkles, FileText, ChevronRight, Pencil, Save } from 'lucide-vue-next'
+import {
+  ArrowLeft,
+  ChevronRight,
+  FileText,
+  FolderTree,
+  Pencil,
+  Save,
+  Sparkles,
+} from 'lucide-vue-next'
 import { useAgentStore } from '@/stores/agentStore'
+import { useAreaStore } from '@/stores/areaStore'
 import { useDocStore } from '@/stores/docStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
@@ -20,9 +29,10 @@ import {
 } from '@/components/ui/select'
 import MarkdownView from '@/components/ui/markdown/MarkdownView.vue'
 import SaveAsAgentDialog from '@/components/agents/SaveAsAgentDialog.vue'
-import type { AgentDTO } from '@/types/api'
+import type { AgentDTO, AreaDTO } from '@/types/api'
 
 const agents = useAgentStore()
+const areaStore = useAreaStore()
 const docs = useDocStore()
 const router = useRouter()
 const toast = useToast()
@@ -33,6 +43,8 @@ const available = ref<AgentDTO[]>([])
 const activeTag = ref<string>('all')
 const selectedAgent = ref<AgentDTO | null>(null)
 const customMode = ref(false)
+/** Two-step flow: pick an agent (or Custom) → configure + run. */
+const step = ref<'pick' | 'configure'>('pick')
 const editingBody = ref(false)
 const body = ref('')
 const effort = ref<'short' | 'normal' | 'deep' | 'unlimited'>('normal')
@@ -45,8 +57,25 @@ function launchable(all: AgentDTO[]): AgentDTO[] {
   return all.filter((a) => a.produces === 'findings' || a.produces === 'answer')
 }
 
+async function loadAreas() {
+  if (!repoUid.value) return
+  // Best-effort: no area map just hides the scope picker.
+  try {
+    scopeAreas.value = (await areaStore.fetchAreas(repoUid.value)).filter(
+      (a) => a.enabled && (a.kind === 'subsystem' || a.kind === 'feature'),
+    )
+  } catch {
+    scopeAreas.value = []
+  }
+}
+
 onMounted(async () => {
+  void loadAreas()
   available.value = launchable(await agents.fetchAll({ enabled_only: true }))
+})
+watch(repoUid, () => {
+  selectedAreaUids.value = new Set()
+  void loadAreas()
 })
 
 const allTags = computed(() => {
@@ -73,6 +102,7 @@ function pickAgent(a: AgentDTO) {
     | 'normal'
     | 'deep'
     | 'unlimited'
+  step.value = 'configure'
 }
 
 function startCustom() {
@@ -81,7 +111,32 @@ function startCustom() {
   editingBody.value = true
   body.value = ''
   effort.value = 'normal'
+  step.value = 'configure'
 }
+
+function backToPicker() {
+  step.value = 'pick'
+}
+
+// ── Area scoping (optional: run only on selected subsystems / features) ──────
+
+const scopeAreas = ref<AreaDTO[]>([])
+const selectedAreaUids = ref<Set<string>>(new Set())
+
+const scopeSubsystems = computed(() => scopeAreas.value.filter((a) => a.kind === 'subsystem'))
+const scopeFeatures = computed(() => scopeAreas.value.filter((a) => a.kind === 'feature'))
+
+function toggleArea(uid: string) {
+  const next = new Set(selectedAreaUids.value)
+  if (next.has(uid)) next.delete(uid)
+  else next.add(uid)
+  selectedAreaUids.value = next
+}
+
+const scopeSummary = computed(() => {
+  const n = selectedAreaUids.value.size
+  return n === 0 ? 'Whole repository' : `${n} area${n === 1 ? '' : 's'}`
+})
 
 const saveAgentOpen = ref(false)
 
@@ -119,11 +174,13 @@ async function submit() {
       body.value !== selectedAgent.value.prompt
     const useCustom = customMode.value || edited
     // No doc uids: the backend dispatches one repo-scoped ask run instead of
-    // fanning out per documentation page.
+    // fanning out per documentation page. Selected areas narrow that run's
+    // target to their scope paths.
     const result = await docs.audit(repoUid.value, [], {
       agent_uid: useCustom ? undefined : selectedAgent.value?.uid,
       custom_intent: useCustom ? body.value : undefined,
       effort: effort.value,
+      area_uids: Array.from(selectedAreaUids.value),
     })
     if (result.runs_dispatched.length > 0) {
       router.push({ name: 'run-detail', params: { uid: result.runs_dispatched[0] } })
@@ -140,171 +197,225 @@ async function submit() {
 
 <template>
   <div class="space-y-4">
-    <PageHeader
-      title="Ask"
-      subtitle="Pick an agent — or write your own prompt — and dispatch a run. Output lands as Findings in your inbox."
-    />
+    <!-- ── Step 1: pick an agent (or write your own prompt) ────────────────── -->
+    <template v-if="step === 'pick'">
+      <PageHeader
+        title="Ask"
+        subtitle="Pick an agent — or write your own prompt — and dispatch a run. Output lands as Findings in your inbox."
+      />
 
-    <!-- Tag filter -->
-    <div class="flex flex-wrap gap-2">
-      <button
-        v-for="tag in allTags"
-        :key="tag"
-        type="button"
-        :class="[
-          'rounded-full border px-3 py-1 text-xs uppercase tracking-wide transition-colors',
-          activeTag === tag
-            ? 'border-primary bg-primary/10 text-primary'
-            : 'border-border text-muted-foreground hover:bg-accent',
-        ]"
-        @click="activeTag = tag"
-      >
-        {{ tag }}
-      </button>
-    </div>
+      <!-- Tag filter -->
+      <div class="flex flex-wrap gap-2">
+        <button
+          v-for="tag in allTags"
+          :key="tag"
+          type="button"
+          :class="[
+            'rounded-full border px-3 py-1 text-xs uppercase tracking-wide transition-colors',
+            activeTag === tag
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border text-muted-foreground hover:bg-accent',
+          ]"
+          @click="activeTag = tag"
+        >
+          {{ tag }}
+        </button>
+      </div>
 
-    <!-- Agent grid -->
-    <section class="stagger-children grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <button
-        v-for="a in filteredAgents"
-        :key="a.uid"
-        type="button"
-        :class="[
-          'card-interactive rounded-lg border bg-card p-4 text-left shadow-sm hover:bg-accent',
-          selectedAgent?.uid === a.uid ? 'border-primary ring-2 ring-primary/20' : 'border-border',
-        ]"
-        @click="pickAgent(a)"
-      >
-        <div class="flex items-start gap-2">
-          <FileText class="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-sm font-semibold">{{ a.title }}</div>
-            <div class="mt-1 text-xs text-muted-foreground line-clamp-2">{{ a.description || '—' }}</div>
+      <!-- Agent grid — Custom first -->
+      <section class="stagger-children grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <button
+          type="button"
+          class="card-interactive rounded-lg border-2 border-dashed border-border p-4 text-left hover:bg-accent"
+          @click="startCustom"
+        >
+          <div class="flex items-start gap-2">
+            <Pencil class="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+            <div>
+              <div class="text-sm font-semibold">Custom…</div>
+              <div class="mt-1 text-xs text-muted-foreground">Write a free-form prompt for this one-off run.</div>
+            </div>
           </div>
-        </div>
-        <div class="mt-3 flex flex-wrap gap-1">
-          <span
-            v-for="t in a.tags.slice(0, 3)"
-            :key="t"
-            class="rounded-md bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground"
+        </button>
+
+        <button
+          v-for="a in filteredAgents"
+          :key="a.uid"
+          type="button"
+          class="card-interactive rounded-lg border border-border bg-card p-4 text-left shadow-sm hover:bg-accent"
+          @click="pickAgent(a)"
+        >
+          <div class="flex items-start gap-2">
+            <FileText class="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-semibold">{{ a.title }}</div>
+              <div class="mt-1 text-xs text-muted-foreground line-clamp-2">{{ a.description || '—' }}</div>
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-1">
+            <span
+              v-for="t in a.tags.slice(0, 3)"
+              :key="t"
+              class="rounded-md bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground"
+            >
+              {{ t }}
+            </span>
+            <Badge v-if="a.provenance === 'user'" class="px-1.5 text-[10px] uppercase">yours</Badge>
+          </div>
+        </button>
+      </section>
+
+      <div class="text-xs text-muted-foreground">
+        Agents are managed in the
+        <RouterLink :to="{ name: 'agent-library' }" class="text-primary hover:underline">Agent library</RouterLink>.
+      </div>
+    </template>
+
+    <!-- ── Step 2: review the prompt, scope it, run ────────────────────────── -->
+    <template v-else>
+      <PageHeader :title="selectedAgent?.title || 'Custom prompt'">
+        <template #breadcrumb>
+          <button
+            type="button"
+            class="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            @click="backToPicker"
           >
-            {{ t }}
-          </span>
-          <Badge v-if="a.provenance === 'user'" class="px-1.5 text-[10px] uppercase">yours</Badge>
-        </div>
-      </button>
+            <ArrowLeft class="h-3 w-3" /> Ask — all agents
+          </button>
+        </template>
 
-      <!-- Custom card -->
-      <button
-        type="button"
-        :class="[
-          'card-interactive rounded-lg border-2 border-dashed p-4 text-left hover:bg-accent',
-          customMode ? 'border-primary bg-primary/5' : 'border-border',
-        ]"
-        @click="startCustom"
-      >
-        <div class="flex items-start gap-2">
-          <Pencil class="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-          <div>
-            <div class="text-sm font-semibold">Custom…</div>
-            <div class="mt-1 text-xs text-muted-foreground">Write a free-form prompt for this one-off run.</div>
-          </div>
-        </div>
-      </button>
-    </section>
+        <Button
+          v-if="!customMode && selectedAgent"
+          variant="outline"
+          size="sm"
+          as="router-link"
+          :to="{ name: 'agent-detail', params: { uid: selectedAgent.uid } }"
+        >
+          <Pencil />
+          Edit in library
+        </Button>
+        <Button v-if="body.trim()" variant="outline" size="sm" @click="saveAsAgent">
+          <Save />
+          Save as agent
+        </Button>
+        <Button :disabled="!canSubmit" :loading="submitting" @click="submit">
+          <Sparkles />
+          Run
+          <ChevronRight />
+        </Button>
+      </PageHeader>
 
-    <!-- Selected agent / config -->
-    <Card v-if="selectedAgent || customMode">
-      <CardContent class="space-y-4 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="min-w-0">
-            <div class="text-xs uppercase text-muted-foreground">{{ customMode ? 'Custom prompt' : 'Selected agent' }}</div>
-            <div class="truncate text-base font-semibold">{{ selectedAgent?.title || 'Free-form run' }}</div>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <Button
-              v-if="!customMode && selectedAgent"
-              variant="outline"
-              size="sm"
-              as="router-link"
-              :to="{ name: 'agent-detail', params: { uid: selectedAgent.uid } }"
-            >
-              <Pencil />
-              Edit in library
-            </Button>
-            <Button
-              v-if="body.trim()"
-              variant="outline"
-              size="sm"
-              @click="saveAsAgent"
-            >
-              <Save />
-              Save as agent
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              @click="editingBody = !editingBody"
-            >
+      <Card>
+        <CardContent class="space-y-4 p-6">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="text-xs uppercase text-muted-foreground">
+              {{ customMode ? 'Custom prompt' : 'Prompt' }}
+            </div>
+            <Button variant="outline" size="sm" @click="editingBody = !editingBody">
               <Pencil />
               {{ editingBody ? 'Done editing' : 'Edit body for this run' }}
             </Button>
           </div>
-        </div>
 
-        <MarkdownView
-          v-model="body"
-          :editing="editingBody"
-          min-height="280px"
-          placeholder="Describe what the agent should look for…"
-        />
+          <MarkdownView
+            v-model="body"
+            :editing="editingBody"
+            min-height="280px"
+            placeholder="Describe what the agent should look for…"
+          />
 
-        <!-- Effort -->
-        <div class="grid gap-3 md:grid-cols-2">
-          <div class="space-y-1.5">
-            <Label>Effort</Label>
-            <Select v-model="effort">
-              <SelectTrigger class="w-full sm:w-56">
-                <SelectValue placeholder="Effort" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="short">Short</SelectItem>
-                <SelectItem value="normal">Normal</SelectItem>
-                <SelectItem value="deep">Deep</SelectItem>
-                <SelectItem value="unlimited">Unlimited</SelectItem>
-              </SelectContent>
-            </Select>
+          <!-- Effort + scope -->
+          <div class="grid gap-4 border-t pt-4 md:grid-cols-2">
+            <div class="space-y-1.5">
+              <Label>Effort</Label>
+              <Select v-model="effort">
+                <SelectTrigger class="w-full sm:w-56">
+                  <SelectValue placeholder="Effort" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="short">Short</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="deep">Deep</SelectItem>
+                  <SelectItem value="unlimited">Unlimited</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="space-y-1.5">
+              <Label class="flex items-center gap-1.5">
+                <FolderTree class="h-3.5 w-3.5 text-muted-foreground" /> Scope
+              </Label>
+              <div class="text-xs text-muted-foreground">
+                {{ scopeSummary }} — pick subsystems or features below to narrow the run to their paths.
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-          <div class="text-xs text-muted-foreground">
-            Workspace: <span class="font-mono">{{ currentRepo?.slug || '—' }}</span>
+          <!-- Area scope picker (only when the repo has a reviewed area map) -->
+          <div v-if="scopeAreas.length" class="space-y-3">
+            <div v-if="scopeSubsystems.length" class="space-y-1.5">
+              <div class="text-xs uppercase text-muted-foreground">Subsystems</div>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="a in scopeSubsystems"
+                  :key="a.uid"
+                  type="button"
+                  :title="a.scope_paths.join('\n')"
+                  :class="[
+                    'rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                    selectedAreaUids.has(a.uid)
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:bg-accent',
+                  ]"
+                  @click="toggleArea(a.uid)"
+                >
+                  {{ a.key }}
+                </button>
+              </div>
+            </div>
+            <div v-if="scopeFeatures.length" class="space-y-1.5">
+              <div class="text-xs uppercase text-muted-foreground">Features</div>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="a in scopeFeatures"
+                  :key="a.uid"
+                  type="button"
+                  :title="a.scope_paths.join('\n')"
+                  :class="[
+                    'rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                    selectedAreaUids.has(a.uid)
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:bg-accent',
+                  ]"
+                  @click="toggleArea(a.uid)"
+                >
+                  {{ a.key }}
+                </button>
+              </div>
+            </div>
+            <button
+              v-if="selectedAreaUids.size"
+              type="button"
+              class="text-xs text-primary hover:underline"
+              @click="selectedAreaUids = new Set()"
+            >
+              Clear scope — audit the whole repository
+            </button>
           </div>
-          <Button
-            :disabled="!canSubmit"
-            :loading="submitting"
-            @click="submit"
-          >
-            <Sparkles />
-            Run
-            <ChevronRight />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
 
-    <Card v-else>
-      <CardContent class="p-6">
-        <div class="text-sm text-muted-foreground">
-          Pick an agent above to get started, or click <strong>Custom…</strong> to write your own.
-        </div>
-        <div class="mt-3 text-xs text-muted-foreground">
-          Agents are managed in the
-          <RouterLink :to="{ name: 'agent-library' }" class="text-primary hover:underline">Agent library</RouterLink>.
-        </div>
-      </CardContent>
-    </Card>
+          <div class="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+            <div class="text-xs text-muted-foreground">
+              Workspace: <span class="font-mono">{{ currentRepo?.slug || '—' }}</span>
+              · Scope: {{ scopeSummary }}
+            </div>
+            <Button :disabled="!canSubmit" :loading="submitting" @click="submit">
+              <Sparkles />
+              Run
+              <ChevronRight />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </template>
 
     <SaveAsAgentDialog
       v-model:open="saveAgentOpen"

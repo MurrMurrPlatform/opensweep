@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Activity,
   ArrowLeft,
@@ -10,6 +10,7 @@ import {
   Globe,
   RefreshCw,
   Rocket,
+  Trash2,
   TriangleAlert,
   User,
   Zap,
@@ -20,6 +21,16 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/ui/error-state'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useCampaignStore } from '@/stores/campaignStore'
 import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
@@ -35,6 +46,7 @@ import { formatRelativeTime } from '@/lib/utils'
 import type { CampaignDTO, CampaignEvent, CampaignPlanSummary } from '@/types/api'
 
 const route = useRoute()
+const router = useRouter()
 const campaigns = useCampaignStore()
 const repositories = useRepositoryStore()
 const toast = useToast()
@@ -45,6 +57,8 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const launching = ref(false)
 const cancelling = ref(false)
+const deleteOpen = ref(false)
+const deleting = ref(false)
 
 // ── Back link (list views are repo-scoped; details are flat) ─────────────────
 const repoSlug = computed(() => {
@@ -126,6 +140,26 @@ async function cancelCampaign() {
   }
 }
 
+const isLive = computed(
+  () => campaign.value?.status === 'running' || campaign.value?.status === 'finalizing',
+)
+
+async function deleteCampaign() {
+  if (!campaign.value || deleting.value) return
+  deleteOpen.value = false
+  deleting.value = true
+  try {
+    await campaigns.remove(campaign.value.uid)
+    toast.success('Campaign deleted', campaign.value.title || campaign.value.uid.slice(0, 12))
+    void router.push(repoSlug.value ? { name: 'campaigns', params: { repoSlug: repoSlug.value } } : { name: 'overview' })
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Couldn’t delete campaign', msg)
+  } finally {
+    deleting.value = false
+  }
+}
+
 // ── Derived display state ────────────────────────────────────────────────────
 
 const parts = computed(() => [...(campaign.value?.parts ?? [])].sort((a, b) => a.idx - b.idx))
@@ -168,6 +202,12 @@ function planSentences(s: CampaignPlanSummary): string[] {
           (excluded.length ? ` (${excluded.join(' and ')} excluded).` : '.'),
       )
     }
+    if (s.features) {
+      const groupings = s.feature_groupings
+        ? ` under ${count(s.feature_groupings, 'parent feature')}`
+        : ''
+      lines.push(`${count(s.features, 'feature leaf', 'feature leaves')}${groupings} audited against their specs.`)
+    }
     if (s.area_parts) {
       const bundled = s.bundled_leaves
         ? ` — ${n(s.bundled_leaves)} small sibling leaves share runs with their neighbors`
@@ -205,6 +245,13 @@ const severityCounts = computed(() => {
 function severityVariant(sev: string) {
   if (sev === 'critical' || sev === 'high') return 'destructive' as const
   if (sev === 'medium') return 'warn' as const
+  return 'secondary' as const
+}
+
+/** Parent-feature rollup state ('covered' | 'partial' | 'uncovered'). */
+function coverageStateVariant(state: string) {
+  if (state === 'covered') return 'success' as const
+  if (state === 'partial') return 'warn' as const
   return 'secondary' as const
 }
 
@@ -295,6 +342,17 @@ function scopePathsLabel(paths: string[]): string {
           @click="cancelCampaign"
         >
           <Ban /> Cancel
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          class="text-destructive hover:text-destructive"
+          :disabled="isLive"
+          :loading="deleting"
+          :title="isLive ? 'Cancel the campaign before deleting it' : 'Delete this campaign'"
+          @click="deleteOpen = true"
+        >
+          <Trash2 /> Delete
         </Button>
       </PageHeader>
 
@@ -474,6 +532,22 @@ function scopePathsLabel(paths: string[]): string {
             </table>
           </div>
 
+          <div v-if="campaign.summary.coverage?.feature_rollup?.length" class="space-y-1">
+            <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Feature health</h3>
+            <ul class="divide-y divide-border">
+              <li v-for="fr in campaign.summary.coverage.feature_rollup" :key="fr.feature_key" class="py-1.5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="min-w-0 truncate font-mono text-xs font-medium">{{ fr.feature_key || '(top-level)' }}</span>
+                  <Badge :variant="coverageStateVariant(fr.state)" class="px-1.5 text-[10px]">{{ fr.state }}</Badge>
+                  <span class="text-xs text-muted-foreground">
+                    {{ fr.covered }}/{{ fr.leaf_count }} sub-feature{{ fr.leaf_count === 1 ? '' : 's' }} covered
+                    <template v-if="fr.findings"> · {{ fr.findings }} finding{{ fr.findings === 1 ? '' : 's' }}</template>
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </div>
+
           <div v-if="campaign.summary.coverage?.holes?.length" class="space-y-1">
             <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Coverage holes
@@ -519,5 +593,26 @@ function scopePathsLabel(paths: string[]): string {
         </CardContent>
       </Card>
     </template>
+
+    <AlertDialog v-model:open="deleteOpen">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this campaign?</AlertDialogTitle>
+          <AlertDialogDescription>
+            “{{ campaign?.title || campaign?.uid.slice(0, 12) }}” and its plan are removed
+            permanently. Runs it already dispatched — and the findings they produced — are kept.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            @click="deleteCampaign"
+          >
+            Delete campaign
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

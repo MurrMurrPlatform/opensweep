@@ -21,6 +21,7 @@ from domains.platform_tools import (
     ask_user,
     attach_artifact,
     complete_run,
+    confirm_area_current,
     confirm_doc_current,
     create_finding,
     create_news_item,
@@ -68,6 +69,11 @@ _TOOLS: dict[str, tuple[_ToolFn, str]] = {
         confirm_doc_current,
         "record that a documentation page was checked against the code and "
         "is still accurate",
+    ),
+    "confirm_area_current": (
+        confirm_area_current,
+        "record that an area is still correctly partitioned against the code "
+        "and needs no edit",
     ),
     "write_memory": (
         write_memory,

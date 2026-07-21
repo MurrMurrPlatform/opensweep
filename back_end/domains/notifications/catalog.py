@@ -120,6 +120,14 @@ CATALOG: tuple[NotificationEvent, ...] = (
         CATEGORY_ATTENTION,
     ),
     NotificationEvent(
+        "feature.spec_missing",
+        "Feature has no spec",
+        "A feature area was scheduled for a spec audit but has no spec yet — "
+        "run generate-specs so the contract can be verified.",
+        "warning",
+        CATEGORY_ATTENTION,
+    ),
+    NotificationEvent(
         "docs.exported",
         "Docs exported",
         "The documentation tree was exported (AGENTS.md PR).",
@@ -184,6 +192,7 @@ _KIND_MAP: dict[str, tuple[str, ...]] = {
     "sweep.generate_docs_completed": ("analysis.completed",),
     "campaign.completed": ("campaign.completed",),
     "campaign.failed": ("campaign.failed",),
+    "campaign.feature_no_spec": ("feature.spec_missing",),
     "docs.exported": ("docs.exported",),
     "news.filed": ("news.filed",),
     "repository.registered": ("repository.registered",),

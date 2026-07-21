@@ -21,6 +21,7 @@ import AreaEditReviewCard from '@/components/areas/AreaEditReviewCard.vue'
 import { MarkdownView } from '@/components/ui/markdown'
 import { PageHeader } from '@/components/ui/page-header'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -203,6 +204,35 @@ const partitionRows = computed<PartitionRow[]>(() => {
 function indent(depth: number) {
   return { paddingLeft: `${12 + depth * 20}px` }
 }
+
+// ── Tabs + collapse/expand of the subsystem tree ─────────────────────────────
+
+const activeAreaTab = ref<'subsystems' | 'features' | 'ignored'>('subsystems')
+
+const collapsedKeys = ref<Set<string>>(new Set())
+
+function toggleCollapse(key: string) {
+  const next = new Set(collapsedKeys.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedKeys.value = next
+}
+
+/** A row (group or area) has children when any subsystem key nests under it. */
+function hasChildren(key: string): boolean {
+  return subsystems.value.some((a) => a.key.startsWith(key + '/'))
+}
+
+/** Rows whose ancestor prefix is collapsed are hidden. */
+const visiblePartitionRows = computed(() =>
+  partitionRows.value.filter((row) => {
+    const segments = row.key.split('/')
+    for (let i = 1; i < segments.length; i++) {
+      if (collapsedKeys.value.has(segments.slice(0, i).join('/'))) return false
+    }
+    return true
+  }),
+)
 
 // Collapsible spec previews, keyed by uid.
 const expandedSpecs = ref<Set<string>>(new Set())
@@ -438,6 +468,7 @@ async function confirmResolveAll() {
             v-for="edit in areaStore.edits"
             :key="edit.uid"
             :edit="edit"
+            :warnings="edit.warnings"
             :resolving="resolvingUid === edit.uid"
             :disabled="(!!resolvingUid && resolvingUid !== edit.uid) || !!bulkResolving"
             @accept="acceptEdit(edit)"
@@ -463,8 +494,25 @@ async function confirmResolveAll() {
         </CardContent>
       </Card>
 
-      <template v-else>
-        <!-- ── Partition: the subsystem tree ─────────────────────────────── -->
+      <Tabs
+        v-else
+        :model-value="activeAreaTab"
+        @update:model-value="activeAreaTab = $event as 'subsystems' | 'features' | 'ignored'"
+      >
+        <TabsList class="max-w-full overflow-x-auto">
+          <TabsTrigger value="subsystems">
+            Subsystems ({{ subsystems.length }})
+          </TabsTrigger>
+          <TabsTrigger value="features">
+            Features ({{ features.length }})
+          </TabsTrigger>
+          <TabsTrigger value="ignored">
+            Ignored ({{ ignored.length }})
+          </TabsTrigger>
+        </TabsList>
+
+        <!-- ── Subsystems: the exclusive partition tree ──────────────────── -->
+        <TabsContent value="subsystems" class="mt-3">
         <Card>
           <CardHeader class="flex-row items-center justify-between space-y-0">
             <CardTitle class="flex items-center gap-1.5 text-base">
@@ -480,19 +528,23 @@ async function confirmResolveAll() {
               No subsystem areas — the exclusive partition is empty.
             </div>
             <ul v-else class="divide-y divide-border">
-              <li v-for="row in partitionRows" :key="`${row.type}:${row.key}`">
+              <li v-for="row in visiblePartitionRows" :key="`${row.type}:${row.key}`">
                 <!-- Implicit parent: a group header derived from key segments -->
-                <div
+                <button
                   v-if="row.type === 'group'"
-                  class="flex items-center gap-1.5 bg-muted/40 py-1.5 pr-3 text-xs font-semibold text-muted-foreground"
+                  type="button"
+                  class="flex w-full items-center gap-1.5 bg-muted/40 py-1.5 pr-3 text-left text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                   :style="indent(row.depth)"
+                  :title="collapsedKeys.has(row.key) ? 'Expand' : 'Collapse'"
+                  @click="toggleCollapse(row.key)"
                 >
+                  <component :is="collapsedKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5 shrink-0" />
                   <FolderTree class="h-3.5 w-3.5 shrink-0" />
                   <span class="truncate font-mono">{{ row.name }}/</span>
                   <span v-if="row.fileTotal != null" class="ml-auto font-normal tabular-nums">
                     {{ n(row.fileTotal) }} files
                   </span>
-                </div>
+                </button>
 
                 <template v-else-if="row.area">
                   <RouterLink
@@ -502,6 +554,16 @@ async function confirmResolveAll() {
                     :style="indent(row.depth)"
                   >
                     <button
+                      v-if="hasChildren(row.key)"
+                      type="button"
+                      class="mt-0.5 rounded-sm p-1 text-muted-foreground hover:text-foreground"
+                      :title="collapsedKeys.has(row.key) ? 'Expand children' : 'Collapse children'"
+                      @click.stop.prevent="toggleCollapse(row.key)"
+                    >
+                      <component :is="collapsedKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      v-else
                       type="button"
                       class="mt-0.5 rounded-sm p-1 text-muted-foreground hover:text-foreground"
                       :title="row.area.spec ? 'Toggle spec preview' : 'No spec yet'"
@@ -558,9 +620,11 @@ async function confirmResolveAll() {
             </ul>
           </CardContent>
         </Card>
+        </TabsContent>
 
         <!-- ── Features: cross-cutting spec overlays ─────────────────────── -->
-        <Card v-if="features.length">
+        <TabsContent value="features" class="mt-3">
+        <Card>
           <CardHeader class="flex-row items-center justify-between space-y-0">
             <CardTitle class="flex items-center gap-1.5 text-base">
               Features
@@ -571,7 +635,10 @@ async function confirmResolveAll() {
             </span>
           </CardHeader>
           <CardContent class="p-0">
-            <ul class="divide-y divide-border">
+            <div v-if="!features.length" class="p-4 text-sm text-muted-foreground">
+              No feature areas — cross-cutting overlays the agent proposes land here.
+            </div>
+            <ul v-else class="divide-y divide-border">
               <li v-for="a in features" :key="a.uid">
                 <RouterLink
                   :to="{ name: 'area-detail', params: { uid: a.uid } }"
@@ -621,34 +688,41 @@ async function confirmResolveAll() {
             </ul>
           </CardContent>
         </Card>
+        </TabsContent>
 
         <!-- ── Ignored: not auditable, spec says why ─────────────────────── -->
-        <Card v-if="ignored.length">
+        <TabsContent value="ignored" class="mt-3">
+        <Card>
+          <CardHeader class="flex-row items-center justify-between space-y-0">
+            <CardTitle class="flex items-center gap-1.5 text-base">
+              Ignored
+              <HelpCircle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" :title="AREA_KIND_HELP.ignore" />
+            </CardTitle>
+            <span class="text-xs text-muted-foreground">
+              not auditable; the reason lives in the spec
+            </span>
+          </CardHeader>
           <CardContent class="p-0">
-            <details>
-              <summary class="cursor-pointer select-none px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground">
-                <span class="inline-flex items-center gap-1.5">
-                  Ignored ({{ ignored.length }}) — not auditable; the reason lives in the spec
-                  <HelpCircle class="h-3.5 w-3.5 shrink-0" :title="AREA_KIND_HELP.ignore" />
-                </span>
-              </summary>
-              <ul class="divide-y divide-border border-t border-border">
-                <li v-for="a in ignored" :key="a.uid">
-                  <RouterLink
-                    :to="{ name: 'area-detail', params: { uid: a.uid } }"
-                    class="flex items-baseline gap-2 px-4 py-2 text-muted-foreground transition-colors hover:bg-accent/50"
-                    :class="{ 'opacity-60': !a.enabled }"
-                  >
-                    <span class="shrink-0 font-mono text-xs">{{ a.key }}</span>
-                    <span class="min-w-0 truncate text-xs italic" :title="a.spec">{{ specSummary(a) || 'no reason recorded' }}</span>
-                    <Badge v-if="!a.enabled" variant="outline" class="shrink-0 px-1.5 text-[10px]">disabled</Badge>
-                  </RouterLink>
-                </li>
-              </ul>
-            </details>
+            <div v-if="!ignored.length" class="p-4 text-sm text-muted-foreground">
+              Nothing ignored — every path on the map is auditable.
+            </div>
+            <ul v-else class="divide-y divide-border">
+              <li v-for="a in ignored" :key="a.uid">
+                <RouterLink
+                  :to="{ name: 'area-detail', params: { uid: a.uid } }"
+                  class="flex items-baseline gap-2 px-4 py-2 text-muted-foreground transition-colors hover:bg-accent/50"
+                  :class="{ 'opacity-60': !a.enabled }"
+                >
+                  <span class="shrink-0 font-mono text-xs">{{ a.key }}</span>
+                  <span class="min-w-0 truncate text-xs italic" :title="a.spec">{{ specSummary(a) || 'no reason recorded' }}</span>
+                  <Badge v-if="!a.enabled" variant="outline" class="shrink-0 px-1.5 text-[10px]">disabled</Badge>
+                </RouterLink>
+              </li>
+            </ul>
           </CardContent>
         </Card>
-      </template>
+        </TabsContent>
+      </Tabs>
     </template>
 
     <AlertDialog v-model:open="bulkResolveOpen">

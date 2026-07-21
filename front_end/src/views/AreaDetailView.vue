@@ -3,17 +3,20 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
-  Link2,
+  Layers,
   Pencil,
+  Sparkles,
   Trash2,
 } from 'lucide-vue-next'
 import { useAreaStore } from '@/stores/areaStore'
 import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
+import { ApiError } from '@/services/api'
 import { areaKindHelp, areaKindVariant, areaStaleTitle } from '@/lib/areas'
 import { formatRelativeTime } from '@/lib/utils'
 import AreaEditDialog from '@/components/areas/AreaEditDialog.vue'
@@ -36,7 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { AreaDetailDTO, AreaDocLink, AreaEditDTO } from '@/types/api'
+import type { AreaDetailDTO, AreaEditDTO } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -123,27 +126,6 @@ function togglePath(path: string) {
   expandedPaths.value = next
 }
 
-// ── Docs: link a suggestion into the area ────────────────────────────────────
-
-const linkingDocUid = ref('')
-
-async function linkDoc(doc: AreaDocLink) {
-  const a = area.value
-  if (!a || linkingDocUid.value) return
-  linkingDocUid.value = doc.uid
-  try {
-    const { warnings } = await areaStore.patchArea(a.uid, {
-      doc_uids: [...a.doc_uids, doc.uid],
-    })
-    toastPatch('Doc linked', doc.slug, warnings)
-    await refresh()
-  } catch (e: unknown) {
-    toast.error('Link failed', e instanceof Error ? e.message : String(e))
-  } finally {
-    linkingDocUid.value = ''
-  }
-}
-
 // ── Coverage display ─────────────────────────────────────────────────────────
 
 function outcomeVariant(outcome: string) {
@@ -190,6 +172,54 @@ async function rejectEdit(edit: AreaEditDTO) {
     toast.error('Reject failed', e instanceof Error ? e.message : String(e))
   } finally {
     resolvingUid.value = ''
+  }
+}
+
+// ── Feature hierarchy (parent feature → sub-feature leaves) ──────────────────
+
+/** Leaves lacking a spec get skipped at audit time — surface the warning + fix. */
+const specMissingLeaves = computed(() =>
+  (detail.value?.sub_features ?? []).filter((f) => !f.has_spec),
+)
+
+/** Aggregated coverage across the parent's sub-feature leaves. */
+const featureRollup = computed(() => {
+  const leaves = detail.value?.sub_features ?? []
+  return {
+    total: leaves.length,
+    covered: leaves.filter((f) => f.coverage_count > 0).length,
+    stale: leaves.filter((f) => f.stale).length,
+    missingSpec: leaves.filter((f) => !f.has_spec).length,
+  }
+})
+
+const expandedSpecs = ref<Set<string>>(new Set())
+function toggleSpec(key: string) {
+  const next = new Set(expandedSpecs.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedSpecs.value = next
+}
+
+const generatingSpecs = ref(false)
+async function generateSpecs() {
+  const repoUid = area.value?.repository_uid
+  if (!repoUid || generatingSpecs.value) return
+  generatingSpecs.value = true
+  try {
+    const result = await areaStore.generateSpecs(repoUid)
+    const targets = result.targets.length
+      ? `drafting specs for: ${result.targets.join(', ')}`
+      : undefined
+    if (result.errors.length) toast.error('Generate specs partially dispatched', result.errors.join(' · '))
+    else toast.success(result.summary || 'Generate specs dispatched', targets)
+  } catch (e: unknown) {
+    // 409 = nothing needs a spec right now.
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    if (e instanceof ApiError && e.status === 409) toast.success('Specs are up to date', msg)
+    else toast.error('Couldn’t generate specs', msg)
+  } finally {
+    generatingSpecs.value = false
   }
 }
 
@@ -269,11 +299,95 @@ async function confirmDelete() {
       <!-- ── Spec ────────────────────────────────────────────────────────── -->
       <Card>
         <CardHeader class="pb-2">
-          <CardTitle class="text-base">Spec</CardTitle>
+          <CardTitle class="text-base">{{ detail.is_feature_parent ? 'Charter (optional)' : 'Spec' }}</CardTitle>
         </CardHeader>
         <CardContent>
           <MarkdownView v-if="area.spec" :model-value="area.spec" preview-only />
-          <p v-else class="text-sm text-muted-foreground">No spec yet — edit the area to record what to check here.</p>
+          <p v-else class="text-sm text-muted-foreground">
+            {{ detail.is_feature_parent
+              ? 'No charter — a parent feature groups its sub-features; each sub-feature carries its own spec below.'
+              : 'No spec yet — edit the area to record what to check here.' }}
+          </p>
+        </CardContent>
+      </Card>
+
+      <!-- ── Feature hierarchy (parent feature → sub-feature leaves) ──────── -->
+      <Card v-if="detail.is_feature_parent">
+        <CardHeader class="flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
+          <CardTitle class="flex items-center gap-2 text-base">
+            <Layers class="h-4 w-4 text-muted-foreground" /> Sub-features
+            <span class="text-xs font-normal text-muted-foreground">
+              · {{ featureRollup.covered }}/{{ featureRollup.total }} covered
+              <template v-if="featureRollup.stale"> · {{ featureRollup.stale }} stale</template>
+            </span>
+          </CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            :loading="generatingSpecs"
+            title="Draft specs for sub-features lacking one and refresh stale specs — lands as pending area edits."
+            @click="generateSpecs"
+          >
+            <Sparkles v-if="!generatingSpecs" /> Generate specs
+          </Button>
+        </CardHeader>
+        <CardContent class="p-0">
+          <!-- No spec → audit skipped warning -->
+          <div
+            v-if="specMissingLeaves.length"
+            class="mx-4 mb-2 flex flex-wrap items-center gap-2 rounded-sm border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300"
+          >
+            <AlertTriangle class="h-4 w-4 shrink-0" />
+            <span class="min-w-0">
+              {{ specMissingLeaves.length }} sub-feature{{ specMissingLeaves.length === 1 ? '' : 's' }} ha{{ specMissingLeaves.length === 1 ? 's' : 've' }}
+              no spec — their audit is skipped until one exists.
+            </span>
+            <Button variant="outline" size="sm" class="ml-auto" :loading="generatingSpecs" @click="generateSpecs">
+              <Sparkles v-if="!generatingSpecs" /> Generate specs
+            </Button>
+          </div>
+
+          <p v-if="!detail.sub_features.length" class="px-4 pb-4 text-sm text-muted-foreground">
+            No sub-features under this feature yet.
+          </p>
+          <ul v-else class="divide-y divide-border">
+            <li v-for="leaf in detail.sub_features" :key="leaf.uid" class="px-4 py-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <RouterLink
+                  :to="{ name: 'area-detail', params: { uid: leaf.uid } }"
+                  class="min-w-0 truncate text-sm font-medium hover:underline"
+                >
+                  {{ leaf.title || leaf.key }}
+                </RouterLink>
+                <span class="truncate font-mono text-[10px] text-muted-foreground">{{ leaf.key }}</span>
+                <span
+                  v-if="leaf.stale"
+                  class="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                  title="Code changed under this sub-feature's scope since its last review"
+                />
+                <Badge v-if="!leaf.has_spec" variant="warn" class="px-1.5 text-[10px]" title="No spec — audit skipped until one exists">no spec</Badge>
+                <Badge
+                  :variant="leaf.coverage_count > 0 ? 'success' : 'secondary'"
+                  class="ml-auto px-1.5 text-[10px]"
+                  :title="`${leaf.coverage_count} coverage stamp${leaf.coverage_count === 1 ? '' : 's'}`"
+                >
+                  {{ leaf.coverage_count > 0 ? `covered ×${leaf.coverage_count}` : 'not covered' }}
+                </Badge>
+                <button
+                  v-if="leaf.spec"
+                  type="button"
+                  class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  @click="toggleSpec(leaf.key)"
+                >
+                  <component :is="expandedSpecs.has(leaf.key) ? ChevronDown : ChevronRight" class="h-3.5 w-3.5" />
+                  spec
+                </button>
+              </div>
+              <div v-if="leaf.spec && expandedSpecs.has(leaf.key)" class="mt-2 rounded-md border border-border p-3">
+                <MarkdownView :model-value="leaf.spec" preview-only />
+              </div>
+            </li>
+          </ul>
         </CardContent>
       </Card>
 
@@ -348,60 +462,38 @@ async function confirmDelete() {
         </CardContent>
       </Card>
 
-      <!-- ── Docs ────────────────────────────────────────────────────────── -->
+      <!-- ── Related docs ────────────────────────────────────────────────── -->
       <Card>
         <CardHeader class="pb-2">
-          <CardTitle class="text-base">Docs</CardTitle>
+          <CardTitle class="text-base">Related docs</CardTitle>
         </CardHeader>
         <CardContent class="space-y-3">
-          <div v-if="!detail.linked_docs.length" class="text-sm text-muted-foreground">
-            No linked docs — linked pages ride along in this area's audit prompts.
+          <div v-if="!detail.related_docs.length" class="text-sm text-muted-foreground">
+            No related docs — pages watching this area's paths are offered to its audit runs as likely-relevant context.
           </div>
-          <ul v-else class="space-y-1">
-            <li v-for="doc in detail.linked_docs" :key="doc.uid">
-              <RouterLink
-                v-if="repoSlug"
-                :to="{ name: 'documentation', params: { repoSlug }, query: { doc: doc.slug } }"
-                class="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
-              >
-                <BookOpen class="h-3.5 w-3.5" />
-                {{ doc.title || doc.slug }}
-                <span class="font-mono text-xs text-muted-foreground">{{ doc.slug }}</span>
-              </RouterLink>
-              <span v-else class="inline-flex items-center gap-1.5 text-sm">
-                <BookOpen class="h-3.5 w-3.5" />
-                {{ doc.title || doc.slug }}
-                <span class="font-mono text-xs text-muted-foreground">{{ doc.slug }}</span>
-              </span>
-            </li>
-          </ul>
-
-          <div v-if="detail.suggested_docs.length" class="space-y-1 border-t border-border pt-3">
-            <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Suggested</h3>
+          <template v-else>
+            <p class="text-xs text-muted-foreground">
+              Offered to this area's audit runs as likely-relevant context (not limited to these) — agents pull the ones they need.
+            </p>
             <ul class="space-y-1">
-              <li
-                v-for="doc in detail.suggested_docs"
-                :key="doc.uid"
-                class="flex flex-wrap items-center gap-2 text-sm"
-              >
-                <span class="min-w-0">
+              <li v-for="doc in detail.related_docs" :key="doc.uid">
+                <RouterLink
+                  v-if="repoSlug"
+                  :to="{ name: 'documentation', params: { repoSlug }, query: { doc: doc.slug } }"
+                  class="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                >
+                  <BookOpen class="h-3.5 w-3.5" />
+                  {{ doc.title || doc.slug }}
+                  <span class="font-mono text-xs text-muted-foreground">{{ doc.slug }}</span>
+                </RouterLink>
+                <span v-else class="inline-flex items-center gap-1.5 text-sm">
+                  <BookOpen class="h-3.5 w-3.5" />
                   {{ doc.title || doc.slug }}
                   <span class="font-mono text-xs text-muted-foreground">{{ doc.slug }}</span>
                 </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="h-6 px-2 text-xs"
-                  :loading="linkingDocUid === doc.uid"
-                  :disabled="!!linkingDocUid"
-                  title="Link this page to the area — it will ride along in audit prompts."
-                  @click="linkDoc(doc)"
-                >
-                  <Link2 class="h-3 w-3" /> Link
-                </Button>
               </li>
             </ul>
-          </div>
+          </template>
         </CardContent>
       </Card>
 
@@ -480,6 +572,8 @@ async function confirmDelete() {
             v-for="edit in detail.pending_edits"
             :key="edit.uid"
             :edit="edit"
+            :warnings="edit.warnings"
+            :current-scope-paths="edit.area_uid ? area.scope_paths : undefined"
             :resolving="resolvingUid === edit.uid"
             :disabled="!!resolvingUid && resolvingUid !== edit.uid"
             @accept="acceptEdit(edit)"

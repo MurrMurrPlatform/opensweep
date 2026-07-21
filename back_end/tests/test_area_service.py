@@ -22,6 +22,19 @@ class _FakeNodes:
     async def all(self):
         return list(self._store)
 
+    @staticmethod
+    def _matches(n, k, v) -> bool:
+        if k.endswith("__in"):
+            return getattr(n, k[:-4], None) in v
+        return getattr(n, k, None) == v
+
+    async def filter(self, **kwargs):
+        return [
+            n
+            for n in self._store
+            if all(self._matches(n, k, v) for k, v in kwargs.items())
+        ]
+
     async def get_or_none(self, **kwargs):
         for n in self._store:
             if all(getattr(n, k, None) == v for k, v in kwargs.items()):
@@ -188,7 +201,12 @@ async def test_accept_applies_full_replacement_and_stamps_review(stores):
     assert a.doc_uids == ["doc-1"]
     assert a.last_reviewed_at is not None  # an accepted edit counts as a review
     assert a.stale_paths == []
-    assert warnings == []  # feature areas never warn
+    # No subsystem map exists, so the feature-span check flags the feature —
+    # advisory only: the accept still applied above.
+    assert warnings == [
+        "feature scope overlaps no subsystem leaf — anchor the feature "
+        "to mapped code (propose the subsystem areas first)"
+    ]
     (e,) = stores.edits
     assert e.status == "accepted" and e.resolved_by == "reviewer"
 
@@ -530,7 +548,7 @@ async def test_area_detail_degraded_tree_never_declares_scopes_dead(
     assert entry.dead is False
 
 
-async def test_area_detail_links_and_suggests_docs(stores, detail_seams):
+async def test_area_detail_related_docs_union_linked_and_overlap(stores, detail_seams):
     a = await area_service.create_area(
         repository_uid="r1",
         key="backend",
@@ -545,11 +563,10 @@ async def test_area_detail_links_and_suggests_docs(stores, detail_seams):
         SimpleNamespace(uid="d3", slug="fe", title="FE", watch_paths=["front_end"]),
     ]
     out = await area_service.area_detail(a)
-    # Linked: best-effort — the deleted uid is skipped, not an error.
-    assert [d.uid for d in out.linked_docs] == ["d1"]
-    assert out.linked_docs[0].slug == "api"
-    # Suggested: watch overlap with the scope, minus already-linked.
-    assert [d.uid for d in out.suggested_docs] == ["d2"]
+    # One informational set: agent-proposed doc_uids first (deleted uid
+    # skipped best-effort), then watch-path overlap, no duplicates.
+    assert [d.uid for d in out.related_docs] == ["d1", "d2"]
+    assert out.related_docs[0].slug == "api"
 
 
 async def test_area_detail_relates_features_and_subsystem_leaves(

@@ -63,7 +63,13 @@ def area_seams(monkeypatch):
 
     async def fake_compose(**kwargs):
         captured["compose"] = kwargs
-        return SimpleNamespace(text="COMPOSED", agent_uid="agent1", agent_rev=2)
+        return SimpleNamespace(
+            text="COMPOSED",
+            agent_uid="agent1",
+            agent_rev=2,
+            composed_degraded=False,
+            degraded_layers=(),
+        )
 
     async def fake_policy(tier):
         captured["tier"] = tier

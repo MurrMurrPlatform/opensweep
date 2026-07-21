@@ -116,6 +116,8 @@ async def _dispatch_area(campaign, part: dict, *, spec_block: str = "") -> str:
         agent_rev=composed.agent_rev,
         trigger=_campaign_trigger(campaign),
         triggered_by=campaign.created_by or "campaign",
+        composed_degraded=composed.composed_degraded,
+        degraded_layers=composed.degraded_layers,
     )
     return run.uid
 
@@ -163,6 +165,23 @@ async def _dispatch_feature(campaign, part: dict) -> str:
                 "reason": reason,
             },
         )
+        if reason == "has no spec":
+            # Visible, actionable signal (not just a silent degrade): the
+            # feature exists but was never spec'd, so its contract could not
+            # be verified. This kind maps to the `feature.spec_missing`
+            # notification (catalog) — run generate-specs to fix it.
+            await write_audit(
+                kind="campaign.feature_no_spec",
+                subject_uid=campaign.uid,
+                subject_type="Campaign",
+                repository_uid=campaign.repository_uid,
+                actor_uid="campaign",
+                payload={
+                    "part": part.get("idx"),
+                    "area_key": area_key,
+                    "campaign_title": campaign.title or "",
+                },
+            )
         spec_block = (
             "## Note — feature spec unavailable\n"
             f"This part was planned as a feature-spec audit of area "

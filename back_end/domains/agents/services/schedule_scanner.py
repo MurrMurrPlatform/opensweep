@@ -90,6 +90,11 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
                 )
             except Exception as exc:  # noqa: BLE001 — one bad repo never stops the scan
                 result.errors.append(f"{sa.uid}: {type(exc).__name__}: {exc}")
+                # Stamp the tick even on failure (like every sibling branch):
+                # without it a failing repo re-fires this binding every beat,
+                # thrashing the audit log until the fault clears.
+                sa.last_scheduled_at = moment
+                await sa.save()
                 continue
             sa.last_scheduled_at = moment
             await sa.save()

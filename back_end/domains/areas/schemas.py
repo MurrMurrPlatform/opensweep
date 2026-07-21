@@ -45,6 +45,9 @@ class AreaEditDTO(BaseModel):
     proposed_spec: str = ""
     proposed_enabled: bool = True
     rationale: str = ""
+    # Partition warnings this edit would create — shown in the review queue
+    # before accept (advisory, never a blocker).
+    warnings: list[str] = []
     source_run_uid: str = ""
     status: AreaEditStatus = AreaEditStatus.PENDING
     resolved_by: str = ""
@@ -107,6 +110,20 @@ class RelatedAreaDTO(BaseModel):
     title: str = ""
 
 
+class SubFeatureDTO(BaseModel):
+    """A sub-feature leaf under a parent feature grouping, with its own
+    staleness + coverage count — rendered as a child row in the feature
+    tree. `is_leaf` is always True here (only leaves are audit targets)."""
+
+    uid: str
+    key: str
+    title: str = ""
+    spec: str = ""
+    stale: bool = False
+    has_spec: bool = False
+    coverage_count: int = 0
+
+
 class AreaCoverageDTO(BaseModel):
     """One Checked stamp whose covered paths overlap this area's scope."""
 
@@ -121,12 +138,21 @@ class AreaDetailDTO(BaseModel):
     scope: list[AreaScopeEntryDTO] = Field(default_factory=list)
     # "" = sized against the full tree; else why the tree was unavailable.
     tree_degraded: str = ""
-    linked_docs: list[AreaDocRefDTO] = Field(default_factory=list)
-    # Docs whose watch_paths overlap the scope but aren't linked yet.
-    suggested_docs: list[AreaDocRefDTO] = Field(default_factory=list)
+    # Docs related to this area — the agent-proposed doc_uids plus every
+    # page whose watch_paths overlap the scope. Informational, not curated:
+    # audit runs get the same set as likely-relevant leads at dispatch.
+    related_docs: list[AreaDocRefDTO] = Field(default_factory=list)
     # Feature → intersecting subsystem leaves; subsystem → features
     # referencing it.
     related_areas: list[RelatedAreaDTO] = Field(default_factory=list)
-    # Last 10 overlapping Checked stamps, newest first.
+    # Last 10 overlapping Checked stamps, newest first. For a PARENT feature
+    # this is the aggregated (rolled-up) coverage across its sub-feature
+    # leaves; a sub-feature (or any non-feature area) shows its own.
     coverage: list[AreaCoverageDTO] = Field(default_factory=list)
     pending_edits: list[AreaEditDTO] = Field(default_factory=list)
+    # Sub-feature leaves under a PARENT feature grouping (empty otherwise) —
+    # the feature tree's child rows; the parent's `coverage` above is their
+    # rollup. `is_feature_parent` flags that this area is a grouping, so its
+    # spec is a charter (not an audit target).
+    sub_features: list[SubFeatureDTO] = Field(default_factory=list)
+    is_feature_parent: bool = False

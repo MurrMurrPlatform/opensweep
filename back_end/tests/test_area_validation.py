@@ -70,10 +70,88 @@ def test_ignore_leaves_participate_in_overlap():
     assert len(warnings) == 1
 
 
-def test_feature_edits_never_warn():
+def test_feature_spanning_two_subsystems_is_clean():
     assert (
         validate_area_edit(
-            _edit("checkout-flow", kind="feature", scope_paths=["back_end"]),
+            _edit(
+                "checkout-flow",
+                kind="feature",
+                scope_paths=["back_end/checkout", "front_end/checkout"],
+            ),
+            [
+                _area("backend", scope_paths=["back_end"]),
+                _area("frontend", scope_paths=["front_end"]),
+            ],
+        )
+        == []
+    )
+
+
+def test_feature_never_warned_about_scope_overlap():
+    # Features overlay the partition: overlapping a subsystem's files is the
+    # point, not a violation — the only feature warning is the span check.
+    assert (
+        validate_area_edit(
+            _edit(
+                "checkout-flow",
+                kind="feature",
+                scope_paths=["back_end/checkout", "front_end/checkout"],
+            ),
+            [
+                _area("backend", scope_paths=["back_end"]),
+                _area("frontend", scope_paths=["front_end"]),
+                _area(
+                    "payments-flow",
+                    kind="feature",
+                    scope_paths=["back_end/checkout"],
+                ),
+            ],
+        )
+        == []
+    )
+
+
+def test_feature_confined_to_one_subsystem_warns():
+    (warning,) = validate_area_edit(
+        _edit("checkout-flow", kind="feature", scope_paths=["back_end"]),
+        [
+            _area("backend", scope_paths=["back_end"]),
+            _area("frontend", scope_paths=["front_end"]),
+        ],
+    )
+    assert "spans only subsystem 'backend'" in warning
+
+
+def test_feature_spanning_leaves_of_one_branch_still_warns():
+    # Two leaves under the same top-level branch is still one subsystem —
+    # the backend-only "feature" the span check exists to catch.
+    (warning,) = validate_area_edit(
+        _edit(
+            "delivery-flow",
+            kind="feature",
+            scope_paths=["back_end/api", "back_end/jobs"],
+        ),
+        [
+            _area("backend/api", scope_paths=["back_end/api"]),
+            _area("backend/jobs", scope_paths=["back_end/jobs"]),
+            _area("frontend", scope_paths=["front_end"]),
+        ],
+    )
+    assert "spans only subsystem 'backend'" in warning
+
+
+def test_feature_overlapping_no_subsystem_warns():
+    (warning,) = validate_area_edit(
+        _edit("ghost-flow", kind="feature", scope_paths=["nowhere"]),
+        [_area("backend", scope_paths=["back_end"])],
+    )
+    assert "overlaps no subsystem leaf" in warning
+
+
+def test_scopeless_feature_is_a_grouping_and_not_checked():
+    assert (
+        validate_area_edit(
+            _edit("checkout", kind="feature", scope_paths=[]),
             [_area("backend", scope_paths=["back_end"])],
         )
         == []

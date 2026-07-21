@@ -25,11 +25,13 @@ from domains.runs.services.sweep import (
     AuditResult,
     DeepScanResult,
     GenerateDocsResult,
+    GenerateSpecsResult,
     estimate_sweep_cost,
     run_audit,
     run_auto_audit,
     run_deep_scan,
     run_generate_docs,
+    run_generate_specs,
 )
 from domains.tenancy import require_repo_in_org
 from domains.users.schemas import UserDTO
@@ -49,8 +51,23 @@ class GenerateDocsRequest(BaseModel):
     agent_uid: str | None = None
 
 
+class GenerateSpecsRequest(BaseModel):
+    agent_uid: str | None = None
+
+
+class GenerateSpecsResultDTO(BaseModel):
+    repository_uid: str
+    run_uid: str = ""
+    targets: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
 class AuditRequest(BaseModel):
     doc_uids: list[str] = Field(default_factory=list)
+    # Area scoping (empty doc_uids only): narrow the repo-scoped ask run to
+    # these areas — their scope paths become the run's target.
+    area_uids: list[str] = Field(default_factory=list)
     # Staleness-driven selection (§F): pick the stalest / never-checked pages
     # automatically instead of naming doc_uids. Mutually exclusive with them.
     auto_select: bool = False
@@ -133,6 +150,56 @@ async def run_generate_docs_endpoint(
 
 
 @router.post(
+    "/{repository_uid}/sweep/generate-specs",
+    response_model=GenerateSpecsResultDTO,
+    operation_id="opensweep_run_generate_specs",
+)
+async def run_generate_specs_endpoint(
+    repository_uid: str,
+    req: GenerateSpecsRequest | None = None,
+    user: UserDTO = Depends(require_role("maintainer")),
+) -> GenerateSpecsResultDTO:
+    await require_repo_in_org(repository_uid, user.org_uid)
+    try:
+        await assert_runnable(repository_uid)
+    except KillSwitchActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    # In-flight guard: one generate-specs per repository at a time — a second
+    # would double-propose the same feature specs. These runs carry the
+    # generate-specs system agent's uid as their agent provenance.
+    from domains.agents.services.registry import system_agent_by_key
+
+    specs_agent = await system_agent_by_key("generate-specs")
+    candidates = await active_runs_for(repository_uid=repository_uid)
+    in_flight = [
+        r
+        for r in candidates
+        if specs_agent is not None and (r.agent_uid or "") == specs_agent.uid
+    ]
+    if in_flight:
+        raise HTTPException(
+            status_code=409,
+            detail=conflict_detail(
+                "a generate-specs run is already in progress for this repository",
+                in_flight[0],
+            ),
+        )
+
+    try:
+        result: GenerateSpecsResult = await run_generate_specs(
+            repository_uid=repository_uid,
+            triggered_by=user.uid,
+            agent_uid=req.agent_uid if req else None,
+        )
+    except LifecycleError as exc:
+        # The specs gate (no feature leaves need a spec) — a precondition
+        # conflict, not a server error.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return GenerateSpecsResultDTO(**result.__dict__)
+
+
+@router.post(
     "/{repository_uid}/sweep/audit",
     response_model=AuditResultDTO,
     operation_id="opensweep_run_audit",
@@ -153,6 +220,12 @@ async def run_audit_endpoint(
             status_code=422,
             detail="auto_select and explicit doc_uids are mutually exclusive",
         )
+    if req.area_uids and (req.doc_uids or req.auto_select):
+        raise HTTPException(
+            status_code=422,
+            detail="area_uids scope the repo-wide ask run — they cannot be "
+            "combined with doc_uids or auto_select",
+        )
     policy = await ensure_policy_for_effort(req.effort)
     if req.auto_select:
         result: AuditResult = await run_auto_audit(
@@ -167,7 +240,8 @@ async def run_audit_endpoint(
         )
         return AuditResultDTO(**result.__dict__)
 
-    # Empty doc_uids = whole-repository audit (one repo-scoped ask run).
+    # Empty doc_uids = whole-repository audit (one repo-scoped ask run),
+    # optionally narrowed to selected areas.
     result = await run_audit(
         repository_uid=repository_uid,
         doc_uids=req.doc_uids,
@@ -177,6 +251,7 @@ async def run_audit_endpoint(
         max_findings=req.max_findings,
         run_policy_uid=policy.uid,
         effort=req.effort.value,
+        area_uids=req.area_uids,
     )
     return AuditResultDTO(**result.__dict__)
 
@@ -263,7 +338,5 @@ async def sweep_estimate(
     from domains.docs.models import Doc
 
     await require_repo_in_org(repository_uid, user.org_uid)
-    n = sum(
-        1 for d in await Doc.nodes.all() if d.repository_uid == repository_uid
-    )
+    n = len(await Doc.nodes.filter(repository_uid=repository_uid))
     return estimate_sweep_cost(n)

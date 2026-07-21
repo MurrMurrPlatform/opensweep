@@ -31,6 +31,7 @@ app = Celery(
         "domains.campaigns.tasks.campaign_tick",
         "domains.runs.tasks.resume_paused",
         "domains.runs.tasks.reconcile_runs",
+        "domains.runs.tasks.dispatch_runs",
         "domains.delivery.tasks.sync_pull_requests",
         "domains.slack.tasks.deliver",
     ],

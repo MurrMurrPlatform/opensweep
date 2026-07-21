@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Activity, Bot, MessagesSquare, Plus, RefreshCw } from 'lucide-vue-next'
+import { Activity, Bot, MessagesSquare, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useRunStore } from '@/stores/runStore'
 import { useCurrentUserStore } from '@/stores/currentUserStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
@@ -26,6 +26,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -92,6 +102,32 @@ const sorted = computed(() =>
       return tb.localeCompare(ta)
     }),
 )
+
+// ── Delete (active/awaiting-input runs must be cancelled or ended first) ─────
+
+const deleteTarget = ref<RunDTO | null>(null)
+const deleting = ref(false)
+
+function deletable(r: RunDTO): boolean {
+  return !['queued', 'running', 'paused_quota', 'awaiting_input'].includes(r.status)
+}
+
+async function confirmDelete() {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  deleting.value = true
+  try {
+    await runs.remove(target.uid)
+    items.value = items.value.filter((r) => r.uid !== target.uid)
+    toast.success('Run deleted', target.title || target.uid.slice(0, 12))
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Couldn’t delete run', msg)
+  } finally {
+    deleting.value = false
+    deleteTarget.value = null
+  }
+}
 
 // ── New chat dialog ──────────────────────────────────────────────────────────
 
@@ -212,6 +248,7 @@ async function startChat() {
                 <th class="px-4 py-2 font-medium">Turns</th>
                 <th class="px-4 py-2 font-medium">Executor</th>
                 <th class="px-4 py-2 font-medium">Last activity</th>
+                <th class="px-4 py-2"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -242,6 +279,18 @@ async function startChat() {
                 <td class="px-4 py-2 tabular-nums">{{ r.turns }}</td>
                 <td class="whitespace-nowrap px-4 py-2 font-mono">{{ r.executor }}</td>
                 <td class="whitespace-nowrap px-4 py-2 text-muted-foreground">{{ formatRelativeTime(r.last_activity_at || r.updated_at) }}</td>
+                <td class="px-2 py-2 text-right">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="text-muted-foreground hover:text-destructive"
+                    :disabled="!deletable(r)"
+                    :title="deletable(r) ? 'Delete run' : 'Cancel or end the run before deleting it'"
+                    @click.stop="deleteTarget = r"
+                  >
+                    <Trash2 />
+                  </Button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -281,5 +330,26 @@ async function startChat() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog :open="!!deleteTarget" @update:open="(v: boolean) => { if (!v) deleteTarget = null }">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this run?</AlertDialogTitle>
+          <AlertDialogDescription>
+            “{{ deleteTarget?.title || deleteTarget?.uid.slice(0, 12) }}” and its transcript are
+            removed permanently. Findings the run produced are kept.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            @click="confirmDelete"
+          >
+            Delete run
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

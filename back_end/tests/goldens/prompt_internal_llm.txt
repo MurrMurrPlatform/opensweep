@@ -25,6 +25,7 @@ You have:
       - propose_doc_edit: propose a full replacement body for a documentation page; lands as a pending edit for human review
       - propose_area_edit: propose one area (subsystem | feature | ignore) for the repository's area map; lands as a pending edit for human review
       - confirm_doc_current: record that a documentation page was checked against the code and is still accurate
+      - confirm_area_current: record that an area is still correctly partitioned against the code and needs no edit
       - write_memory: record a small durable fact future runs should know (gotcha, decision, non-obvious constraint) — one paragraph
       - attach_artifact: attach non-patch supporting output (logs, traces, notes) to a run, finding, doc, memory, ticket, or pull request
       - complete_run: finish the run with the end-of-run report (summary, did / skipped / succeeded / failed / next_steps, plus coverage)

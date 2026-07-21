@@ -14,6 +14,10 @@ const DETAIL_ROUTES: Record<string, string> = {
   PullRequest: 'pull-request-detail',
   Analysis: 'analysis-detail',
   ScheduledAgent: 'scheduled-agent-detail',
+  Area: 'area-detail',
+  // feature.spec_missing is filed against the campaign that hit the no-spec
+  // part; its detail shows the feature rollup + the missing-spec signal.
+  Campaign: 'campaign-detail',
   // Pre-migration notification rows keep resolving.
   Investigation: 'scheduled-agent-detail',
 }

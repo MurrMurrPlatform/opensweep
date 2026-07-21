@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from domains.agents.models import Agent, ScheduledAgent
-from domains.docs.services.doc_freshness import watches_path
+from domains.repositories.services.path_matching import watches_path
 from domains.run_policies.services.dry_run import estimate as estimate_run
 from domains.runs.schemas import Executor
 from logging_config import logger

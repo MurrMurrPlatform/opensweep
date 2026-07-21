@@ -111,11 +111,15 @@ class FindingService:
         sort_by: str = "updated_at",
         sort_dir: str = "desc",
     ) -> list[FindingDTO]:
-        nodes = await Finding.nodes.all()
+        nodes = (
+            await Finding.nodes.filter(repository_uid=repository_uid)
+            if repository_uid
+            # intentional: repository_uid is optional here; without it this is a
+            # deliberate cross-repo listing (admin surfaces), no tenant column to push.
+            else await Finding.nodes.all()
+        )
         out = []
         for f in nodes:
-            if repository_uid and f.repository_uid != repository_uid:
-                continue
             if source_run_uid and f.source_run_uid != source_run_uid:
                 continue
             if tag and tag not in (f.tags or []):

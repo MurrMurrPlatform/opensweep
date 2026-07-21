@@ -85,7 +85,13 @@ def dispatch_seams(monkeypatch):
 
     async def fake_compose(**kwargs):
         captured["compose"] = kwargs
-        return SimpleNamespace(text="COMPOSED", agent_uid="agentX", agent_rev=2)
+        return SimpleNamespace(
+            text="COMPOSED",
+            agent_uid="agentX",
+            agent_rev=2,
+            composed_degraded=False,
+            degraded_layers=(),
+        )
 
     async def fake_trigger(**kwargs):
         captured["trigger"] = kwargs
@@ -154,7 +160,11 @@ def test_generate_docs_body_defaults_the_tree_to_the_area_map():
     flat = " ".join(_AGENT_BASES["generate-docs"]["body"].split())
     assert "An Area map exists for this repository" in flat
     assert "one page per subsystem area" in flat
-    assert "watch_paths inherited from the area's scope" in flat
+    # The scaffold is explicit: page slug = area key, so the doc tree
+    # mirrors the area hierarchy instead of coming out flat.
+    assert "whose slug IS the area's key" in flat
+    assert "watch_paths are inherited from the area's scope" in flat
+    assert "Never flatten an area key into a dashed slug" in flat
     assert "spans or splits areas" in flat
 
 

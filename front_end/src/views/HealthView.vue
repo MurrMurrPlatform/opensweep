@@ -8,6 +8,7 @@ import { useScheduledAgentStore } from '@/stores/scheduledAgentStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
+import { daysAgo } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
@@ -35,6 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { AnimatedNumber } from '@/components/ui/animated-number'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
+import CronScheduleInput from '@/components/agents/CronScheduleInput.vue'
 import type { Autonomy, DocDTO, ScheduledAgentDTO, ScopeFreshnessDTO } from '@/types/api'
 
 const docs = useDocStore()
@@ -159,12 +161,6 @@ const DIAL_OPTIONS = [
   { label: 'Auto-run on any provider', value: 'auto-run-any' },
 ]
 
-const CRON_PRESETS = [
-  { label: 'Nightly at 02:00', expr: '0 2 * * *' },
-  { label: 'Every 6 hours', expr: '0 */6 * * *' },
-  { label: 'Weekly (Mon 06:00)', expr: '0 6 * * 1' },
-]
-
 const scheduleSummary = computed(() => {
   const sa = auditScheduleBinding.value
   if (!sa || !sa.trigger.startsWith('cron:')) return null
@@ -272,14 +268,16 @@ interface FreshnessRow {
   entry: ScopeFreshnessDTO | null
 }
 
-/** One row per doc page, joined with its freshness stamp (scope_uid == doc.uid). */
+/** One row per doc page, joined with its audit-coverage stamp (scope_uid == doc.uid).
+ *  Staleness is the Doc DTO's derived `stale` field; the stamp is coverage history. */
 const rows = computed<FreshnessRow[]>(() => {
   const byScope = new Map(freshness.value.map((f) => [f.scope_uid, f]))
   return docs.list
+    .filter((doc) => !doc.archived)
     .map((doc) => ({ doc, entry: byScope.get(doc.uid) || null }))
     .sort((a, b) => {
-      // Stale and never-checked first — that's the work queue.
-      const rank = (r: FreshnessRow) => (r.doc.stale ? 0 : !r.entry ? 1 : r.entry.code_changed_since ? 2 : 3)
+      // Stale first, then never-audited — that's the work queue.
+      const rank = (r: FreshnessRow) => (r.doc.stale ? 0 : !r.entry ? 1 : 2)
       if (rank(a) !== rank(b)) return rank(a) - rank(b)
       return a.doc.slug.localeCompare(b.doc.slug)
     })
@@ -289,17 +287,8 @@ const summary = computed(() => ({
   total: rows.value.length,
   stale: rows.value.filter((r) => r.doc.stale).length,
   never: rows.value.filter((r) => !r.entry).length,
-  fresh: rows.value.filter((r) => !r.doc.stale && r.entry && !r.entry.code_changed_since).length,
+  fresh: rows.value.filter((r) => !r.doc.stale && r.entry).length,
 }))
-
-function daysAgo(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  const ms = Date.now() - new Date(iso).getTime()
-  const days = Math.floor(ms / 86_400_000)
-  if (days <= 0) return 'today'
-  if (days === 1) return '1 day ago'
-  return `${days} days ago`
-}
 
 function outcomeVariant(outcome: string): BadgeVariants['variant'] {
   if (outcome === 'clean') return 'success'
@@ -313,7 +302,7 @@ function outcomeVariant(outcome: string): BadgeVariants['variant'] {
   <div class="space-y-4">
     <PageHeader
       title="Health"
-      subtitle="Has each documentation page been looked at since the code it watches last changed? One recency stamp per page, derived from doc runs."
+      subtitle="Which pages need a review (stale = watched code moved since the last review), and when each was last audited. Staleness clears on edit, accepted edit, or confirmation — auditing alone doesn't clear it."
     >
       <div class="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" :disabled="!repoUid" @click="openSchedule">
@@ -405,19 +394,8 @@ function outcomeVariant(outcome: string): BadgeVariants['variant'] {
           </div>
           <template v-if="scheduleMode === 'cron'">
             <div class="space-y-1.5">
-              <Label for="cron-expr">Crontab (5 fields, UTC)</Label>
-              <Input id="cron-expr" v-model="cronExpr" placeholder="0 2 * * *" class="font-mono" />
-              <div class="flex flex-wrap gap-1.5 pt-0.5">
-                <Button
-                  v-for="preset in CRON_PRESETS"
-                  :key="preset.expr"
-                  variant="outline"
-                  size="sm"
-                  @click="cronExpr = preset.expr"
-                >
-                  {{ preset.label }}
-                </Button>
-              </div>
+              <Label>Schedule</Label>
+              <CronScheduleInput v-model="cronExpr" />
             </div>
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="space-y-1.5">
@@ -543,7 +521,7 @@ function outcomeVariant(outcome: string): BadgeVariants['variant'] {
         </Card>
         <Card>
           <CardContent class="p-3">
-            <div class="text-xs uppercase tracking-wide text-muted-foreground">Never checked</div>
+            <div class="text-xs uppercase tracking-wide text-muted-foreground">Never audited</div>
             <div class="mt-1 text-xl font-semibold tabular-nums text-muted-foreground"><AnimatedNumber :value="summary.never" /></div>
           </CardContent>
         </Card>
@@ -558,9 +536,8 @@ function outcomeVariant(outcome: string): BadgeVariants['variant'] {
                   <th class="px-4 py-2 text-left font-medium">Page</th>
                   <th class="px-4 py-2 text-left font-medium">Stale</th>
                   <th class="px-4 py-2 text-left font-medium">Last reviewed</th>
-                  <th class="px-4 py-2 text-left font-medium">Last checked</th>
+                  <th class="px-4 py-2 text-left font-medium">Last audited</th>
                   <th class="px-4 py-2 text-left font-medium">Outcome</th>
-                  <th class="px-4 py-2 text-left font-medium">Code changed since</th>
                   <th class="px-4 py-2 text-right font-medium"></th>
                 </tr>
               </thead>
@@ -597,12 +574,7 @@ function outcomeVariant(outcome: string): BadgeVariants['variant'] {
                     <Badge v-if="row.entry" :variant="outcomeVariant(row.entry.outcome)">
                       {{ row.entry.outcome }}
                     </Badge>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
-                  </td>
-                  <td class="px-4 py-2">
-                    <Badge v-if="!row.entry" variant="outline">never checked</Badge>
-                    <Badge v-else-if="row.entry.code_changed_since" variant="warn">code changed since</Badge>
-                    <Badge v-else variant="success">fresh</Badge>
+                    <Badge v-else variant="outline">never audited</Badge>
                   </td>
                   <td class="px-4 py-2 text-right">
                     <Button variant="ghost" size="sm" title="Audit this page's watched paths" @click="openAudit(row.doc)">

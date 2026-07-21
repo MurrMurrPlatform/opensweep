@@ -39,6 +39,11 @@ class Doc(AsyncStructuredNode):
 
     pinned = BooleanProperty(default=False, index=True)
 
+    # Retired page: kept for detail views/history but excluded from listings,
+    # briefings, export, and audit selection (parity with AreaEdit retirement).
+    # Applied on accept of a DocEdit whose proposed_archived is True.
+    archived = BooleanProperty(default=False, index=True)
+
     # Repository path prefixes this page documents. The push webhook matches
     # changed paths against these to mark the page stale.
     watch_paths = JSONProperty(default=[])
@@ -68,6 +73,10 @@ class DocEdit(AsyncStructuredNode):
     # Full replacement markdown; the UI renders the diff against the current body.
     proposed_body = StringProperty(default="")
     rationale = StringProperty(default="")
+
+    # Proposed archived state — True = the agent proposes RETIRING the page
+    # (applied on human accept; mirrors AreaEdit.proposed_enabled).
+    proposed_archived = BooleanProperty(default=False)
 
     source_run_uid = StringProperty(default="", index=True)
 

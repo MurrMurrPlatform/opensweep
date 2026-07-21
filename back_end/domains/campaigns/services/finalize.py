@@ -16,6 +16,64 @@ from infrastructure.audit import write_audit
 from logging_config import logger
 
 
+def _feature_rollup(parts: list[dict]) -> list[dict]:
+    """Aggregate feature-leaf parts up to their parent feature grouping.
+
+    Feature parts are always LEAVES (the planner never emits a part for a
+    parent feature grouping). This rolls each leaf's coverage/state up to
+    its parent key (the key minus its last "/" segment; a top-level feature
+    leaf rolls up under itself) so the digest can render the parent →
+    sub-feature tree with aggregated coverage. Pure.
+    """
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+    for p in parts:
+        if (p.get("kind") or "area") != "feature":
+            continue
+        keys = [str(k) for k in (p.get("area_keys") or []) if k]
+        leaf_key = keys[0] if keys else ""
+        parent = leaf_key.rsplit("/", 1)[0] if "/" in leaf_key else leaf_key
+        g = groups.get(parent)
+        if g is None:
+            g = {
+                "feature_key": parent,
+                "covered": 0,
+                "skipped": 0,
+                "findings": 0,
+                "leaves": [],
+                "done": 0,
+            }
+            groups[parent] = g
+            order.append(parent)
+        g["covered"] += int(p.get("covered") or 0)
+        g["skipped"] += int(p.get("skipped") or 0)
+        g["leaves"].append(
+            {
+                "area_key": leaf_key,
+                "idx": int(p["idx"]),
+                "title": p.get("title") or "",
+                "covered": int(p.get("covered") or 0),
+                "skipped": int(p.get("skipped") or 0),
+                "state": p.get("state") or "pending",
+            }
+        )
+        if (p.get("state") or "") == "done":
+            g["done"] += 1
+    out: list[dict] = []
+    for parent in order:
+        g = groups[parent]
+        total = len(g["leaves"])
+        g["leaf_count"] = total
+        # Parent coverage state: covered when every sub-feature leaf ran,
+        # partial when some did, none when none did.
+        g["state"] = (
+            "covered" if g["done"] == total else "partial" if g["done"] else "uncovered"
+        )
+        g.pop("done", None)
+        out.append(g)
+    return out
+
+
 def build_summary(
     parts: list[dict],
     findings_by_part: dict[int, list[dict]],
@@ -26,7 +84,8 @@ def build_summary(
     `findings_by_part` maps part idx → [{severity, tags, title}]; parts may
     carry `covered`/`skipped` counts (from their Checked stamps). `holes`
     are the scope paths of failed/never-run parts — the coverage debt this
-    campaign leaves behind.
+    campaign leaves behind. `coverage.feature_rollup` aggregates feature-leaf
+    parts up to their parent feature grouping (parent-feature health).
     """
     by_severity: Counter[str] = Counter()
     by_part: dict[int, int] = {}
@@ -34,6 +93,13 @@ def build_summary(
         by_part[int(idx)] = len(findings)
         for f in findings:
             by_severity[str(f.get("severity") or "medium")] += 1
+    # Fold each feature part's finding count into its rollup group.
+    rollup = _feature_rollup(parts)
+    by_leaf_idx = {int(p["idx"]): p for p in parts}
+    for g in rollup:
+        g["findings"] = sum(
+            by_part.get(leaf["idx"], 0) for leaf in g["leaves"] if leaf["idx"] in by_leaf_idx
+        )
     return {
         "counts": {
             "by_severity": dict(by_severity),
@@ -52,6 +118,7 @@ def build_summary(
                 for p in sorted(parts, key=lambda p: int(p["idx"]))
             ],
             "holes": list(holes),
+            "feature_rollup": rollup,
         },
         "failed_parts": sorted(
             int(p["idx"]) for p in parts if p.get("state") == "failed"

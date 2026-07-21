@@ -649,6 +649,9 @@ export interface DocDTO {
   stale_paths: string[]
   code_changed_at?: string | null
   last_reviewed_at?: string | null
+  /** Retired page — kept for history but hidden from the wiki, exports, briefing,
+   *  and audit selection. Retirement lands as an accepted DocEdit proposal. */
+  archived: boolean
   /** Count of pending DocEdits against this page. */
   pending_edits: number
   created_at?: string | null
@@ -685,6 +688,8 @@ export interface DocEditDTO {
   watch_paths: string[]
   /** Full replacement markdown — the UI renders the diff against current_body. */
   proposed_body: string
+  /** true = the edit proposes retiring (archiving) the page on accept. */
+  proposed_archived: boolean
   rationale: string
   source_run_uid: string
   status: DocEditStatus
@@ -716,13 +721,13 @@ export interface MemoryDTO {
 export type CheckedOutcome = 'clean' | 'findings' | 'failed'
 
 /** Row of GET /repositories/{uid}/freshness — one per Doc (scope_uid = doc uid,
- *  or the repository uid for the repo-level stamp). */
+ *  or the repository uid for the repo-level stamp). Coverage-only: staleness is
+ *  the Doc DTO's derived `stale` field, not a competing "changed since" flag. */
 export interface ScopeFreshnessDTO {
   scope_uid: string
   last_checked: string | null
   revision: string
   outcome: CheckedOutcome
-  code_changed_since: boolean
 }
 
 // ── RunPolicy ───────────────────────────────────────────────────────────────
@@ -1534,6 +1539,27 @@ export interface CampaignCoveragePart {
   state: CampaignPartState
 }
 
+/** One sub-feature leaf rolled up under its parent feature grouping. */
+export interface FeatureRollupLeaf {
+  area_key: string
+  idx: number
+  title: string
+  covered: number
+  skipped: number
+  state: string
+}
+
+/** Parent-feature health — aggregates its sub-feature leaves' coverage. */
+export interface FeatureRollup {
+  feature_key: string
+  covered: number
+  skipped: number
+  findings: number
+  leaf_count: number
+  state: string
+  leaves: FeatureRollupLeaf[]
+}
+
 /** End-of-campaign digest; {} until finalization. */
 export interface CampaignSummary {
   counts?: {
@@ -1545,6 +1571,8 @@ export interface CampaignSummary {
     parts: CampaignCoveragePart[]
     /** Scope paths of failed/never-run parts — the coverage debt left behind. */
     holes: string[]
+    /** Parent-feature health — feature-leaf parts aggregated by parent grouping. */
+    feature_rollup?: FeatureRollup[]
   }
   failed_parts?: number[]
 }
@@ -1561,8 +1589,10 @@ export interface CampaignPlanSummary {
   leaves?: number
   /** Subsystem non-leaves — groupings, not audit targets. */
   groupings?: number
-  /** Enabled feature areas. */
+  /** Enabled feature LEAVES (audit targets). */
   features?: number
+  /** Parent feature groupings (not audit targets). */
+  feature_groupings?: number
   /** Enabled ignore areas. */
   ignored?: number
   area_parts?: number
@@ -1653,6 +1683,87 @@ export interface CampaignAreasPreview {
   dead_ignore_scopes: string[]
 }
 
+// ── Analysis (whole-repo deep-scan reports) ─────────────────────────────────
+// Mirror back_end/domains/analysis/schemas.py.
+
+export type AnalysisStatus = 'in_progress' | 'complete' | 'superseded' | 'archived'
+export type QuestionStatus = 'open' | 'answered' | 'dismissed'
+
+export interface ScorecardEntry {
+  dimension: string
+  score: number | null
+  max: number
+  grade: string
+  rationale: string
+}
+
+export interface CoverageEntry {
+  area: string
+  paths: string[]
+  status: string // examined | partial | skipped
+  note: string
+}
+
+export interface StrengthEntry {
+  title: string
+  detail: string
+  paths: string[]
+}
+
+export interface ValidationEntry {
+  check: string
+  command: string
+  result: string
+  details: string
+}
+
+export interface AnalysisQuestion {
+  uid: string
+  question: string
+  why_it_matters: string
+  category: string
+  status: QuestionStatus
+  answer: string
+  answered_by: string
+  answered_at: string | null
+}
+
+export interface AnalysisDTO {
+  uid: string
+  repository_uid: string
+  source_run_uid: string
+  revision: string
+  title: string
+  status: AnalysisStatus
+  supersedes: string
+  superseded_by: string
+  executor: string
+  health_grade: string
+  health_score: number | null
+  scorecard: ScorecardEntry[]
+  confidence: string
+  limitations: string
+  stats: Record<string, unknown>
+  sections: Record<string, string>
+  coverage: CoverageEntry[]
+  strengths: StrengthEntry[]
+  validation_baseline: ValidationEntry[]
+  questions: AnalysisQuestion[]
+  finding_count: number
+  findings_by_severity: Record<string, number>
+  open_question_count: number
+  created_at: string | null
+  updated_at: string | null
+  completed_at: string | null
+}
+
+/** Response of POST /analyses/{uid}/refine — dispatches a superseding deep-scan. */
+export interface RefineAnalysisResponse {
+  analysis_uid: string
+  run_uid: string
+  supersedes: string
+}
+
 // ── Lenses (audit checklist prompts — platform rows, org-tunable) ───────────
 
 export type LensScope = 'local' | 'global'
@@ -1732,6 +1843,8 @@ export interface AreaEditDTO {
   /** false = the edit proposes retiring the area. */
   proposed_enabled: boolean
   rationale: string
+  /** Partition warnings this edit would create — shown before accept (advisory). */
+  warnings: string[]
   source_run_uid: string
   status: AreaEditStatus
   resolved_by: string
@@ -1768,7 +1881,7 @@ export interface AreaScopeEntry {
   files: string[]
 }
 
-/** A doc page reachable from an area (linked or suggested). */
+/** A doc page related to an area (agent-linked or watch-path overlap). */
 export interface AreaDocLink {
   uid: string
   slug: string
@@ -1781,6 +1894,18 @@ export interface AreaRelated {
   key: string
   kind: AreaKind
   title: string
+}
+
+/** A sub-feature leaf under a parent feature area — its own audit target with a
+ *  spec, staleness, and coverage. Parents aggregate their leaves' health. */
+export interface SubFeatureDTO {
+  uid: string
+  key: string
+  title: string
+  spec: string
+  stale: boolean
+  has_spec: boolean
+  coverage_count: number
 }
 
 /** One campaign-part coverage stamp touching this area. */
@@ -1797,11 +1922,17 @@ export interface AreaDetailDTO {
   scope: AreaScopeEntry[]
   /** '' = scope sized against the full tree; else why sizing degraded. */
   tree_degraded: string
-  linked_docs: AreaDocLink[]
-  suggested_docs: AreaDocLink[]
+  /** Agent-proposed doc_uids plus watch-path-overlap pages — informational;
+   *  audit runs get the same set as likely-relevant leads at dispatch. */
+  related_docs: AreaDocLink[]
   related_areas: AreaRelated[]
   coverage: AreaCoverageStamp[]
   pending_edits: AreaEditDTO[]
+  /** True when this feature area is a grouping parent — render its sub_features
+   *  as leaves and aggregate their coverage rather than auditing it directly. */
+  is_feature_parent: boolean
+  /** Sub-feature leaves under a parent feature (empty otherwise). */
+  sub_features: SubFeatureDTO[]
 }
 
 /** Accepting an edit applies it and returns partition warnings to eyeball. */
@@ -1814,6 +1945,17 @@ export interface AcceptAreaEditResponse {
 export interface MapAreasResponse {
   repository_uid: string
   run_uid: string
+  errors: string[]
+  summary: string
+}
+
+/** Response of POST /repositories/{uid}/sweep/generate-specs — drafts/refreshes
+ *  feature-leaf specs (409 when nothing needs a spec). `targets` = feature keys
+ *  the dispatched run will author specs for. */
+export interface GenerateSpecsResponse {
+  repository_uid: string
+  run_uid: string
+  targets: string[]
   errors: string[]
   summary: string
 }

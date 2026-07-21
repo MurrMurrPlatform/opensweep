@@ -77,7 +77,13 @@ async def test_dispatch_agent_stamps_effort_and_reasoning(monkeypatch):
         return SimpleNamespace(uid="policy-1")
 
     async def fake_compose(**kwargs):
-        return SimpleNamespace(text="intent", agent_uid="a1", agent_rev=0)
+        return SimpleNamespace(
+            text="intent",
+            agent_uid="a1",
+            agent_rev=0,
+            composed_degraded=False,
+            degraded_layers=(),
+        )
 
     monkeypatch.setattr(lifecycle, "trigger_run", fake_trigger_run)
     monkeypatch.setattr(effort_module, "ensure_policy_for_effort", fake_policy)
@@ -209,13 +215,29 @@ def runs_api(monkeypatch):
     async def fake_all():
         return nodes
 
+    async def fake_filter(**kwargs):
+        def ok(n):
+            for k, v in kwargs.items():
+                if k.endswith("__in"):
+                    if getattr(n, k[:-4]) not in v:
+                        return False
+                elif getattr(n, k) != v:
+                    return False
+            return True
+
+        return [n for n in nodes if ok(n)]
+
     async def fake_reconcile():
         return None
 
     async def fake_org_repos(org_uid):
         return {"repo1"}
 
-    monkeypatch.setattr(runs_module, "Run", SimpleNamespace(nodes=SimpleNamespace(all=fake_all)))
+    monkeypatch.setattr(
+        runs_module,
+        "Run",
+        SimpleNamespace(nodes=SimpleNamespace(all=fake_all, filter=fake_filter)),
+    )
     monkeypatch.setattr(runs_module, "reconcile_stale_runs", fake_reconcile)
     monkeypatch.setattr(runs_module, "org_repo_uids", fake_org_repos)
     return runs_module

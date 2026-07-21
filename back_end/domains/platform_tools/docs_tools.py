@@ -21,7 +21,9 @@ async def list_docs(*, repository_uid: str, **_: Any) -> list[dict[str, Any]]:
     fetch the others with read_doc. Stale pages have had code changes under
     their watch_paths since their last review — distrust them until
     verified."""
-    docs = [d for d in await Doc.nodes.all() if d.repository_uid == repository_uid]
+    docs = list(
+        await Doc.nodes.filter(repository_uid=repository_uid, archived=False)
+    )
     docs.sort(key=lambda d: (not bool(d.pinned), d.slug))
     return [
         {
@@ -63,6 +65,7 @@ async def propose_doc_edit(
     title: str = "",
     summary: str = "",
     watch_paths: list[str] | None = None,
+    archived: bool = False,
     source_run_uid: str = "",
     executor: str = "",
     **_: Any,
@@ -71,7 +74,8 @@ async def propose_doc_edit(
     slug) or a new page (new slug + title + summary + watch_paths). Slugs
     are path-like — "backend/queue-workers" files the page under the
     backend folder. Set watch_paths to the repository paths the page
-    describes so code changes there mark it for review. Lands as a pending
+    describes so code changes there mark it for review. Pass archived=true to
+    propose RETIRING a page that should no longer exist. Lands as a pending
     edit for human review — read the current page first with read_doc and
     keep pages small: prefer pruning stale prose over adding new prose."""
     e = await doc_service.propose_doc_edit(
@@ -82,6 +86,7 @@ async def propose_doc_edit(
         title=title,
         summary=summary,
         watch_paths=watch_paths,
+        archived=archived,
         source_run_uid=source_run_uid or "",
     )
     return {

@@ -1,10 +1,91 @@
-"""Pure tests for the cron schedule scanner's due-time logic."""
+"""Pure tests for the cron schedule scanner's due-time logic, plus the
+audit-stale branch's stamp-on-failure behavior (a failing repo must consume
+its tick like every sibling branch, or it re-fires every beat)."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
+from domains.agents.services import schedule_scanner
 from domains.agents.services.schedule_scanner import is_due
+from domains.runs.services import sweep
+
+NOW = datetime(2026, 7, 20, 9, 30, tzinfo=timezone.utc)  # a Monday
+
+
+class _FakeSA(SimpleNamespace):
+    async def save(self):
+        self.saved = True
+
+
+class _Nodes:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def all(self):
+        return list(self._rows)
+
+    async def get_or_none(self, uid=None, **_kw):
+        return next((r for r in self._rows if r.uid == uid), None)
+
+
+def _audit_binding(**overrides):
+    fields = dict(
+        uid="sa-audit",
+        agent_uid="agent-audit",
+        repository_uid="repo1",
+        title="Auto-audit stale pages",
+        trigger="cron:0 9 * * 1",
+        target={"limit": 3},
+        autonomy="ask-before-run",
+        enabled=True,
+        last_scheduled_at=None,
+        saved=False,
+    )
+    fields.update(overrides)
+    return _FakeSA(**fields)
+
+
+@pytest.fixture
+def audit_seams(monkeypatch):
+    sa = _audit_binding()
+    agent = SimpleNamespace(uid="agent-audit", source_url="opensweep://agent/audit-stale")
+    monkeypatch.setattr(
+        schedule_scanner, "ScheduledAgent", SimpleNamespace(nodes=_Nodes([sa]))
+    )
+    monkeypatch.setattr(
+        schedule_scanner, "Agent", SimpleNamespace(nodes=_Nodes([agent]))
+    )
+    return sa
+
+
+@pytest.mark.asyncio
+async def test_audit_stale_success_stamps_and_dispatches(audit_seams, monkeypatch):
+    async def fake_audit(*, repository_uid, limit, triggered_by):
+        return SimpleNamespace(runs_dispatched=["run-a", "run-b"])
+
+    monkeypatch.setattr(sweep, "run_auto_audit", fake_audit)
+    result = await schedule_scanner.scan_and_dispatch(now=NOW)
+    assert result.dispatched == 2
+    assert result.errors == []
+    assert audit_seams.last_scheduled_at == NOW
+    assert audit_seams.saved is True
+
+
+@pytest.mark.asyncio
+async def test_audit_stale_failure_still_stamps_the_tick(audit_seams, monkeypatch):
+    async def boom(*, repository_uid, limit, triggered_by):
+        raise RuntimeError("auto-audit exploded")
+
+    monkeypatch.setattr(sweep, "run_auto_audit", boom)
+    result = await schedule_scanner.scan_and_dispatch(now=NOW)
+    assert result.dispatched == 0
+    assert any("auto-audit exploded" in e for e in result.errors)
+    # The failing branch must consume its tick — matching every sibling — so a
+    # broken repo doesn't re-fire the binding every single beat.
+    assert audit_seams.last_scheduled_at == NOW
+    assert audit_seams.saved is True
 
 
 def test_is_due_fires_when_previous_cron_tick_is_after_last_run():

@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import ProducesBadge from '@/components/agents/ProducesBadge.vue'
+import CronScheduleInput from '@/components/agents/CronScheduleInput.vue'
 import type { AgentDTO, Autonomy, ScheduledAgentDTO } from '@/types/api'
 
 const props = defineProps<{
@@ -186,8 +187,8 @@ async function create() {
           </div>
         </div>
         <div v-if="mode === 'cron'" class="space-y-1.5">
-          <Label>Crontab (5 fields, UTC)</Label>
-          <Input v-model="cronExpr" placeholder="0 2 * * *" class="font-mono" />
+          <Label>Schedule</Label>
+          <CronScheduleInput v-model="cronExpr" />
         </div>
       </template>
 

@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from domains.areas.services import area_freshness
-from domains.areas.services.area_freshness import _MAX_STALE_PATHS, mark_areas_stale
+from domains.areas.services.area_freshness import mark_areas_stale
+from domains.repositories.services.path_matching import (
+    MAX_STALE_PATHS as _MAX_STALE_PATHS,
+)
 
 
 class _FakeArea:
@@ -30,6 +33,14 @@ def _install(monkeypatch, areas):
         @staticmethod
         async def all():
             return areas
+
+        @staticmethod
+        async def filter(**kwargs):
+            return [
+                a
+                for a in areas
+                if all(getattr(a, k) == v for k, v in kwargs.items())
+            ]
 
     monkeypatch.setattr(area_freshness, "Area", SimpleNamespace(nodes=_Nodes))
 

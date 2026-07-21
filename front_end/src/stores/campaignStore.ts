@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { apiGet, apiPost } from '@/services/api'
+import { apiDelete, apiGet, apiPost } from '@/services/api'
 import type { CampaignAreasPreview, CampaignDTO, CreateCampaignRequest } from '@/types/api'
 
 export const useCampaignStore = defineStore('campaigns', () => {
@@ -42,5 +42,11 @@ export const useCampaignStore = defineStore('campaigns', () => {
     return c
   }
 
-  return { list, fetchForRepo, get, fetchAreas, create, launch, cancel }
+  /** 409 while running/finalizing — cancel first. Child runs are kept. */
+  async function remove(uid: string): Promise<void> {
+    await apiDelete(`/campaigns/${uid}`)
+    list.value = list.value.filter((x) => x.uid !== uid)
+  }
+
+  return { list, fetchForRepo, get, fetchAreas, create, launch, cancel, remove }
 })

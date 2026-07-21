@@ -35,9 +35,10 @@ from domains.areas.schemas import (
     AreaEditStatus,
     AreaScopeEntryDTO,
     RelatedAreaDTO,
+    SubFeatureDTO,
     UpdateAreaRequest,
 )
-from domains.docs.services.doc_freshness import watches_path
+from domains.repositories.services.path_matching import watches_path
 from infrastructure.audit import write_audit
 
 
@@ -76,6 +77,7 @@ def edit_to_dto(e: AreaEdit, *, current_spec: str = "") -> AreaEditDTO:
         proposed_spec=e.proposed_spec or "",
         proposed_enabled=bool(getattr(e, "proposed_enabled", True)),
         rationale=e.rationale or "",
+        warnings=list(getattr(e, "warnings", None) or []),
         source_run_uid=e.source_run_uid or "",
         status=AreaEditStatus(e.status or "pending"),
         resolved_by=e.resolved_by or "",
@@ -101,12 +103,10 @@ def _mark_reviewed(a: Area, now: datetime) -> None:
 
 
 async def list_areas(repository_uid: str) -> list[AreaDTO]:
-    areas = [a for a in await Area.nodes.all() if a.repository_uid == repository_uid]
-    pending = [
-        e
-        for e in await AreaEdit.nodes.all()
-        if e.repository_uid == repository_uid and e.status == "pending"
-    ]
+    areas = list(await Area.nodes.filter(repository_uid=repository_uid))
+    pending = list(
+        await AreaEdit.nodes.filter(repository_uid=repository_uid, status="pending")
+    )
     counts: dict[str, int] = {}
     for e in pending:
         if e.area_uid:
@@ -120,10 +120,10 @@ async def count_pending_new_areas(repository_uid: str) -> int:
     surfaced as their own count."""
     return sum(
         1
-        for e in await AreaEdit.nodes.all()
-        if e.repository_uid == repository_uid
-        and e.status == "pending"
-        and not e.area_uid
+        for e in await AreaEdit.nodes.filter(
+            repository_uid=repository_uid, status="pending"
+        )
+        if not e.area_uid
     )
 
 
@@ -135,10 +135,8 @@ async def get_area(uid: str) -> Area:
 
 
 async def get_area_by_key(repository_uid: str, key: str) -> Area | None:
-    for a in await Area.nodes.all():
-        if a.repository_uid == repository_uid and a.key == key:
-            return a
-    return None
+    results = list(await Area.nodes.filter(repository_uid=repository_uid, key=key))
+    return results[0] if results else None
 
 
 async def create_area(
@@ -240,12 +238,11 @@ async def update_area(
 async def delete_area(uid: str, *, actor: str = "human") -> None:
     a = await get_area(uid)
     # Pending edits against a deleted area are moot.
-    for e in await AreaEdit.nodes.all():
-        if e.area_uid == uid and e.status == "pending":
-            e.status = "rejected"
-            e.resolved_by = actor
-            e.resolved_at = datetime.now(UTC)
-            await e.save()
+    for e in await AreaEdit.nodes.filter(area_uid=uid, status="pending"):
+        e.status = "rejected"
+        e.resolved_by = actor
+        e.resolved_at = datetime.now(UTC)
+        await e.save()
     await write_audit(
         kind="area.deleted",
         subject_uid=a.uid,
@@ -263,8 +260,8 @@ async def reset_areas(repository_uid: str, *, actor: str = "human") -> dict:
     history (Checked stamps) is untouched, but campaigns fall back to
     docs-derived planning until a new map is accepted. One audit event
     with counts; irreversible."""
-    areas = [a for a in await Area.nodes.all() if a.repository_uid == repository_uid]
-    edits = [e for e in await AreaEdit.nodes.all() if e.repository_uid == repository_uid]
+    areas = list(await Area.nodes.filter(repository_uid=repository_uid))
+    edits = list(await AreaEdit.nodes.filter(repository_uid=repository_uid))
     for e in edits:
         await e.delete()
     for a in areas:
@@ -293,7 +290,7 @@ def _scopes_overlap(a: list[str], b: list[str]) -> bool:
 
 async def area_detail(a: Area) -> AreaDetailDTO:
     """Everything the area detail page renders in one load: the scope sized
-    against the live tree, linked + suggested docs, related areas across
+    against the live tree, related docs, related areas across
     the subsystem/feature axis, recent coverage stamps, and pending edits.
 
     Takes the pre-loaded Area (the endpoint already fetched it for the
@@ -327,21 +324,25 @@ async def area_detail(a: Area) -> AreaDetailDTO:
             # No tree — sizing (and dead detection) degrade, never guess.
             scope.append(AreaScopeEntryDTO(path=path))
 
-    linked: list[AreaDocRefDTO] = []
+    # Related docs: the agent-proposed doc_uids plus every page whose
+    # watch_paths overlap the scope — one informational set, mirroring the
+    # likely-relevant listing audit runs get at dispatch.
+    related_docs: list[AreaDocRefDTO] = []
     for doc_uid in a.doc_uids or []:
         try:
             d = await doc_service.get_doc(str(doc_uid))
         except HTTPException:
             continue  # a linked page was deleted — best-effort, skip
-        linked.append(AreaDocRefDTO(uid=d.uid, slug=d.slug or "", title=d.title or ""))
-
-    linked_uids = {str(u) for u in (a.doc_uids or [])}
-    suggested = [
+        related_docs.append(
+            AreaDocRefDTO(uid=d.uid, slug=d.slug or "", title=d.title or "")
+        )
+    seen_doc_uids = {str(u) for u in (a.doc_uids or [])}
+    related_docs.extend(
         AreaDocRefDTO(uid=d.uid, slug=d.slug, title=d.title)
         for d in await doc_service.list_docs(a.repository_uid)
-        if d.uid not in linked_uids
+        if d.uid not in seen_doc_uids
         and _scopes_overlap(list(d.watch_paths or []), scope_paths)
-    ]
+    )
 
     # Related areas across the subsystem/feature axis: a feature shows the
     # subsystem leaves it cuts through; a subsystem shows the features
@@ -371,6 +372,45 @@ async def area_detail(a: Area) -> AreaDetailDTO:
         if _scopes_overlap(scope_paths, [str(p) for p in (r.scope_paths or [])])
     ]
 
+    # Feature hierarchy: a feature is a PARENT grouping when another enabled
+    # feature key nests under it — its sub-feature leaves are the audit
+    # targets, and its coverage rolls up across their scopes. A sub-feature
+    # (or non-feature area) shows its own coverage.
+    sub_features: list[SubFeatureDTO] = []
+    is_feature_parent = False
+    coverage_scope = scope_paths
+    if kind == "feature":
+        feature_keys = [r.key for r in rows if r.kind == "feature"] + [a.key]
+        children = [
+            r
+            for r in rows
+            if r.kind == "feature" and child_key_prefix_of(a.key, r.key)
+        ]
+        # Only direct+transitive LEAF children are audit targets.
+        leaf_children = [r for r in children if is_leaf(r.key, feature_keys)]
+        is_feature_parent = bool(leaf_children)
+        if is_feature_parent:
+            for r in sorted(leaf_children, key=lambda r: r.key):
+                child_scopes = [str(p) for p in (r.scope_paths or []) if p]
+                stamps = await checked_service.stamps_for_paths(
+                    a.repository_uid, child_scopes, limit=10
+                )
+                sub_features.append(
+                    SubFeatureDTO(
+                        uid=r.uid,
+                        key=r.key,
+                        title=r.title or "",
+                        spec=r.spec or "",
+                        stale=area_is_stale(r),
+                        has_spec=bool((r.spec or "").strip()),
+                        coverage_count=len(stamps),
+                    )
+                )
+            # Parent coverage = rollup over all sub-feature leaf scopes.
+            coverage_scope = sorted(
+                {p for r in leaf_children for p in (r.scope_paths or []) if p}
+            )
+
     coverage = [
         AreaCoverageDTO(
             run_uid=c.run_uid,
@@ -379,7 +419,7 @@ async def area_detail(a: Area) -> AreaDetailDTO:
             lens_verdicts=[v for v in (c.lens_verdicts or []) if isinstance(v, dict)],
         )
         for c in await checked_service.stamps_for_paths(
-            a.repository_uid, scope_paths, limit=10
+            a.repository_uid, coverage_scope, limit=10
         )
     ]
 
@@ -393,11 +433,12 @@ async def area_detail(a: Area) -> AreaDetailDTO:
         area=area_to_dto(a, pending_edits=len(pending)),
         scope=scope,
         tree_degraded=tree_degraded,
-        linked_docs=linked,
-        suggested_docs=suggested,
+        related_docs=related_docs,
         related_areas=related,
         coverage=coverage,
         pending_edits=pending,
+        sub_features=sub_features,
+        is_feature_parent=is_feature_parent,
     )
 
 
@@ -407,11 +448,11 @@ async def area_detail(a: Area) -> AreaDetailDTO:
 async def list_area_edits(
     repository_uid: str, *, status: str = "pending"
 ) -> list[AreaEditDTO]:
-    edits = [
-        e
-        for e in await AreaEdit.nodes.all()
-        if e.repository_uid == repository_uid and (not status or e.status == status)
-    ]
+    edits = list(
+        await AreaEdit.nodes.filter(repository_uid=repository_uid, status=status)
+        if status
+        else await AreaEdit.nodes.filter(repository_uid=repository_uid)
+    )
     edits.sort(key=lambda e: e.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
     out: list[AreaEditDTO] = []
     for e in edits:
@@ -456,14 +497,12 @@ async def propose_area_edit(
     area_uid = target.uid if target else ""
 
     if source_run_uid:
-        for e in await AreaEdit.nodes.all():
-            if (
-                e.repository_uid == repository_uid
-                and e.status == "pending"
-                and e.source_run_uid == source_run_uid
-                and (e.area_uid or "") == area_uid
-                and (area_uid or e.key == key)
-            ):
+        for e in await AreaEdit.nodes.filter(
+            repository_uid=repository_uid,
+            status="pending",
+            source_run_uid=source_run_uid,
+        ):
+            if (e.area_uid or "") == area_uid and (area_uid or e.key == key):
                 await e.delete()
 
     e = AreaEdit(
@@ -488,14 +527,12 @@ async def propose_area_edit(
     # otherwise only collide at accept time, long after it can react.
     rows = [r for r in await _repo_area_rows(repository_uid) if r["key"] != key]
     if source_run_uid:
-        for other in await AreaEdit.nodes.all():
-            if (
-                other.repository_uid == repository_uid
-                and other.status == "pending"
-                and other.source_run_uid == source_run_uid
-                and other.uid != e.uid
-                and (other.key or "") != key
-            ):
+        for other in await AreaEdit.nodes.filter(
+            repository_uid=repository_uid,
+            status="pending",
+            source_run_uid=source_run_uid,
+        ):
+            if other.uid != e.uid and (other.key or "") != key:
                 rows.append(
                     {
                         "key": other.key or "",
@@ -505,6 +542,8 @@ async def propose_area_edit(
                     }
                 )
     warnings = validate_area_edit(e, rows) if enabled else []
+    e.warnings = warnings  # persist so the review queue shows them before accept
+    await e.save()
 
     await write_audit(
         kind="area_edit.proposed",
@@ -564,8 +603,10 @@ def validate_area_fields(
     `existing_areas` rows carry {key, kind, scope_paths, enabled}. Checks the
     partition invariants a human should eyeball before accepting: leaf-vs-leaf
     scope overlap for subsystem/ignore areas (parent/child keys exempt — a
-    parent legitimately spans its children) and ignore areas proposed without
-    a reason. Feature areas are overlays: never warned about.
+    parent legitimately spans its children), ignore areas proposed without
+    a reason, and feature areas that don't cut across the subsystem
+    partition (a single-subsystem "feature" is a subsystem echo, which the
+    map-areas brief forbids — this is its in-loop enforcement).
     """
     warnings: list[str] = []
     kind = kind or "subsystem"
@@ -575,6 +616,7 @@ def validate_area_fields(
             "files are not auditable"
         )
     if kind == "feature":
+        warnings.extend(_feature_span_warnings(scope_paths, existing_areas))
         return warnings
 
     enabled = [a for a in existing_areas if a.get("enabled", True)]
@@ -603,6 +645,42 @@ def validate_area_fields(
     return warnings
 
 
+def _feature_span_warnings(
+    scope_paths: list[str], existing_areas: list[dict]
+) -> list[str]:
+    """A feature is cross-cutting by definition: its scope must overlap
+    subsystem leaves under at least two distinct top-level subsystem
+    branches. Scopeless features are parent groupings (like scopeless
+    subsystem parents) and are not checked."""
+    if not scope_paths:
+        return []
+    enabled = [a for a in existing_areas if a.get("enabled", True)]
+    enabled_keys = [a["key"] for a in enabled if a.get("key")]
+    branches: set[str] = set()
+    for other in enabled:
+        other_key = other.get("key") or ""
+        if not other_key or other.get("kind", "subsystem") != "subsystem":
+            continue
+        if not is_leaf(other_key, enabled_keys):
+            continue
+        if _scopes_overlap(scope_paths, [str(p) for p in other.get("scope_paths") or []]):
+            branches.add(other_key.split("/", 1)[0])
+    if not branches:
+        return [
+            "feature scope overlaps no subsystem leaf — anchor the feature "
+            "to mapped code (propose the subsystem areas first)"
+        ]
+    if len(branches) == 1:
+        only = next(iter(branches))
+        return [
+            f"feature spans only subsystem '{only}' — a feature must cut "
+            "across at least two subsystems (e.g. backend AND frontend); "
+            "widen its scope to the full end-to-end flow or model it as a "
+            "subsystem"
+        ]
+    return []
+
+
 async def _repo_area_rows(repository_uid: str) -> list[dict]:
     return [
         {
@@ -611,8 +689,7 @@ async def _repo_area_rows(repository_uid: str) -> list[dict]:
             "scope_paths": list(a.scope_paths or []),
             "enabled": bool(a.enabled),
         }
-        for a in await Area.nodes.all()
-        if a.repository_uid == repository_uid
+        for a in await Area.nodes.filter(repository_uid=repository_uid)
     ]
 
 

@@ -6,7 +6,7 @@ follow the standard tenancy guard; per-campaign routes resolve the
 repository through the node.
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user, require_role
@@ -93,6 +93,20 @@ async def launch_campaign(uid: str, user: UserDTO = Depends(require_role("mainta
     c = await campaign_service.get(uid)
     await require_repo_in_org(c.repository_uid, user.org_uid)
     return campaign_service.to_dto(await campaign_service.launch(uid, actor_uid=user.uid))
+
+
+@router.delete(
+    "/campaigns/{uid}",
+    status_code=204,
+    operation_id="opensweep_campaign_delete",
+)
+async def delete_campaign(uid: str, user: UserDTO = Depends(require_role("maintainer"))):
+    """Delete the campaign record. 409 while running/finalizing — cancel
+    first. Child runs are kept (they are the audit record)."""
+    c = await campaign_service.get(uid)
+    await require_repo_in_org(c.repository_uid, user.org_uid)
+    await campaign_service.delete(uid, actor_uid=user.uid)
+    return Response(status_code=204)
 
 
 class CancelCampaignRequest(BaseModel):

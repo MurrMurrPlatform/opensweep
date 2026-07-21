@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
-from domains.areas.models import Area
+from domains.areas.models import Area, area_is_stale, is_leaf
 from domains.docs.models import Doc
 from domains.runs.schemas import RunTrigger
 from domains.runs.services._intent_helpers import (
@@ -51,6 +51,16 @@ async def _workflow_prompt(repository_uid: str, stage: str) -> str | None:
 class GenerateDocsResult:
     repository_uid: str
     run_uid: str = ""
+    errors: list[str] = field(default_factory=list)
+    summary: str = ""
+
+
+@dataclass
+class GenerateSpecsResult:
+    repository_uid: str
+    run_uid: str = ""
+    # Feature-leaf keys the run was told to draft/refresh (no-spec or stale).
+    targets: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     summary: str = ""
 
@@ -128,6 +138,8 @@ async def run_generate_docs(
             stage="discover",
             agent_uid=composed.agent_uid,
             agent_rev=composed.agent_rev,
+            composed_degraded=composed.composed_degraded,
+            degraded_layers=composed.degraded_layers,
             trigger=RunTrigger.MANUAL,
             triggered_by=triggered_by or "generate-docs",
         )
@@ -152,6 +164,111 @@ async def run_generate_docs(
         actor_uid=triggered_by or "generate-docs",
         payload={
             "run_uid": result.run_uid,
+            "errors": len(result.errors),
+        },
+    )
+
+    return result
+
+
+async def feature_leaf_spec_targets(repository_uid: str) -> list[Area]:
+    """The enabled feature LEAVES that need a spec drafted or refreshed.
+
+    A feature is a leaf when no other enabled feature key nests under it
+    (leaf-ness computed over the feature key set only — parent feature
+    groupings are charters, never audit/spec targets). A leaf is a target
+    when it has NO spec, or its spec is STALE (code moved under it since the
+    last review — the unified staleness axis). Sorted by key for a stable
+    listing."""
+    rows = [
+        a
+        for a in await Area.nodes.all()
+        if a.repository_uid == repository_uid
+        and bool(a.enabled)
+        and a.kind == "feature"
+    ]
+    feature_keys = [a.key for a in rows]
+    targets = [
+        a
+        for a in rows
+        if is_leaf(a.key, feature_keys)
+        and (not (a.spec or "").strip() or area_is_stale(a))
+    ]
+    targets.sort(key=lambda a: a.key)
+    return targets
+
+
+async def run_generate_specs(
+    *,
+    repository_uid: str,
+    triggered_by: str = "",
+    agent_uid: Optional[str] = None,
+) -> GenerateSpecsResult:
+    """Dispatch one generate-specs LLM run (mirror of run_generate_docs).
+
+    The LLM drafts specs for the feature LEAVES that lack one and refreshes
+    the ones whose spec went stale, landing each as a pending AreaEdit
+    (proposed_spec) via `propose_area_edit` for human accept — it never
+    writes a spec directly.
+
+    Gated on a feature map existing: a repo with no enabled feature areas
+    that need a spec has nothing to generate, so the gate raises
+    LifecycleError BEFORE any dispatch — the API converts it to a 409.
+    """
+    targets = await feature_leaf_spec_targets(repository_uid)
+    if not targets:
+        raise LifecycleError(
+            "no feature leaves need a spec — map feature areas first, or every "
+            "feature spec is already current"
+        )
+
+    result = GenerateSpecsResult(
+        repository_uid=repository_uid, targets=[a.key for a in targets]
+    )
+
+    try:
+        targets_listing = _feature_spec_targets_listing(targets)
+        prompt_body = await load_agent_prompt_body(agent_uid)
+        composed = await _generate_specs_intent(
+            repository_uid=repository_uid,
+            targets_listing=targets_listing,
+        )
+        run = await trigger_run(
+            repository_uid=repository_uid,
+            intent=composed.text,
+            playbook="ask",
+            title="Generate feature specs",
+            stage="discover",
+            agent_uid=composed.agent_uid,
+            agent_rev=composed.agent_rev,
+            composed_degraded=composed.composed_degraded,
+            degraded_layers=composed.degraded_layers,
+            trigger=RunTrigger.MANUAL,
+            triggered_by=triggered_by or "generate-specs",
+        )
+        result.run_uid = run.uid
+    except LifecycleError as exc:
+        msg = f"generate-specs: {exc}"
+        logger.warning(f"sweep: dispatch failed — {msg}")
+        result.errors.append(msg)
+    except Exception as exc:  # noqa: BLE001
+        msg = f"generate-specs: {type(exc).__name__}: {exc}"
+        logger.warning(f"sweep: unexpected — {msg}")
+        result.errors.append(msg)
+
+    result.summary = (
+        f"Generate specs: {'1 LLM run dispatched' if result.run_uid else 'no run dispatched'} "
+        f"for {len(targets)} feature leaf/leaves"
+    )
+
+    await write_audit(
+        kind="sweep.generate_specs_completed",
+        subject_uid=repository_uid,
+        subject_type="Repository",
+        actor_uid=triggered_by or "generate-specs",
+        payload={
+            "run_uid": result.run_uid,
+            "targets": result.targets,
             "errors": len(result.errors),
         },
     )
@@ -225,6 +342,8 @@ async def run_map_areas(
             stage="discover",
             agent_uid=composed.agent_uid,
             agent_rev=composed.agent_rev,
+            composed_degraded=composed.composed_degraded,
+            degraded_layers=composed.degraded_layers,
             trigger=trigger,
             triggered_by=triggered_by or "map-areas",
         )
@@ -256,6 +375,35 @@ async def run_map_areas(
     return result
 
 
+def _area_scope_block(areas: list[Area]) -> str:
+    """The structural scope contract for an area-scoped ask run: paths per
+    area, with feature specs inlined as the contract to verify (mirrors
+    campaign feature parts) and subsystem specs as guidance."""
+    lines = [
+        "Scope this run to the following areas from the reviewed area map. "
+        "Your scope is ONLY their paths — do not investigate outside it.",
+    ]
+    for a in areas:
+        label = a.title or a.key
+        lines.append("")
+        lines.append(f"## {label} — `{a.key}` ({a.kind})")
+        for p in a.scope_paths or []:
+            lines.append(f"- {p}")
+        spec = (a.spec or "").strip()
+        if not spec:
+            continue
+        lines.append("")
+        if a.kind == "feature":
+            lines.append(
+                "Feature spec — verify the implementation matches this "
+                "contract end-to-end:"
+            )
+        else:
+            lines.append("Area spec — what to check here:")
+        lines.append(spec)
+    return "\n".join(lines)
+
+
 async def run_audit(
     *,
     repository_uid: str,
@@ -266,6 +414,7 @@ async def run_audit(
     max_findings: Optional[int] = None,
     run_policy_uid: Optional[str] = None,
     effort: str = "",
+    area_uids: Optional[list[str]] = None,
 ) -> AuditResult:
     """Dispatch one scoped audit Run per selected doc page.
 
@@ -273,6 +422,9 @@ async def run_audit(
     "focus on security of the auth flows" instead of picking categories.
     max_findings is the numeric budget knob — it lands as an intent line
     (per run, so a 3-page audit with max_findings=5 caps each page at 5).
+    area_uids (empty doc_uids only) narrows the repo-scoped run to the
+    selected areas: their scope paths become the run's target and their
+    specs ride along in the structural block.
     """
     if max_findings:
         budget = (
@@ -290,6 +442,37 @@ async def run_audit(
     # directly, no per-page fan out. This is the normal
     # path before the first Generate docs has populated the tree.
     if not doc_uids:
+        # Optional area scoping: the selected areas' paths become the run's
+        # target and their specs the structural contract.
+        structural = "The whole repository (no doc-page scoping)."
+        target: Optional[dict] = None
+        title = "Repository audit"
+        if area_uids:
+            wanted_areas = set(area_uids)
+            areas = sorted(
+                (
+                    a
+                    for a in await Area.nodes.all()
+                    if a.uid in wanted_areas
+                    and a.repository_uid == repository_uid
+                ),
+                key=lambda a: a.key,
+            )
+            for missing in sorted(wanted_areas - {a.uid for a in areas}):
+                result.errors.append(f"area={missing}: not found in repository")
+            if not areas:
+                result.summary = "Audit: no run dispatched (no matching areas)"
+                return result
+            structural = _area_scope_block(areas)
+            target = {
+                "area_keys": [a.key for a in areas],
+                "paths": sorted({p for a in areas for p in a.scope_paths or []}),
+            }
+            keys = [a.key for a in areas]
+            shown = ", ".join(keys[:3])
+            title = f"Audit — {shown}" + (
+                f" +{len(keys) - 3}" if len(keys) > 3 else ""
+            )
         prompt_body = await load_agent_prompt_body(agent_uid)
         if prompt_body is None:
             prompt_body = await _workflow_prompt(repository_uid, "ask")
@@ -305,7 +488,7 @@ async def run_audit(
             repo_guidance="",
             custom_intent=custom_intent,
             prompt_body=prompt_body,
-            structural="The whole repository (no doc-page scoping).",
+            structural=structural,
         )
         intent = composed.text
         try:
@@ -313,7 +496,8 @@ async def run_audit(
                 repository_uid=repository_uid,
                 intent=intent,
                 playbook="ask",
-                title="Repository audit",
+                title=title,
+                target=target,
                 run_policy_uid=run_policy_uid,
                 effort=effort,
                 trigger=RunTrigger.MANUAL,
@@ -336,6 +520,7 @@ async def run_audit(
             actor_uid=triggered_by or "audit",
             payload={
                 "doc_count": 0,
+                "area_count": len(area_uids or []),
                 "runs_dispatched": len(result.runs_dispatched),
                 "errors": len(result.errors),
             },
@@ -415,14 +600,19 @@ async def run_auto_audit(
 ) -> AuditResult:
     """Staleness-driven audit (§F): auto-select the pages that most need a
     look (never checked, then longest-stale) and fan out through run_audit.
+    Stale FEATURE leaves are re-audited too — one implementation-gaps audit
+    scoped to them (run_audit's area path inlines each feature's spec as the
+    contract to verify), so features are no longer only covered by `full`
+    campaigns.
 
-    Zero targets returns an empty result WITHOUT dispatching — run_audit's
-    empty-doc_uids path means "whole repository", which is never what a
-    nothing-is-stale tick should do."""
+    Zero targets (no stale docs AND no stale feature leaves) returns an empty
+    result WITHOUT dispatching — run_audit's empty-doc_uids path means "whole
+    repository", which is never what a nothing-is-stale tick should do."""
     from domains.runs.services.audit_selection import select_audit_targets
 
     targets = await select_audit_targets(repository_uid, limit=limit)
-    if not targets:
+    feature_leaves = await _select_stale_feature_leaves(repository_uid)
+    if not targets and not feature_leaves:
         result = AuditResult(
             repository_uid=repository_uid,
             doc_count=0,
@@ -433,24 +623,53 @@ async def run_auto_audit(
             subject_uid=repository_uid,
             subject_type="Repository",
             actor_uid=triggered_by or "auto-audit",
-            payload={"selected": 0},
+            payload={"selected": 0, "feature_leaves": 0},
         )
         return result
 
-    result = await run_audit(
-        repository_uid=repository_uid,
-        doc_uids=[t.doc_uid for t in targets],
-        triggered_by=triggered_by or "auto-audit",
-        agent_uid=agent_uid,
-        custom_intent=custom_intent,
-        max_findings=max_findings,
-        run_policy_uid=run_policy_uid,
-        effort=effort,
-    )
+    result = AuditResult(repository_uid=repository_uid, doc_count=len(targets))
+    if targets:
+        result = await run_audit(
+            repository_uid=repository_uid,
+            doc_uids=[t.doc_uid for t in targets],
+            triggered_by=triggered_by or "auto-audit",
+            agent_uid=agent_uid,
+            custom_intent=custom_intent,
+            max_findings=max_findings,
+            run_policy_uid=run_policy_uid,
+            effort=effort,
+        )
+    # Stale feature leaves → one implementation-gaps audit scoped to them via
+    # run_audit's area path (feature specs ride along as the contract). A
+    # feature part in a campaign would do the same; here we dispatch directly.
+    if feature_leaves:
+        feature_result = await run_audit(
+            repository_uid=repository_uid,
+            doc_uids=[],
+            area_uids=[a.uid for a in feature_leaves],
+            triggered_by=triggered_by or "auto-audit",
+            agent_uid=agent_uid,
+            custom_intent=(
+                "Audit these feature flows for implementation gaps: verify the "
+                "code satisfies each feature's spec contract end-to-end."
+            ),
+            max_findings=max_findings,
+            run_policy_uid=run_policy_uid,
+            effort=effort,
+        )
+        result.runs_dispatched.extend(feature_result.runs_dispatched)
+        result.errors.extend(feature_result.errors)
+
     result.selected = [
         {"doc_uid": t.doc_uid, "slug": t.slug, "reason": t.reason} for t in targets
+    ] + [
+        {"area_key": a.key, "slug": a.key, "reason": "stale-feature"}
+        for a in feature_leaves
     ]
-    result.summary = f"Auto-audit: {result.summary} ({len(targets)} auto-selected)"
+    result.summary = (
+        f"Auto-audit: {len(targets)} stale page(s) + {len(feature_leaves)} "
+        f"stale feature leaf/leaves, {len(result.runs_dispatched)} run(s) dispatched"
+    )
     await write_audit(
         kind="sweep.auto_audit_completed",
         subject_uid=repository_uid,
@@ -458,11 +677,45 @@ async def run_auto_audit(
         actor_uid=triggered_by or "auto-audit",
         payload={
             "selected": len(targets),
+            "feature_leaves": len(feature_leaves),
             "reasons": {t.doc_uid: t.reason for t in targets},
             "runs_dispatched": len(result.runs_dispatched),
         },
     )
     return result
+
+
+async def _select_stale_feature_leaves(repository_uid: str) -> list[Area]:
+    """Enabled feature LEAVES whose spec is stale (code moved under them since
+    last review) AND that have a spec to verify — the auto-audit re-audit
+    targets. Feature leaves lacking a spec are the generate-specs flow's job,
+    not an audit's (there is no contract to check yet). Excludes leaves an
+    active run already covers (its target.area_keys), so a tick never
+    double-dispatches the same feature."""
+    from domains.runs.services.active_runs import active_runs_for
+
+    rows = [
+        a
+        for a in await Area.nodes.all()
+        if a.repository_uid == repository_uid
+        and bool(a.enabled)
+        and a.kind == "feature"
+    ]
+    feature_keys = [a.key for a in rows]
+    in_flight_keys: set[str] = set()
+    for run in await active_runs_for(repository_uid=repository_uid):
+        for k in (dict(run.target or {}).get("area_keys") or []):
+            in_flight_keys.add(str(k))
+    leaves = [
+        a
+        for a in rows
+        if is_leaf(a.key, feature_keys)
+        and (a.spec or "").strip()
+        and area_is_stale(a)
+        and a.key not in in_flight_keys
+    ]
+    leaves.sort(key=lambda a: a.key)
+    return leaves
 
 
 @dataclass
@@ -547,6 +800,8 @@ async def run_deep_scan(
             stage="analysis",
             agent_uid=composed.agent_uid,
             agent_rev=composed.agent_rev,
+            composed_degraded=composed.composed_degraded,
+            degraded_layers=composed.degraded_layers,
             run_policy_uid=run_policy_uid,
             effort=effort,
             trigger=RunTrigger.MANUAL,
@@ -726,6 +981,40 @@ async def _generate_docs_intent(
     )
 
 
+def _feature_spec_targets_listing(targets: list[Area]) -> str:
+    """The feature leaves the generate-specs run must draft/refresh: key,
+    title, scope paths, whether a spec exists, and whether it went stale."""
+    lines: list[str] = []
+    for a in targets:
+        paths = ", ".join(str(p) for p in (a.scope_paths or [])) or "(no scope paths)"
+        has_spec = bool((a.spec or "").strip())
+        why = "stale — refresh" if has_spec else "no spec — draft"
+        lines.append(f"- {a.key}: {a.title or a.key} :: scope: {paths} :: {why}")
+    return "\n".join(lines)
+
+
+async def _generate_specs_intent(
+    *,
+    repository_uid: str,
+    targets_listing: str,
+    prompt_body: Optional[str] = None,
+):
+    # The seeded "generate-specs" agent base is the instructions layer (org
+    # override applied; an explicit prompt or the repo's "discover" stage pin
+    # replaces it via prompt_body). The propose_area_edit tooling contract
+    # (spec-author variant) rides in the structural slot so no override can
+    # displace it; the target feature leaves land in the existing-state slot.
+    from domains.agents.services.composition import compose_agent_intent
+
+    return await compose_agent_intent(
+        repository_uid=repository_uid,
+        agent_key="generate-specs",
+        prompt_body=prompt_body,
+        structural=_GENERATE_SPECS_TOOLING_CONTRACT,
+        existing_state_listing=targets_listing,
+    )
+
+
 def _audit_intent(
     *,
     doc: Doc,
@@ -780,6 +1069,22 @@ proposal creates — against the live map and your own earlier proposals
 this run. Fix them by re-proposing; finish with zero warnings. Read a
 doc page's body with `read_doc(slug)` only when you actually need it —
 the listing below is metadata only."""
+
+
+# Code-owned tooling contract for generate-specs runs — lands in the
+# structural slot so an org overlay can never displace it. The task
+# instructions are the seeded "generate-specs" agent base. The target
+# feature leaves arrive via build_intent's existing-state slot.
+_GENERATE_SPECS_TOOLING_CONTRACT = """# Tooling
+
+Write tool — `propose_area_edit(key, kind, title, scope_paths, spec,
+doc_uids, rationale, enabled)`. Call it once per feature leaf to propose
+its spec: pass the leaf's exact `key`, `kind="feature"`, and the drafted
+or refreshed contract as `spec`. Each call lands a pending AreaEdit
+(proposed_spec) for human accept — you never write a spec directly. Leave
+scope_paths/doc_uids as the leaf already has them unless the flow's real
+entry points changed. Read the current code at each leaf's scope paths
+with your native file tools before writing its contract."""
 
 
 _AUDIT_INTENT_TEMPLATE = """Audit the code behind this documentation page.

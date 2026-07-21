@@ -18,7 +18,7 @@ def _doc(uid, watch, *, title="", slug=None):
 
 def _matched(area, paths):
     """The files an area's scope actually covers (planner scope semantics)."""
-    from domains.docs.services.doc_freshness import watches_path
+    from domains.repositories.services.path_matching import watches_path
 
     return {p for p in paths if watches_path(area["scope_paths"], p)}
 

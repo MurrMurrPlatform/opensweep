@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Ban,
   Bot,
@@ -13,6 +13,7 @@ import {
   Save,
   SendHorizontal,
   SquareKanban,
+  Trash2,
   Wifi,
   WifiOff,
 } from 'lucide-vue-next'
@@ -24,6 +25,17 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/ui/error-state'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { useUiStore } from '@/stores/uiStore'
 import RunTranscript from '@/components/runs/RunTranscript.vue'
 import RunFilesPanel from '@/components/runs/RunFilesPanel.vue'
 import CommentThread from '@/components/comments/CommentThread.vue'
@@ -544,6 +556,37 @@ const statusLabel = computed(() => (run.value ? runStatusLabel(run.value) : ''))
 const isActiveRun = computed(() =>
   Boolean(run.value && ['queued', 'running', 'paused_quota'].includes(run.value.status)),
 )
+
+// ── Delete (settled runs only — active/awaiting-input hold a turn/workspace) ─
+
+const router = useRouter()
+const uiStore = useUiStore()
+const deleteOpen = ref(false)
+const deleting = ref(false)
+const deletable = computed(() =>
+  Boolean(
+    run.value &&
+      !['queued', 'running', 'paused_quota', 'awaiting_input'].includes(run.value.status),
+  ),
+)
+
+async function deleteRun() {
+  if (!run.value || deleting.value) return
+  deleteOpen.value = false
+  deleting.value = true
+  try {
+    await runs.remove(uid.value)
+    socket.value?.close()
+    toast.success('Run deleted', run.value.title || uid.value.slice(0, 12))
+    const repoSlug = uiStore.currentRepoSlug
+    void router.push(repoSlug ? { name: 'runs', params: { repoSlug } } : { name: 'overview' })
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Couldn’t delete run', msg)
+  } finally {
+    deleting.value = false
+  }
+}
 const isLiveRun = computed(() => Boolean(run.value && isLiveRunStatus(run.value.status)))
 const showWorking = computed(
   () => isLiveRun.value || awaitingReply.value || restPending.value,
@@ -700,6 +743,17 @@ function firstString(...values: unknown[]): string {
             @click="endRun"
           >
             <OctagonX /> End run
+          </Button>
+          <Button
+            v-if="deletable"
+            variant="outline"
+            size="sm"
+            class="text-destructive hover:text-destructive"
+            :loading="deleting"
+            title="Delete this run and its transcript"
+            @click="deleteOpen = true"
+          >
+            <Trash2 /> Delete
           </Button>
         </div>
       </PageHeader>
@@ -905,6 +959,27 @@ function firstString(...values: unknown[]): string {
         title="Discussion"
       />
       <SaveAsAgentDialog v-model:open="saveAgentOpen" :prefill="saveAgentPrefill()" />
+
+      <AlertDialog v-model:open="deleteOpen">
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this run?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{{ run.title || run.uid.slice(0, 12) }}” and its transcript are removed
+              permanently. Findings the run produced are kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              @click="deleteRun"
+            >
+              Delete run
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </template>
   </div>
 </template>

@@ -3,8 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { CalendarClock } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import CronScheduleInput from '@/components/agents/CronScheduleInput.vue'
 import {
   Select,
   SelectContent,
@@ -50,12 +50,6 @@ const DIAL_OPTIONS = [
   { label: 'Ask before run', value: 'ask-before-run' },
   { label: 'Auto-run on free (local) compute', value: 'auto-run-cheap' },
   { label: 'Auto-run on any provider', value: 'auto-run-any' },
-]
-
-const CRON_PRESETS = [
-  { label: 'Nightly at 02:00', expr: '0 2 * * *' },
-  { label: 'Every 6 hours', expr: '0 */6 * * *' },
-  { label: 'Weekly (Mon 06:00)', expr: '0 6 * * 1' },
 ]
 
 function hydrate() {
@@ -125,19 +119,8 @@ function save() {
         </div>
       </div>
       <div v-if="mode === 'cron'" class="space-y-1.5">
-        <Label>Crontab (5 fields, UTC)</Label>
-        <Input v-model="cronExpr" placeholder="0 2 * * *" class="font-mono" />
-        <div class="flex flex-wrap gap-1.5 pt-0.5">
-          <Button
-            v-for="preset in CRON_PRESETS"
-            :key="preset.expr"
-            variant="outline"
-            size="sm"
-            @click="cronExpr = preset.expr"
-          >
-            {{ preset.label }}
-          </Button>
-        </div>
+        <Label>Schedule</Label>
+        <CronScheduleInput v-model="cronExpr" />
       </div>
       <p v-if="hint" class="text-xs text-muted-foreground">{{ hint }}</p>
       <p v-else class="text-xs text-muted-foreground">

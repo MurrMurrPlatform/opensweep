@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from domains.areas.models import child_key_prefix_of
-from domains.docs.services.doc_freshness import watches_path
+from domains.repositories.services.path_matching import watches_path
 
 # Target area size in files: areas above target_max are split by first-level
 # subdirectory; adjacent same-branch areas below target_min are merged.
@@ -191,6 +191,9 @@ def normalize_areas(
     with file_count=None and no remainder — sizing degrades, but the
     identical-prefix dedup still applies (lexicographic-slug winner, since
     claim sizes are unknowable) so degraded plans don't multi-audit either.
+    Each area from that degraded path carries `degraded=True` so the plan and
+    the dispatched run can surface that the partition was guessed, not
+    file-owned — never silently reported as a reliable partition.
     """
     watched = [d for d in docs if _doc_watch(d)]
 
@@ -213,14 +216,18 @@ def normalize_areas(
             won = [p for p in _doc_watch(d) if _degraded_winner(claims[p]) == i]
             if not won:
                 continue
-            out.append(
-                _area(
-                    str(d.get("title") or d.get("slug") or ""),
-                    won,
-                    [str(d["uid"])] if d.get("uid") else [],
-                    None,
-                )
+            area = _area(
+                str(d.get("title") or d.get("slug") or ""),
+                won,
+                [str(d["uid"])] if d.get("uid") else [],
+                None,
             )
+            # The tree was unavailable — this partition is a lexicographic
+            # guess, not a real file-owned split. Mark every area so the plan
+            # (and the run) can surface that it ran against a guessed
+            # partition rather than silently reporting success.
+            area["degraded"] = True
+            out.append(area)
         return out
 
     paths = [p for p in (_normalize(p) for p in file_paths) if p]
@@ -550,7 +557,7 @@ def _part(idx: int, kind: str, title: str, area: dict | None, lens_keys: list[st
     if keys is None:
         key = str(a.get("area_key") or "")
         keys = [key] if key else []
-    return {
+    part = {
         "idx": idx,
         "kind": kind,
         "title": title,
@@ -562,6 +569,11 @@ def _part(idx: int, kind: str, title: str, area: dict | None, lens_keys: list[st
         "file_count": a.get("file_count"),
         "area_keys": [str(k) for k in keys],
     }
+    # Degraded areas (guessed partition — tree unavailable) mark their parts so
+    # the campaign/run can surface that this part audits a guessed scope.
+    if a.get("degraded"):
+        part["degraded"] = True
+    return part
 
 
 def build_plan(
@@ -577,25 +589,38 @@ def build_plan(
     """Areas + lenses → the campaign's ordered part list.
 
     - full:     every area (all enabled local lenses) + one feature part per
-                `feature_areas` entry (implementation-gaps lens) + one
-                global part per enabled global lens.
+                `feature_areas` LEAF (implementation-gaps lens) + one global
+                part per enabled global lens.
     - rotation: the k least-recently-covered areas (never-covered first,
-                scored by `path_recency` over their scope paths); no globals
-                and no feature parts.
-    - focused:  every area with just `focus_lens`, plus that lens's global
-                sweep when it names a global agent.
+                scored by `path_recency` over their scope paths) + one feature
+                part per STALE feature leaf (implementation-gaps); no globals.
+    - focused:  every area with just `focus_lens`, plus one feature part per
+                STALE feature leaf (implementation-gaps), plus that lens's
+                global sweep when it names a global agent.
 
-    Parts get idx assigned sequentially, areas before features before globals.
+    Feature leaves join every scope now — full audits all of them; rotation
+    and focused audit the ones the unified staleness axis flags (`stale` on
+    the feature dict, set from area_is_stale). Parts get idx assigned
+    sequentially, areas before features before globals.
     """
     enabled = [dict(lens) for lens in lenses if lens.get("enabled", True)]
     local = [lens for lens in enabled if (lens.get("scope") or "local") == "local"]
     global_ = [lens for lens in enabled if lens.get("scope") == "global"]
     local_keys = [str(lens["key"]) for lens in local]
+    features = list(feature_areas or [])
+    stale_features = [fa for fa in features if fa.get("stale")]
 
     def _global_part(lens: dict) -> dict:
         return _part(0, "global", f"Global sweep — {lens['key']}", None, [str(lens["key"])])
 
+    def _feature_parts(feats: list[dict]) -> list[dict]:
+        return [
+            _part(0, "feature", fa["title"], fa, ["implementation-gaps"])
+            for fa in feats
+        ]
+
     picked: list[dict]
+    feature_parts: list[dict]
     globals_out: list[dict]
     if template == "rotation":
         recency = path_recency or {}
@@ -606,23 +631,22 @@ def build_plan(
             _part(0, "area", areas[i]["title"], areas[i], local_keys)
             for i, _ in scored[: max(k, 0)]
         ]
+        feature_parts = _feature_parts(stale_features)
         globals_out = []
     elif template == "focused":
         focus = str(focus_lens or "")
         picked = [_part(0, "area", a["title"], a, [focus]) for a in areas]
+        feature_parts = _feature_parts(stale_features)
         lens = next((lens for lens in enabled if str(lens.get("key")) == focus), None)
         globals_out = (
             [_global_part(lens)] if lens is not None and lens.get("global_agent_key") else []
         )
     else:  # full
         picked = [_part(0, "area", a["title"], a, local_keys) for a in areas]
-        picked += [
-            _part(0, "feature", fa["title"], fa, ["implementation-gaps"])
-            for fa in (feature_areas or [])
-        ]
+        feature_parts = _feature_parts(features)
         globals_out = [_global_part(lens) for lens in global_]
 
-    parts = picked + globals_out
+    parts = picked + feature_parts + globals_out
     for idx, part in enumerate(parts):
         part["idx"] = idx
     return parts

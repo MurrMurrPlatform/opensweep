@@ -318,7 +318,7 @@ async def test_mutations_write_audit_with_actor():
 
 
 async def test_preview_composes_without_persisting(monkeypatch):
-    async def fake_base(agent_key):
+    async def fake_base(agent_key, **_):
         return "Seeded review instructions."
 
     monkeypatch.setattr(composition, "_resolve_platform_base", fake_base)
@@ -335,7 +335,7 @@ async def test_preview_composes_without_persisting(monkeypatch):
 
 
 async def test_preview_replace_substitutes_the_platform_layer(monkeypatch):
-    async def fake_base(agent_key):
+    async def fake_base(agent_key, **_):
         return "Seeded review instructions."
 
     monkeypatch.setattr(composition, "_resolve_platform_base", fake_base)
@@ -354,7 +354,7 @@ async def test_compose_places_org_guidance_between_platform_and_repo_layers(monk
     """The wiring the review trigger uses: platform instructions → org
     guidance → repo stage guidance → structural contract, with provenance."""
 
-    async def fake_base(agent_key):
+    async def fake_base(agent_key, **_):
         return "Seeded review instructions."
 
     monkeypatch.setattr(composition, "_resolve_platform_base", fake_base)
@@ -380,7 +380,7 @@ async def test_compose_places_org_guidance_between_platform_and_repo_layers(monk
 
 
 async def test_compose_replace_keeps_repo_guidance_and_structural(monkeypatch):
-    async def fake_base(agent_key):
+    async def fake_base(agent_key, **_):
         return "Seeded fix instructions."
 
     monkeypatch.setattr(composition, "_resolve_platform_base", fake_base)
@@ -406,7 +406,7 @@ async def test_custom_intent_beats_a_replace_override(monkeypatch):
     """A run-specific instruction override takes the instructions slot; a
     replace override never substitutes it."""
 
-    async def fake_base(agent_key):
+    async def fake_base(agent_key, **_):
         return "Seeded review instructions."
 
     monkeypatch.setattr(composition, "_resolve_platform_base", fake_base)
@@ -427,7 +427,7 @@ async def test_compose_degrades_when_every_layer_is_broken(monkeypatch):
     """No base row, broken agent store — the run still gets a usable intent
     from the in-code fallback."""
 
-    async def broken_base(agent_key):
+    async def broken_base(agent_key, **_):
         return None
 
     class Broken:
@@ -449,10 +449,14 @@ async def test_compose_degrades_when_every_layer_is_broken(monkeypatch):
     assert agent_base_fallback("verify") in composed.text
     assert "Verify finding X." in composed.text
     assert composed.agent_uid == "" and composed.agent_rev == 0
+    # A broken layer must be visible, not silently swallowed: the composed
+    # intent reports it degraded and names the layer that fell back.
+    assert composed.composed_degraded is True
+    assert "override" in composed.degraded_layers
 
 
 async def test_chat_layers_have_no_header_or_footer(monkeypatch):
-    async def fake_base(agent_key):
+    async def fake_base(agent_key, **_):
         return "Platform chat instructions."
 
     monkeypatch.setattr(composition, "_resolve_platform_base", fake_base)

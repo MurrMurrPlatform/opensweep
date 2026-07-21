@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Layers, Plus, RefreshCw } from 'lucide-vue-next'
+import { Layers, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useCampaignStore } from '@/stores/campaignStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
+import { useToast } from '@/composables/useToast'
+import { ApiError } from '@/services/api'
 import {
   CAMPAIGN_TEMPLATE_LABELS,
   campaignProgress,
@@ -17,11 +19,22 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import NewCampaignDialog from '@/components/campaigns/NewCampaignDialog.vue'
 import type { CampaignDTO } from '@/types/api'
 
 const router = useRouter()
 const campaigns = useCampaignStore()
+const toast = useToast()
 const { uid: repoUid } = useCurrentRepo()
 
 const items = ref<CampaignDTO[]>([])
@@ -56,6 +69,32 @@ function progressLabel(c: CampaignDTO): string {
 
 function onCreated(campaign: CampaignDTO) {
   void router.push({ name: 'campaign-detail', params: { uid: campaign.uid } })
+}
+
+// ── Delete (running/finalizing campaigns must be cancelled first) ────────────
+
+const deleteTarget = ref<CampaignDTO | null>(null)
+const deleting = ref(false)
+
+function isLive(c: CampaignDTO): boolean {
+  return c.status === 'running' || c.status === 'finalizing'
+}
+
+async function confirmDelete() {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  deleting.value = true
+  try {
+    await campaigns.remove(target.uid)
+    items.value = items.value.filter((c) => c.uid !== target.uid)
+    toast.success('Campaign deleted', target.title || target.uid.slice(0, 12))
+  } catch (e) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error('Couldn’t delete campaign', msg)
+  } finally {
+    deleting.value = false
+    deleteTarget.value = null
+  }
 }
 </script>
 
@@ -111,6 +150,7 @@ function onCreated(campaign: CampaignDTO) {
                 <th class="px-4 py-2 font-medium">Status</th>
                 <th class="px-4 py-2 font-medium">Progress</th>
                 <th class="px-4 py-2 font-medium">Created</th>
+                <th class="px-4 py-2"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -139,6 +179,18 @@ function onCreated(campaign: CampaignDTO) {
                 <td class="whitespace-nowrap px-4 py-2 text-muted-foreground">
                   {{ formatRelativeTime(c.created_at) }}
                 </td>
+                <td class="px-2 py-2 text-right">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="text-muted-foreground hover:text-destructive"
+                    :disabled="isLive(c)"
+                    :title="isLive(c) ? 'Cancel the campaign before deleting it' : 'Delete campaign'"
+                    @click.stop="deleteTarget = c"
+                  >
+                    <Trash2 />
+                  </Button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -152,5 +204,26 @@ function onCreated(campaign: CampaignDTO) {
       :repository-uid="repoUid"
       @created="onCreated"
     />
+
+    <AlertDialog :open="!!deleteTarget" @update:open="(v: boolean) => { if (!v) deleteTarget = null }">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this campaign?</AlertDialogTitle>
+          <AlertDialogDescription>
+            “{{ deleteTarget?.title || deleteTarget?.uid.slice(0, 12) }}” and its plan are removed
+            permanently. Runs it already dispatched — and the findings they produced — are kept.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            @click="confirmDelete"
+          >
+            Delete campaign
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

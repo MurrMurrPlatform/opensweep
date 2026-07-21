@@ -5,9 +5,15 @@ GitHub `push` webhooks hand us the changed paths from the payload and we
 mark the Areas whose scope_paths cover them stale — same entry point as
 Doc pages (domains/agents/services/event_triggers.refresh_docs_for_change).
 
-Staleness is derived (code_changed_at > last_reviewed_at), never stored.
-It clears when the area is reviewed: a human edit or an accepted AreaEdit.
-No LLM is involved here — pure path matching.
+The unified freshness model: an area is STALE when it needs review — code
+moved under its scope_paths since the last review (code_changed_at >
+last_reviewed_at, derived, never stored). Stale clears ONLY when the area is
+reviewed: a human edit, an accepted AreaEdit, or an explicit
+confirm_area_current from a map/document run that verified the area is still
+correctly partitioned. Checked stamps are audit-coverage history, not
+freshness — a code-quality audit does not clear area-stale. No LLM is
+involved here — pure path matching
+(domains/repositories/services/path_matching.py).
 """
 
 from __future__ import annotations
@@ -16,21 +22,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from domains.areas.models import Area
-from domains.docs.services.doc_freshness import watches_path
-from logging_config import logger
-
-# stale_paths is briefing material, not a changelog — keep it bounded.
-_MAX_STALE_PATHS = 200
+from domains.repositories.services.path_matching import (
+    mark_nodes_stale,
+    normalize_path,
+)
 
 
 @dataclass
 class AreaStaleResult:
     areas_marked: int = 0
     errors: list[str] = field(default_factory=list)
-
-
-def _normalize(path: str) -> str:
-    return (path or "").strip().replace("\\", "/").lstrip("./").rstrip("/")
 
 
 async def mark_areas_stale(
@@ -44,25 +45,25 @@ async def mark_areas_stale(
     Called from the GitHub push webhook. Best-effort per area: one bad area
     never blocks the rest.
     """
-    result = AreaStaleResult()
-    changed = [p for p in (_normalize(p) for p in changed_paths) if p]
-    if not changed:
-        return result
-    now = now or datetime.now(UTC)
+    if not [p for p in (normalize_path(p) for p in changed_paths) if p]:
+        return AreaStaleResult()  # nothing changed — skip the DB scan
+    areas = list(await Area.nodes.filter(repository_uid=repository_uid))
+    marked, errors = await mark_nodes_stale(
+        areas, changed_paths, watch_attr="scope_paths", now=now
+    )
+    return AreaStaleResult(areas_marked=marked, errors=errors)
 
-    areas = [a for a in await Area.nodes.all() if a.repository_uid == repository_uid]
-    for a in areas:
-        try:
-            hits = [p for p in changed if watches_path(list(a.scope_paths or []), p)]
-            if not hits:
-                continue
-            a.code_changed_at = now
-            merged = list(dict.fromkeys(list(a.stale_paths or []) + hits))
-            a.stale_paths = merged[:_MAX_STALE_PATHS]
-            await a.save()
-            result.areas_marked += 1
-        except Exception as exc:  # noqa: BLE001
-            msg = f"area={a.uid}: {type(exc).__name__}: {exc}"
-            logger.warning(f"area freshness: {msg}")
-            result.errors.append(msg)
-    return result
+
+async def confirm_area_current(repository_uid: str, key: str) -> Area | None:
+    """A run verified this area is still correctly partitioned against the
+    current code: stamp the review without an edit. Mirrors
+    doc_freshness.confirm_doc_current. Returns None for unknown keys."""
+    from domains.areas.services.area_service import get_area_by_key, normalize_key
+
+    a = await get_area_by_key(repository_uid, normalize_key(key))
+    if a is None:
+        return None
+    a.last_reviewed_at = datetime.now(UTC)
+    a.stale_paths = []
+    await a.save()
+    return a

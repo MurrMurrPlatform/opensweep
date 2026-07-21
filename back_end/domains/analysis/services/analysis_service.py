@@ -60,16 +60,36 @@ async def get_or_create_analysis(
     return node
 
 
-async def finalize_analysis_for_run(run_uid: str) -> bool:
-    """Flip an in-progress Analysis to `complete` when its run's turn ends.
+def _authored_verdict(node: Analysis) -> bool:
+    """True when the agent left an actual verdict on the Analysis — a
+    health_grade, a scorecard, or a confidence stamp. Distinguishes a
+    self-finalized scan (deliberate `upsert_analysis`) from a run that was
+    killed/timed out with only the shell created."""
+    return bool(
+        (node.health_grade or "").strip()
+        or (node.scorecard or [])
+        or (node.confidence or "").strip()
+    )
 
-    Idempotent and best-effort: the deep-scan agent usually sets status itself
-    via upsert_analysis, but a killed or forgetful run still leaves a
-    finalized report. Returns True if a flip happened."""
+
+async def finalize_analysis_for_run(run_uid: str) -> bool:
+    """Close out an in-progress Analysis when its run's turn ends.
+
+    Idempotent and best-effort. If the agent authored a verdict (via
+    upsert_analysis) the scan self-finalized ⇒ `complete`. If the run ended
+    with no verdict — a killed/forgetful deep scan — this is a FORCED finalize:
+    mark it `incomplete`, drop any partial health_grade so it never surfaces as
+    a current grade, and stamp a limitations note. Returns True if a flip
+    happened."""
     node = await Analysis.nodes.get_or_none(source_run_uid=run_uid)
     if node is None or (node.status or "") != "in_progress":
         return False
-    node.status = "complete"
+    if _authored_verdict(node):
+        node.status = "complete"
+    else:
+        node.status = "incomplete"
+        node.health_grade = ""  # a partial/guessed grade must not survive
+        node.limitations = "scan did not complete"
     if not node.completed_at:
         node.completed_at = datetime.now(UTC)
     node.updated_at = datetime.now(UTC)
@@ -131,9 +151,7 @@ async def _attach_finding_rollup(dto: AnalysisDTO) -> AnalysisDTO:
     Analysis's source_run_uid (the free join)."""
     by_sev: dict[str, int] = {}
     count = 0
-    for f in await Finding.nodes.all():
-        if f.source_run_uid != dto.source_run_uid:
-            continue
+    for f in await Finding.nodes.filter(source_run_uid=dto.source_run_uid):
         count += 1
         sev = f.severity or "medium"
         by_sev[sev] = by_sev.get(sev, 0) + 1
@@ -150,11 +168,14 @@ class AnalysisService:
         status: str | None = None,
         include_superseded: bool = True,
     ) -> list[AnalysisDTO]:
-        nodes = await Analysis.nodes.all()
+        # Filter by tenant at the DB when scoped; the remaining predicates
+        # (status/superseded) stay in Python (agent-authored default handling).
+        if repository_uid:
+            nodes = await Analysis.nodes.filter(repository_uid=repository_uid)
+        else:
+            nodes = await Analysis.nodes.all()
         out: list[AnalysisDTO] = []
         for a in nodes:
-            if repository_uid and a.repository_uid != repository_uid:
-                continue
             if status and (a.status or "") != status:
                 continue
             if not include_superseded and (a.status or "") == "superseded":
@@ -275,11 +296,17 @@ class AnalysisService:
         }
 
     async def latest_for_repo(self, repository_uid: str) -> AnalysisDTO | None:
-        """Newest non-superseded Analysis for the repo — what Health shows."""
+        """Newest analysis carrying a CURRENT grade for the repo — what Health
+        shows. `incomplete` scans (forced finalize, no verdict) are excluded:
+        they carry no grade, so a killed scan never becomes the repo's health
+        surface. Superseded analyses are excluded too."""
         candidates = await self.list(
             repository_uid=repository_uid, include_superseded=False
         )
-        if not candidates:
+        current = next(
+            (c for c in candidates if c.status != AnalysisStatus.INCOMPLETE), None
+        )
+        if current is None:
             return None
         # get() adds the finding roll-up; list() intentionally omits it.
-        return await self.get(candidates[0].uid)
+        return await self.get(current.uid)

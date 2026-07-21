@@ -1,9 +1,12 @@
-"""Checked stamps: record on run completion, derive freshness at query time.
+"""Checked stamps: record audit coverage on run completion.
 
 record_for_run replaces CoverageService.record_for_run — one stamp per scope
 the run touched, no concern dimension. Scopes are Doc uids (or the
-repository uid). Freshness is a per-doc view: last stamp vs
-code_changed_at.
+repository uid). Checked stamps are audit-COVERAGE history (when/at-what-
+revision/with-what-outcome a scope was last looked at), NOT a freshness
+signal: staleness is the single derived review axis on the Doc/Area
+(code_changed_at > last_reviewed_at). `audit_coverage` exposes the per-scope
+latest stamp; it deliberately does not derive any "changed since" flag.
 """
 
 from __future__ import annotations
@@ -78,7 +81,7 @@ async def record_for_run(*, run_uid: str) -> list[Checked]:
         affected.extend(str(p) for p in (f.affected_paths or []) if p)
     if affected:
         from domains.docs.models import Doc
-        from domains.docs.services.doc_freshness import watches_path
+        from domains.repositories.services.path_matching import watches_path
 
         docs = [
             d for d in await Doc.nodes.all() if d.repository_uid == run.repository_uid
@@ -134,7 +137,7 @@ async def stamps_for_paths(
 
     Backs the area detail's coverage strip: an area's scope paths in, the
     last looks that touched them out."""
-    from domains.docs.services.doc_freshness import watches_path
+    from domains.repositories.services.path_matching import watches_path
 
     wanted = [str(p) for p in paths if p]
     if not wanted:
@@ -156,10 +159,15 @@ async def stamps_for_paths(
     return rows[: max(limit, 0)]
 
 
-async def freshness(*, repository_uid: str) -> list[dict[str, Any]]:
-    """Per doc page (plus the repo-level scope): the latest stamp and whether
-    the code moved past it. `never checked` scopes are included with
-    last_checked=None so the UI can badge them."""
+async def audit_coverage(*, repository_uid: str) -> list[dict[str, Any]]:
+    """Per doc page (plus the repo-level scope): the latest audit-coverage
+    stamp — when it was last checked, at what revision, with what outcome.
+
+    This is audit-coverage HISTORY, not a freshness signal: staleness is the
+    single derived review axis (Doc.stale, code_changed_at > last_reviewed_at)
+    and lives on the Doc/Area DTO. A code-quality audit stamping coverage here
+    never clears docs-stale. `never checked` scopes are included with
+    last_checked=None so the UI can badge coverage gaps."""
     from domains.docs.models import Doc
 
     latest: dict[str, Checked] = {}
@@ -174,19 +182,12 @@ async def freshness(*, repository_uid: str) -> list[dict[str, Any]]:
     docs = [d for d in await Doc.nodes.all() if d.repository_uid == repository_uid]
     for d in docs:
         c = latest.get(d.uid)
-        changed_since = bool(
-            c is not None
-            and d.code_changed_at
-            and c.checked_at
-            and d.code_changed_at > c.checked_at
-        )
         out.append(
             {
                 "scope_uid": d.uid,
                 "last_checked": c.checked_at if c else None,
                 "revision": (c.revision or "") if c else "",
                 "outcome": (c.outcome or "") if c else "",
-                "code_changed_since": changed_since,
             }
         )
     repo_stamp = latest.get(repository_uid)
@@ -197,7 +198,6 @@ async def freshness(*, repository_uid: str) -> list[dict[str, Any]]:
                 "last_checked": repo_stamp.checked_at,
                 "revision": repo_stamp.revision or "",
                 "outcome": repo_stamp.outcome or "",
-                "code_changed_since": False,
             }
         )
     return out

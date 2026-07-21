@@ -50,14 +50,13 @@ async def opensweep_list_findings(
     title+top_path, but checking here lets the LLM choose to call
     `update_finding` (adding evidence) instead.
     """
-    statuses = {status} if status else set()
-    nodes = await Finding.nodes.all()
+    nodes = (
+        await Finding.nodes.filter(repository_uid=repository_uid, status=status)
+        if status
+        else await Finding.nodes.filter(repository_uid=repository_uid)
+    )
     out: list[dict[str, Any]] = []
     for f in nodes:
-        if f.repository_uid != repository_uid:
-            continue
-        if statuses and f.status not in statuses:
-            continue
         if tag and tag not in (f.tags or []):
             continue
         if kind and f.kind != kind:
@@ -81,14 +80,13 @@ async def opensweep_search_findings(
     a new one.
     """
     needle = (query or "").strip().lower()
-    statuses = {status} if status else set()
-    nodes = await Finding.nodes.all()
+    nodes = (
+        await Finding.nodes.filter(repository_uid=repository_uid, status=status)
+        if status
+        else await Finding.nodes.filter(repository_uid=repository_uid)
+    )
     out: list[dict[str, Any]] = []
     for f in nodes:
-        if f.repository_uid != repository_uid:
-            continue
-        if statuses and f.status not in statuses:
-            continue
         if needle:
             hay = " ".join(
                 [

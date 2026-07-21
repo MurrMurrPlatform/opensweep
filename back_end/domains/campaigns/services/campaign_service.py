@@ -103,11 +103,16 @@ async def _area_map_inputs(repository_uid: str) -> dict | None:
     """The repo's enabled Area map as planner inputs, or None when the repo
     has NO enabled areas at all. subsystem_leaves may be empty (e.g. a
     features-only map) — _plan_areas then partitions from the docs but
-    still carries the map's feature areas through.
+    still carries the map's feature LEAVES through.
 
     Files belong to subsystem LEAVES only (parents are groupings); feature
-    areas overlay at ANY depth, so all enabled features come through."""
-    from domains.areas.models import Area, is_leaf
+    areas overlay at ANY depth, but the audit target is the feature LEAF —
+    a feature is a leaf when no other enabled FEATURE key nests under it.
+    Leaf-ness is computed over the subsystem key set and the feature key set
+    SEPARATELY, so subsystem/feature hierarchies never mix. Parent feature
+    groupings are groupings only (their spec is an optional charter, not an
+    audit target) and are counted, not planned."""
+    from domains.areas.models import Area, area_is_stale, is_leaf
 
     rows = [
         a
@@ -116,7 +121,8 @@ async def _area_map_inputs(repository_uid: str) -> dict | None:
     ]
     if not rows:
         return None
-    keys = [a.key for a in rows]
+    subsystem_keys = [a.key for a in rows if (a.kind or "subsystem") == "subsystem"]
+    feature_keys = [a.key for a in rows if a.kind == "feature"]
 
     def _leaf_dict(a) -> dict:
         return {
@@ -124,22 +130,36 @@ async def _area_map_inputs(repository_uid: str) -> dict | None:
             "title": a.title or a.key,
             "scope_paths": list(a.scope_paths or []),
             "doc_uids": list(a.doc_uids or []),
+            # Unified staleness axis (code_changed_at > last_reviewed_at) +
+            # whether the leaf has a spec — the rotation/focused feature-part
+            # selector and generate-specs targeting both read these.
+            "stale": area_is_stale(a),
+            "has_spec": bool((a.spec or "").strip()),
         }
 
     subsystems = [a for a in rows if (a.kind or "subsystem") == "subsystem"]
+    features = [a for a in rows if a.kind == "feature"]
     return {
         "subsystem_leaves": [
-            _leaf_dict(a) for a in subsystems if is_leaf(a.key, keys)
+            _leaf_dict(a) for a in subsystems if is_leaf(a.key, subsystem_keys)
         ],
-        "features": [_leaf_dict(a) for a in rows if a.kind == "feature"],
+        # Feature LEAVES only — the audit targets. Parent feature groupings
+        # are excluded (their spec is a charter, not a contract to verify).
+        "feature_leaves": [
+            _leaf_dict(a) for a in features if is_leaf(a.key, feature_keys)
+        ],
         "ignore_scopes": sorted(
             {p for a in rows if a.kind == "ignore" for p in (a.scope_paths or [])}
         ),
         # Whole-map counts for the plan explanation: total enabled areas,
-        # subsystem non-leaves (groupings, not audit targets), ignore areas.
+        # subsystem non-leaves (groupings, not audit targets), feature
+        # non-leaves (groupings), ignore areas.
         "counts": {
             "map_areas": len(rows),
-            "groupings": sum(1 for a in subsystems if not is_leaf(a.key, keys)),
+            "groupings": sum(1 for a in subsystems if not is_leaf(a.key, subsystem_keys)),
+            "feature_groupings": sum(
+                1 for a in features if not is_leaf(a.key, feature_keys)
+            ),
             "ignored": sum(1 for a in rows if a.kind == "ignore"),
         },
     }
@@ -147,15 +167,24 @@ async def _area_map_inputs(repository_uid: str) -> dict | None:
 
 def _map_stats(map_inputs: dict | None) -> dict:
     """Whole-map counts for the plan explanation — zeros when the repo has
-    no enabled areas at all (pure docs planning)."""
+    no enabled areas at all (pure docs planning). `features` counts feature
+    LEAVES (audit targets); `feature_groupings` the parent feature groupings."""
     if map_inputs is None:
-        return {"map_areas": 0, "leaves": 0, "groupings": 0, "features": 0, "ignored": 0}
+        return {
+            "map_areas": 0,
+            "leaves": 0,
+            "groupings": 0,
+            "features": 0,
+            "feature_groupings": 0,
+            "ignored": 0,
+        }
     counts = map_inputs["counts"]
     return {
         "map_areas": counts["map_areas"],
         "leaves": len(map_inputs["subsystem_leaves"]),
         "groupings": counts["groupings"],
-        "features": len(map_inputs["features"]),
+        "features": len(map_inputs["feature_leaves"]),
+        "feature_groupings": counts["feature_groupings"],
         "ignored": counts["ignored"],
     }
 
@@ -176,7 +205,7 @@ async def _plan_areas(
     partitions — the docs partition is non-overlapping by construction.
     Map stats (_map_stats) count the whole enabled map regardless of which
     source ends up planning."""
-    from domains.docs.services.doc_freshness import watches_path
+    from domains.repositories.services.path_matching import watches_path
 
     def _count_features(features: list[dict], file_paths: list[str]) -> list[dict]:
         out = []
@@ -200,7 +229,7 @@ async def _plan_areas(
         areas, health = planner.areas_from_map(
             map_inputs["subsystem_leaves"], map_inputs["ignore_scopes"], file_paths
         )
-        feature_areas = _count_features(map_inputs["features"], file_paths)
+        feature_areas = _count_features(map_inputs["feature_leaves"], file_paths)
         return (
             areas,
             degraded_reason,
@@ -216,9 +245,9 @@ async def _plan_areas(
     feature_areas: list[dict] = []
     if map_inputs is not None:
         # Areas exist but none are enabled subsystem leaves: partition from
-        # the docs, keep the map's features (full-template campaigns keep
-        # their spec-audit parts), and say why the source flipped.
-        feature_areas = _count_features(map_inputs["features"], file_paths)
+        # the docs, keep the map's feature leaves (full-template campaigns
+        # keep their spec-audit parts), and say why the source flipped.
+        feature_areas = _count_features(map_inputs["feature_leaves"], file_paths)
         note = "area map present but has no enabled subsystem leaves — planned from docs"
         degraded_reason = f"{degraded_reason}; {note}" if degraded_reason else note
     return (
@@ -518,3 +547,28 @@ async def cancel(uid: str, *, reason: str = "", actor_uid: str = "") -> Campaign
     await _transition(c, "cancelled")
     await record_event(c, "cancelled", reason=reason, by=actor_uid)
     return c
+
+
+async def delete(uid: str, *, actor_uid: str = "") -> None:
+    """Remove the campaign record entirely. Live campaigns (running/
+    finalizing) must be cancelled first — deleting mid-flight would pull the
+    plan out from under the celery tick. Child runs are kept: they are the
+    audit record, and the digest already landed as findings."""
+    c = await get(uid)
+    status = c.status or "planning"
+    if status in {"running", "finalizing"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"campaign is {status} — cancel it before deleting",
+        )
+    repository_uid = c.repository_uid
+    title = c.title
+    await c.delete()
+    await write_audit(
+        kind="campaign.deleted",
+        subject_uid=uid,
+        subject_type="Campaign",
+        actor_uid=actor_uid,
+        repository_uid=repository_uid,
+        payload={"status": status, "title": title},
+    )

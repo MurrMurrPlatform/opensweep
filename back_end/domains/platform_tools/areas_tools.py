@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from domains.areas.services import area_service
+from domains.areas.services import area_freshness, area_service
 
 
 async def propose_area_edit(
@@ -25,7 +25,8 @@ async def propose_area_edit(
     doc_uids: list[str] | None = None,
     enabled: bool = True,
     source_run_uid: str = "",
-    executor: str = "",
+    # The dispatcher/envelope injects `executor` (and other scope keys) on
+    # every tool call uniformly — absorb it via **_; this tool doesn't use it.
     **_: Any,
 ) -> dict[str, Any]:
     """Propose one Area for the repository's area map. Kinds: "subsystem"
@@ -54,3 +55,19 @@ async def propose_area_edit(
         doc_uids=doc_uids,
         source_run_uid=source_run_uid or "",
     )
+
+
+async def confirm_area_current(
+    *,
+    repository_uid: str,
+    key: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """You verified this area is still correctly partitioned against the
+    current code (its scope_paths and kind still hold) and it needs no edit:
+    stamp the review so its stale flag clears. Only call this after actually
+    checking the area — never to silence a stale marker you did not verify."""
+    a = await area_freshness.confirm_area_current(repository_uid, key)
+    if a is None:
+        return {"status": "not_found", "key": key}
+    return {"status": "ok", "key": a.key}

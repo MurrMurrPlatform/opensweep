@@ -89,6 +89,11 @@ class AreaEdit(AsyncStructuredNode):
     # (its only way to clean up a bad partition; applied on human accept).
     proposed_enabled = BooleanProperty(default=True)
 
+    # Partition warnings computed at propose time (overlap/leaf conflicts this
+    # edit would create). Persisted so the review queue can show them BEFORE a
+    # human accepts — never a blocker, advisory only.
+    warnings = JSONProperty(default=[])
+
     source_run_uid = StringProperty(default="", index=True)
 
     status = StringProperty(default="pending", index=True)  # AREA_EDIT_STATUSES

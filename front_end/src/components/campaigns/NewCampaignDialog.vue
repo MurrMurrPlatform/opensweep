@@ -54,6 +54,7 @@ const toast = useToast()
 const template = ref<CampaignTemplate>('rotation')
 const effort = ref<AgentEffort | 'default'>('default')
 const k = ref(3)
+const maxParallel = ref(2)
 const title = ref('')
 const creating = ref(false)
 const loadingLenses = ref(false)
@@ -137,6 +138,7 @@ watch(
     template.value = 'rotation'
     effort.value = 'default'
     k.value = 3
+    maxParallel.value = 2
     title.value = ''
     areaPrefix.value = ''
     prefixPreview.value = null
@@ -212,6 +214,9 @@ async function create() {
       lens_keys: lensKeys.value,
       effort: effort.value === 'default' ? '' : effort.value,
       k: template.value === 'rotation' ? k.value : undefined,
+      max_parallel: Number.isFinite(maxParallel.value)
+        ? Math.max(Math.trunc(maxParallel.value), 1)
+        : undefined,
       title: title.value.trim() || undefined,
       area_prefix: areaPrefix.value.trim(),
     })
@@ -264,9 +269,22 @@ async function create() {
           </div>
         </div>
 
-        <div v-if="template === 'rotation'" class="space-y-1.5">
-          <Label for="campaign-k">Areas this pass (k)</Label>
-          <Input id="campaign-k" v-model.number="k" type="number" min="1" class="max-w-32" />
+        <div class="grid gap-3 md:grid-cols-2">
+          <div v-if="template === 'rotation'" class="space-y-1.5">
+            <Label for="campaign-k">Areas this pass (k)</Label>
+            <Input id="campaign-k" v-model.number="k" type="number" min="1" class="max-w-32" />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="campaign-max-parallel">Max parallel runs</Label>
+            <Input
+              id="campaign-max-parallel"
+              v-model.number="maxParallel"
+              type="number"
+              min="1"
+              class="max-w-32"
+            />
+            <p class="text-xs text-muted-foreground">How many part runs execute at once.</p>
+          </div>
         </div>
 
         <!-- Live partition preview — nothing is persisted until Create. -->

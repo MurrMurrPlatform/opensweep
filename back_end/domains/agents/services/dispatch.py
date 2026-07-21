@@ -106,6 +106,8 @@ async def dispatch_agent(
         agent_uid=agent.uid,
         agent_rev=composed.agent_rev,
         stage=stage_for_agent_key(key, playbook),
+        composed_degraded=composed.composed_degraded,
+        degraded_layers=composed.degraded_layers,
     )
 
 

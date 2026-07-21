@@ -244,7 +244,7 @@ async def test_preview_areas_uses_the_area_map_when_present(preview_seams):
                 "doc_uids": ["d1"],
             }
         ],
-        "features": [
+        "feature_leaves": [
             {
                 "area_key": "features/checkout",
                 "title": "Checkout",
@@ -253,7 +253,7 @@ async def test_preview_areas_uses_the_area_map_when_present(preview_seams):
             }
         ],
         "ignore_scopes": ["scripts"],
-        "counts": {"map_areas": 3, "groupings": 0, "ignored": 1},
+        "counts": {"map_areas": 3, "groupings": 0, "feature_groupings": 0, "ignored": 1},
     }
     preview_seams.tree = (["src/api/a.py", "src/api/b.py", "scripts/x.sh"], "")
 
@@ -287,7 +287,7 @@ async def test_preview_areas_features_only_map_plans_from_docs_but_keeps_feature
     ]
     preview_seams.map_inputs = {
         "subsystem_leaves": [],
-        "features": [
+        "feature_leaves": [
             {
                 "area_key": "features/checkout",
                 "title": "Checkout",
@@ -296,7 +296,7 @@ async def test_preview_areas_features_only_map_plans_from_docs_but_keeps_feature
             }
         ],
         "ignore_scopes": [],
-        "counts": {"map_areas": 1, "groupings": 0, "ignored": 0},
+        "counts": {"map_areas": 1, "groupings": 0, "feature_groupings": 0, "ignored": 0},
     }
     preview_seams.tree = (["src/api/a.py", "src/api/b.py"], "")
 
@@ -347,9 +347,9 @@ async def test_preview_areas_reports_partition_health(preview_seams):
                 "doc_uids": [],
             },
         ],
-        "features": [],
+        "feature_leaves": [],
         "ignore_scopes": ["vendor"],
-        "counts": {"map_areas": 2, "groupings": 0, "ignored": 1},
+        "counts": {"map_areas": 2, "groupings": 0, "feature_groupings": 0, "ignored": 1},
     }
     preview_seams.tree = (["src/api/a.py", "src/b.py"], "")
 
@@ -378,7 +378,7 @@ async def test_preview_areas_area_prefix_slices_the_listing(preview_seams):
                 "doc_uids": [],
             },
         ],
-        "features": [
+        "feature_leaves": [
             {
                 "area_key": "backend/checkout",
                 "title": "Checkout",
@@ -387,7 +387,7 @@ async def test_preview_areas_area_prefix_slices_the_listing(preview_seams):
             }
         ],
         "ignore_scopes": [],
-        "counts": {"map_areas": 3, "groupings": 0, "ignored": 0},
+        "counts": {"map_areas": 3, "groupings": 0, "feature_groupings": 0, "ignored": 0},
     }
     preview_seams.tree = (["src/api/a.py", "fe/app.ts"], "")
 

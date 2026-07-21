@@ -196,7 +196,9 @@ def test_full_plan_appends_feature_parts_between_areas_and_globals():
     assert feat["state"] == "pending" and feat["run_uid"] == ""
 
 
-def test_rotation_and_focused_never_emit_feature_parts():
+def test_rotation_and_focused_skip_fresh_feature_leaves():
+    # A feature leaf that is NOT stale is not re-audited by rotation/focused —
+    # only `full` audits every leaf. (Fresh = no `stale` flag.)
     areas = [_map_area("backend", ["be"])]
     plans = [
         build_plan("rotation", areas, LENSES, k=3, feature_areas=[FEATURE]),
@@ -204,6 +206,24 @@ def test_rotation_and_focused_never_emit_feature_parts():
     ]
     for parts in plans:
         assert all(p["kind"] != "feature" for p in parts)
+
+
+def test_rotation_and_focused_emit_stale_feature_leaves():
+    # Stale feature leaves (unified staleness axis) ARE re-audited in every
+    # scope now — one implementation-gaps feature part each.
+    areas = [_map_area("backend", ["be"])]
+    stale = {**FEATURE, "stale": True}
+    fresh = {**FEATURE, "title": "Fresh", "area_key": "features/fresh", "stale": False}
+    for template, kwargs in [
+        ("rotation", {"k": 3}),
+        ("focused", {"focus_lens": "bugs"}),
+    ]:
+        parts = build_plan(
+            template, areas, LENSES, feature_areas=[stale, fresh], **kwargs
+        )
+        feats = [p for p in parts if p["kind"] == "feature"]
+        assert [p["area_keys"] for p in feats] == [["features/checkout"]]
+        assert feats[0]["lens_keys"] == ["implementation-gaps"]
 
 
 def test_area_parts_carry_their_area_keys():
@@ -228,6 +248,67 @@ def test_docs_derived_areas_get_empty_area_keys():
     docs_area = {"title": "t", "scope_paths": ["s"], "doc_uids": [], "file_count": 1}
     parts = build_plan("full", [docs_area], [_lens("bugs")])
     assert parts[0]["area_keys"] == []
+
+
+# ── _area_map_inputs: feature-leaf selection ─────────────────────────────────
+
+
+class _AreaNodes:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def all(self):
+        return list(self._rows)
+
+
+def _area(key, kind, *, enabled=True, spec="", code_at=None, reviewed_at=None):
+    return SimpleNamespace(
+        uid=key.replace("/", "-"),
+        repository_uid="r1",
+        key=key,
+        kind=kind,
+        title=key,
+        scope_paths=[key],
+        doc_uids=[],
+        spec=spec,
+        enabled=enabled,
+        code_changed_at=code_at,
+        last_reviewed_at=reviewed_at,
+    )
+
+
+async def test_area_map_inputs_selects_feature_leaves_excludes_parent_groupings(
+    monkeypatch,
+):
+    import domains.areas.models as area_models
+
+    rows = [
+        _area("backend", "subsystem"),  # subsystem grouping
+        _area("backend/api", "subsystem"),  # subsystem leaf
+        _area("features/checkout", "feature"),  # feature PARENT grouping
+        _area("features/checkout/pay", "feature"),  # feature leaf
+        _area("features/checkout/refund", "feature"),  # feature leaf
+        _area("features/search", "feature"),  # top-level feature leaf
+    ]
+    monkeypatch.setattr(area_models, "Area", SimpleNamespace(nodes=_AreaNodes(rows)))
+
+    inputs = await campaign_service._area_map_inputs("r1")
+    feature_keys = {f["area_key"] for f in inputs["feature_leaves"]}
+    # Parent grouping "features/checkout" is excluded; its leaves + the
+    # top-level feature leaf are the targets.
+    assert feature_keys == {
+        "features/checkout/pay",
+        "features/checkout/refund",
+        "features/search",
+    }
+    # Subsystem leaves are computed over the subsystem key set only.
+    assert {a["area_key"] for a in inputs["subsystem_leaves"]} == {"backend/api"}
+    assert inputs["counts"]["feature_groupings"] == 1
+    assert inputs["counts"]["groupings"] == 1  # "backend" subsystem grouping
+
+    stats = campaign_service._map_stats(inputs)
+    assert stats["features"] == 3  # feature LEAVES
+    assert stats["feature_groupings"] == 1
 
 
 # ── filter_by_prefix ─────────────────────────────────────────────────────────
@@ -269,7 +350,14 @@ def plan_seams(monkeypatch):
         features=[],
         source="area-map",
         degraded="",
-        map_stats={"map_areas": 0, "leaves": 0, "groupings": 0, "features": 0, "ignored": 0},
+        map_stats={
+            "map_areas": 0,
+            "leaves": 0,
+            "groupings": 0,
+            "features": 0,
+            "feature_groupings": 0,
+            "ignored": 0,
+        },
     )
 
     class _Nodes:
@@ -383,6 +471,7 @@ async def test_plan_summary_narrates_an_area_map_plan(plan_seams):
         "leaves": 3,
         "groupings": 1,
         "features": 1,
+        "feature_groupings": 1,
         "ignored": 2,
     }
     _parts, _degraded, _source, summary = await campaign_service._plan_parts(
@@ -394,6 +483,7 @@ async def test_plan_summary_narrates_an_area_map_plan(plan_seams):
         "leaves": 3,
         "groupings": 1,
         "features": 1,
+        "feature_groupings": 1,
         "ignored": 2,
         "area_parts": 2,  # backend bundle + frontend
         "bundled_leaves": 2,  # backend/api + backend/core share one part
@@ -419,6 +509,7 @@ async def test_plan_summary_keeps_its_shape_for_docs_plans(plan_seams):
         "leaves": 0,
         "groupings": 0,
         "features": 0,
+        "feature_groupings": 0,
         "ignored": 0,
         "area_parts": 1,
         "bundled_leaves": 0,
