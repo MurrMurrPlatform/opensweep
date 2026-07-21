@@ -293,3 +293,97 @@ async def test_list_areas_sorts_by_key_and_counts_pending_edits(stores):
     assert [d.key for d in dtos] == ["backend", "frontend"]
     assert [d.pending_edits for d in dtos] == [0, 1]
     assert dtos[1].uid == b.uid
+
+
+# ── propose-time warnings + retire proposals ────────────────────────────────
+
+
+async def test_propose_returns_overlap_warnings_against_live_map(stores):
+    await area_service.create_area(
+        repository_uid="r1", key="backend/api", scope_paths=["back_end/api"]
+    )
+    result = await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="catch-all",
+        key="backend-all",
+        kind="subsystem",
+        scope_paths=["back_end/"],
+        source_run_uid="run-1",
+    )
+    assert any("backend/api" in w for w in result["warnings"])
+
+
+async def test_propose_warns_against_same_run_pending_proposals(stores):
+    # The 86bb524f failure mode: a broad proposal colliding with the same
+    # run's earlier specific proposals must warn IN-LOOP, not at accept.
+    first = await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="router",
+        key="frontend-router-views",
+        kind="subsystem",
+        scope_paths=["front_end/src/router"],
+        source_run_uid="run-1",
+    )
+    assert first["warnings"] == []
+    second = await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="catch-all",
+        key="frontend-app",
+        kind="subsystem",
+        scope_paths=["front_end/"],
+        source_run_uid="run-1",
+    )
+    assert any("frontend-router-views" in w for w in second["warnings"])
+    # Other runs' pending edits are not compared (they may be stale).
+    third = await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="unrelated",
+        key="frontend-assets",
+        kind="subsystem",
+        scope_paths=["front_end/src/assets"],
+        source_run_uid="run-OTHER",
+    )
+    assert third["warnings"] == []
+
+
+async def test_propose_slash_children_are_exempt_from_warnings(stores):
+    await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="views",
+        key="frontend/router-views",
+        kind="subsystem",
+        scope_paths=["front_end/src/router"],
+        source_run_uid="run-1",
+    )
+    # A proper slash-parent owns no files, so no overlap fires; even a
+    # scoped parent is exempt via the key relationship.
+    parent = await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="grouping",
+        key="frontend",
+        kind="subsystem",
+        scope_paths=[],
+        source_run_uid="run-1",
+    )
+    assert parent["warnings"] == []
+
+
+async def test_propose_enabled_false_flows_through_accept(stores):
+    a = await area_service.create_area(
+        repository_uid="r1", key="backend-all", scope_paths=["back_end/"]
+    )
+    result = await area_service.propose_area_edit(
+        repository_uid="r1",
+        proposed_spec="retire: replaced by backend/* leaves",
+        key="backend-all",
+        kind="subsystem",
+        enabled=False,
+        source_run_uid="run-1",
+    )
+    # A retire proposal is not warned about — it removes overlap.
+    assert result["warnings"] == []
+    updated, _warnings = await area_service.accept_area_edit(
+        result["area_edit_uid"], actor="human"
+    )
+    assert updated.uid == a.uid
+    assert updated.enabled is False

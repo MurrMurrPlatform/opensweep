@@ -134,6 +134,10 @@ class ProposeAreaEditRequest(BaseModel):
     spec: str = ""
     rationale: str = ""
     doc_uids: list[str] = Field(default_factory=list)
+    enabled: bool = Field(
+        default=True,
+        description="false proposes RETIRING the area (applied on human accept)",
+    )
     source_run_uid: Optional[str] = None
     executor: str = "manual"
 

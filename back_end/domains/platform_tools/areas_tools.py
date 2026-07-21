@@ -23,6 +23,7 @@ async def propose_area_edit(
     spec: str = "",
     rationale: str = "",
     doc_uids: list[str] | None = None,
+    enabled: bool = True,
     source_run_uid: str = "",
     executor: str = "",
     **_: Any,
@@ -36,13 +37,18 @@ async def propose_area_edit(
     an existing key proposes a full replacement of it (kind, title,
     scope_paths, spec, doc_uids). Lands as a pending edit for human review —
     keep specs small and set scope_paths to the repository paths the area
-    covers so code changes there mark it for review."""
+    covers so code changes there mark it for review. Pass enabled=false to
+    propose RETIRING an area that should no longer exist. The result's
+    `warnings` list the partition conflicts your proposal would create
+    (against the live map and your own earlier proposals this run) —
+    resolve them by re-proposing before you finish."""
     return await area_service.propose_area_edit(
         repository_uid=repository_uid,
         proposed_spec=spec,
         rationale=rationale,
         key=key,
         kind=kind,
+        enabled=enabled,
         title=title,
         scope_paths=scope_paths,
         doc_uids=doc_uids,

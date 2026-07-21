@@ -366,6 +366,7 @@ function editHeading(edit: AreaEditDTO): string {
                   <span class="font-mono text-sm font-medium">{{ edit.key }}</span>
                   <Badge :variant="kindVariant(edit.kind)" class="px-1.5 text-[10px]">{{ edit.kind || 'subsystem' }}</Badge>
                   <Badge v-if="!edit.area_uid" variant="info" class="px-1.5 text-[10px]">new area</Badge>
+                  <Badge v-if="edit.proposed_enabled === false" variant="destructive" class="px-1.5 text-[10px]">proposes retiring</Badge>
                   <Badge v-else variant="warn" class="px-1.5 text-[10px]" title="Replaces the area's current spec">updates existing</Badge>
                 </div>
                 <div v-if="editHeading(edit) !== edit.key" class="text-sm">{{ editHeading(edit) }}</div>

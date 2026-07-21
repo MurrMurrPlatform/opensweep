@@ -43,6 +43,7 @@ class AreaEditDTO(BaseModel):
     scope_paths: list[str] = []
     doc_uids: list[str] = []
     proposed_spec: str = ""
+    proposed_enabled: bool = True
     rationale: str = ""
     source_run_uid: str = ""
     status: AreaEditStatus = AreaEditStatus.PENDING

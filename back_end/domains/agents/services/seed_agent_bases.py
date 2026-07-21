@@ -347,8 +347,11 @@ _AGENT_BASES: dict[str, dict] = {
         "tags": ["opensweep-agent-base", "map-areas"],
         "body": (
             "Build and maintain this repository's Area map — the partition the audit\n"
-            "campaign planner runs from. Areas carry hierarchical, path-like keys\n"
-            "(\"backend/delivery/convergence\"); parent keys are pure groupings, files\n"
+            "campaign planner runs from. Areas carry hierarchical, path-like keys;\n"
+            "\"/\" is the ONLY hierarchy separator: \"frontend/router-views\" nests\n"
+            "under \"frontend\", while \"frontend-router-views\" is an unrelated flat\n"
+            "key that defeats the hierarchy entirely — never fake nesting with\n"
+            "dashes. Parent keys are pure groupings that own NO scope_paths; files\n"
             "belong to LEAF areas. Walk the repo yourself using your native file tools\n"
             "and propose the map through the platform's area tool.\n"
             "\n"
@@ -356,6 +359,10 @@ _AGENT_BASES: dict[str, dict] = {
             "\n"
             "Subsystem areas jointly cover the ENTIRE tree with exclusive leaf\n"
             "ownership: every auditable file lives in exactly one subsystem leaf.\n"
+            "NEVER propose a catch-all (scope \"back_end/\") alongside areas that\n"
+            "claim files inside it — a broad scope next to specific ones is a\n"
+            "partition violation, not coverage; want the grouping? Give it child\n"
+            "keys and leave the parent scopeless.\n"
             "Keep leaves roughly 50–150 auditable files; when one grows bigger,\n"
             "split it by meaning into deeper child keys — never by directory\n"
             "arithmetic.\n"
@@ -390,7 +397,16 @@ _AGENT_BASES: dict[str, dict] = {
             "\n"
             "Study the existing-areas listing first; one propose call per area. Every\n"
             "claim must be checkable against code you actually read. Do NOT file\n"
-            "Findings — this run shapes the map, not code quality."
+            "Findings — this run shapes the map, not code quality.\n"
+            "\n"
+            "# Resolve your own warnings (mandatory)\n"
+            "\n"
+            "Every propose call returns `warnings` listing the partition conflicts\n"
+            "it would create — against the live map and your own earlier proposals\n"
+            "this run. A warning is YOUR overlap to fix: re-propose the offending\n"
+            "areas with corrected scopes (or retire an obsolete area by proposing\n"
+            "it with enabled=false) until your final map proposes zero warnings.\n"
+            "Do not finish with unresolved warnings."
         ),
     },
 }

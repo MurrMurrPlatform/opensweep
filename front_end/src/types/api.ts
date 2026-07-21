@@ -1681,6 +1681,8 @@ export interface AreaEditDTO {
   scope_paths: string[]
   doc_uids: string[]
   proposed_spec: string
+  /** false = the edit proposes retiring the area. */
+  proposed_enabled: boolean
   rationale: string
   source_run_uid: string
   status: AreaEditStatus

@@ -54,9 +54,14 @@ def test_map_areas_runs_under_the_discover_stage():
 
 
 def test_tooling_contract_names_the_tools():
-    assert "propose_area_edit" in _MAP_AREAS_TOOLING_CONTRACT
-    assert "read_doc" in _MAP_AREAS_TOOLING_CONTRACT
-    assert "subsystem | feature | ignore" in _MAP_AREAS_TOOLING_CONTRACT
+    flat = " ".join(_MAP_AREAS_TOOLING_CONTRACT.split())
+    assert "propose_area_edit" in flat
+    assert "read_doc" in flat
+    assert "subsystem | feature | ignore" in flat
+    # In-loop feedback contract: warnings come back from the tool and the
+    # agent must resolve them; enabled=false retires an area.
+    assert "warnings" in flat
+    assert "enabled=false" in flat
 
 
 # ── listings ────────────────────────────────────────────────────────────────

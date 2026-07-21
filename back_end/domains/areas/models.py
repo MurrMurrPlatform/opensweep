@@ -85,6 +85,10 @@ class AreaEdit(AsyncStructuredNode):
     proposed_spec = StringProperty(default="")
     rationale = StringProperty(default="")
 
+    # Proposed enabled state — False = the agent proposes RETIRING the area
+    # (its only way to clean up a bad partition; applied on human accept).
+    proposed_enabled = BooleanProperty(default=True)
+
     source_run_uid = StringProperty(default="", index=True)
 
     status = StringProperty(default="pending", index=True)  # AREA_EDIT_STATUSES

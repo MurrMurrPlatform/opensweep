@@ -64,6 +64,7 @@ def edit_to_dto(e: AreaEdit, *, current_spec: str = "") -> AreaEditDTO:
         scope_paths=list(e.scope_paths or []),
         doc_uids=list(e.doc_uids or []),
         proposed_spec=e.proposed_spec or "",
+        proposed_enabled=bool(getattr(e, "proposed_enabled", True)),
         rationale=e.rationale or "",
         source_run_uid=e.source_run_uid or "",
         status=AreaEditStatus(e.status or "pending"),
@@ -257,11 +258,18 @@ async def propose_area_edit(
     title: str = "",
     scope_paths: list[str] | None = None,
     doc_uids: list[str] | None = None,
+    enabled: bool = True,
     source_run_uid: str = "",
 ) -> dict:
     """Agent-facing: propose a full replacement for an existing area
     (matched by key) or a new area (unknown key). One pending edit per
-    (area, run) — a second proposal from the same run replaces the first."""
+    (area, run) — a second proposal from the same run replaces the first.
+    `enabled=False` proposes retiring the area (applied on human accept).
+
+    The result carries the same partition `warnings` a human sees at accept
+    time, checked against the live map AND this run's other pending
+    proposals — so the proposing agent can fix an overlapping partition
+    in-loop instead of shipping it to the review queue."""
     key = normalize_key(key)
     if not key:
         raise HTTPException(status_code=422, detail="key is required")
@@ -292,24 +300,55 @@ async def propose_area_edit(
         title=title,
         scope_paths=list(scope_paths or []),
         doc_uids=list(doc_uids or []),
+        proposed_enabled=bool(enabled),
         proposed_spec=proposed_spec,
         rationale=rationale,
         source_run_uid=source_run_uid,
         status="pending",
     )
     await e.save()
+
+    # In-loop partition check: validate against the live enabled areas PLUS
+    # this run's other pending proposals — a run mapping the whole repo would
+    # otherwise only collide at accept time, long after it can react.
+    rows = [r for r in await _repo_area_rows(repository_uid) if r["key"] != key]
+    if source_run_uid:
+        for other in await AreaEdit.nodes.all():
+            if (
+                other.repository_uid == repository_uid
+                and other.status == "pending"
+                and other.source_run_uid == source_run_uid
+                and other.uid != e.uid
+                and (other.key or "") != key
+            ):
+                rows.append(
+                    {
+                        "key": other.key or "",
+                        "kind": other.kind or "subsystem",
+                        "scope_paths": list(other.scope_paths or []),
+                        "enabled": bool(getattr(other, "proposed_enabled", True)),
+                    }
+                )
+    warnings = validate_area_edit(e, rows) if enabled else []
+
     await write_audit(
         kind="area_edit.proposed",
         subject_uid=e.uid,
         subject_type="AreaEdit",
         actor_uid=source_run_uid or "agent",
-        payload={"key": key, "area_uid": area_uid, "new_area": not area_uid},
+        payload={
+            "key": key,
+            "area_uid": area_uid,
+            "new_area": not area_uid,
+            "warnings": warnings,
+        },
     )
     return {
         "status": "ok",
         "area_edit_uid": e.uid,
         "area_uid": area_uid,
         "new_area": not area_uid,
+        "warnings": warnings,
     }
 
 
@@ -411,6 +450,7 @@ async def accept_area_edit(uid: str, *, actor: str = "human") -> tuple[Area, lis
             a.title = e.title
         a.scope_paths = list(e.scope_paths or [])
         a.doc_uids = list(e.doc_uids or [])
+        a.enabled = bool(getattr(e, "proposed_enabled", True))
         a.updated_at = now
         _mark_reviewed(a, now)  # an accepted edit counts as a review
         await a.save()

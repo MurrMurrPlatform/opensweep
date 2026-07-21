@@ -739,10 +739,14 @@ slugs create pages; existing slugs replace their body."""
 _MAP_AREAS_TOOLING_CONTRACT = """# Tooling
 
 Write tool — `propose_area_edit(key, kind, title, scope_paths, spec,
-doc_uids, rationale)`. Every call proposes ONE area (full replacement on
-existing keys). kind is one of subsystem | feature | ignore. Read a doc
-page's body with `read_doc(slug)` only when you actually need it — the
-listing below is metadata only."""
+doc_uids, rationale, enabled)`. Every call proposes ONE area (full
+replacement on existing keys; `enabled=false` proposes retiring an area
+that should no longer exist). kind is one of subsystem | feature |
+ignore. The result's `warnings` list every partition conflict your
+proposal creates — against the live map and your own earlier proposals
+this run. Fix them by re-proposing; finish with zero warnings. Read a
+doc page's body with `read_doc(slug)` only when you actually need it —
+the listing below is metadata only."""
 
 
 _AUDIT_INTENT_TEMPLATE = """Audit the code behind this documentation page.
