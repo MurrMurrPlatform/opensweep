@@ -7,7 +7,7 @@ concrete values to read rather than NULL. See
 docs/superpowers/specs/2026-07-20-codex-subscription-token-refresh-design.md.
 """
 
-VERSION = 9
+VERSION = 13
 NAME = "codex-credential-state"
 
 SCHEMA_UP: list[str] = []
