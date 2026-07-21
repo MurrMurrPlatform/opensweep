@@ -86,12 +86,21 @@ async def test_due_run_campaign_binding_creates_and_launches(seams):
     assert create["req"].template == "rotation"
     assert create["req"].k == 2
     assert create["req"].effort == "deep"
+    assert create["req"].area_prefix == ""  # not in the target → whole map
     assert create["created_by"] == "scheduled-agent:sa1"
     assert create["trigger_provenance"] == "cron:0 7 * * 1"
     assert seams["launched"] == "campaign1"
     # The binding was stamped so the next tick doesn't refire.
     assert seams["sa"].last_scheduled_at == NOW
     assert seams["sa"].saved is True
+
+
+async def test_target_area_prefix_reaches_the_campaign_request(seams):
+    seams["sa"].target = {"template": "full", "area_prefix": "backend"}
+    result = await schedule_scanner.scan_and_dispatch(now=NOW)
+    assert result.dispatched == 1
+    assert seams["create"]["req"].template == "full"
+    assert seams["create"]["req"].area_prefix == "backend"
 
 
 async def test_disabled_autonomy_skips_but_stamps(seams):

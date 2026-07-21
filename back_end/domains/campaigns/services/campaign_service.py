@@ -36,6 +36,7 @@ def to_dto(c: Campaign) -> CampaignDTO:
         effort=c.effort or "",
         lens_keys=list(c.lens_keys or []),
         k=int(getattr(c, "k", 3) or 3),
+        area_prefix=str(getattr(c, "area_prefix", "") or ""),
         parts=[dict(p) for p in (c.parts or [])],
         max_parallel=int(c.max_parallel or 2),
         created_by=c.created_by or "",
@@ -144,15 +145,80 @@ async def _doc_inputs(repository_uid: str) -> list[dict]:
     ]
 
 
-async def _plan_areas(repository_uid: str, repo) -> tuple[list[dict], str, int]:
-    """(normalized areas, degraded_reason — "" = full tree, total file count).
+async def _area_map_inputs(repository_uid: str) -> dict | None:
+    """The repo's enabled Area map as planner inputs, or None when it has
+    no subsystem leaves — docs-derived planning stays the fallback.
 
-    The docs+tree+normalize_areas half of planning — shared by the plan
-    builder and the no-persist preview endpoint."""
-    docs = await _doc_inputs(repository_uid)
+    Files belong to subsystem LEAVES only (parents are groupings); feature
+    areas overlay at ANY depth, so all enabled features come through."""
+    from domains.areas.models import Area, is_leaf
+
+    rows = [
+        a
+        for a in await Area.nodes.all()
+        if a.repository_uid == repository_uid and bool(a.enabled)
+    ]
+    keys = [a.key for a in rows]
+
+    def _leaf_dict(a) -> dict:
+        return {
+            "area_key": a.key,
+            "title": a.title or a.key,
+            "scope_paths": list(a.scope_paths or []),
+            "doc_uids": list(a.doc_uids or []),
+        }
+
+    subsystem_leaves = [
+        _leaf_dict(a)
+        for a in rows
+        if (a.kind or "subsystem") == "subsystem" and is_leaf(a.key, keys)
+    ]
+    if not subsystem_leaves:
+        return None
+    return {
+        "subsystem_leaves": subsystem_leaves,
+        "features": [_leaf_dict(a) for a in rows if a.kind == "feature"],
+        "ignore_scopes": sorted(
+            {p for a in rows if a.kind == "ignore" for p in (a.scope_paths or [])}
+        ),
+    }
+
+
+async def _plan_areas(
+    repository_uid: str, repo
+) -> tuple[list[dict], str, int, str, list[dict]]:
+    """(areas, degraded_reason — "" = full tree, total file count, source
+    "area-map"|"docs", feature areas).
+
+    The tree+partition half of planning — shared by the plan builder and
+    the no-persist preview endpoint. A repo with an enabled Area map plans
+    from its subsystem leaves; otherwise the docs' watch scopes."""
+    from domains.docs.services.doc_freshness import watches_path
+
     file_paths, degraded_reason = await _file_tree_paths(repo)
+    map_inputs = await _area_map_inputs(repository_uid)
+    if map_inputs is not None:
+        areas = planner.areas_from_map(
+            map_inputs["subsystem_leaves"], map_inputs["ignore_scopes"], file_paths
+        )
+        feature_areas = []
+        for f in map_inputs["features"]:
+            fa = dict(f)
+            fa["file_count"] = (
+                sum(
+                    1
+                    for p in file_paths
+                    if watches_path(list(f.get("scope_paths") or []), p)
+                )
+                if file_paths
+                else None
+            )
+            feature_areas.append(fa)
+        return areas, degraded_reason, len(file_paths), "area-map", feature_areas
+
+    docs = await _doc_inputs(repository_uid)
     areas = planner.normalize_areas(docs, file_paths)
-    return areas, degraded_reason, len(file_paths)
+    return areas, degraded_reason, len(file_paths), "docs", []
 
 
 async def _plan_parts(
@@ -161,8 +227,9 @@ async def _plan_parts(
     template: str,
     lens_keys: list[str],
     k: int,
-) -> tuple[list[dict], str]:
-    """(part list, degraded_reason) for the given plan inputs.
+    area_prefix: str = "",
+) -> tuple[list[dict], str, str]:
+    """(part list, degraded_reason, source) for the given plan inputs.
 
     The ONE plan builder — create() and launch()'s replan both go through
     here so the two can never drift."""
@@ -174,7 +241,19 @@ async def _plan_parts(
     if repo is None:
         raise HTTPException(status_code=404, detail=f"Repository {repository_uid} not found")
 
-    areas, degraded_reason, _total = await _plan_areas(repository_uid, repo)
+    areas, degraded_reason, _total, source, feature_areas = await _plan_areas(
+        repository_uid, repo
+    )
+    if area_prefix:
+        # Only meaningful for area-map plans — docs-derived areas carry no
+        # area_key, so a prefix empties them (legal: zero area parts).
+        areas = planner.filter_by_prefix(areas, area_prefix)
+        feature_areas = planner.filter_by_prefix(feature_areas, area_prefix)
+        if not areas and not feature_areas:
+            note = f"area_prefix {area_prefix!r} matched no areas"
+            degraded_reason = (
+                f"{degraded_reason}; {note}" if degraded_reason else note
+            )
 
     lenses = [
         {
@@ -199,8 +278,18 @@ async def _plan_parts(
         k=k,
         path_recency=path_recency,
         focus_lens=lens_keys[0] if template == "focused" and lens_keys else None,
+        feature_areas=feature_areas,
     )
-    return parts, degraded_reason
+    if area_prefix:
+        # Global sweeps stay whole-repo agents; the scope hint steers them
+        # toward the slice this campaign actually covers (part_dispatch).
+        union = sorted(
+            {p for a in areas for p in (a.get("scope_paths") or [])}
+        )
+        for part in parts:
+            if (part.get("kind") or "area") == "global":
+                part["scope_hint"] = union
+    return parts, degraded_reason, source
 
 
 async def preview_areas(repository_uid: str) -> dict:
@@ -211,17 +300,29 @@ async def preview_areas(repository_uid: str) -> dict:
     repo = await Repository.nodes.get_or_none(uid=repository_uid)
     if repo is None:
         raise HTTPException(status_code=404, detail=f"Repository {repository_uid} not found")
-    areas, degraded_reason, total_files = await _plan_areas(repository_uid, repo)
+    areas, degraded_reason, total_files, source, feature_areas = await _plan_areas(
+        repository_uid, repo
+    )
     uncovered = sum(
         int(a.get("file_count") or 0)
         for a in areas
         if str(a.get("title") or "").startswith(planner.REMAINDER_TITLE)
     )
+    listed = [
+        {"area_key": "", "kind": "subsystem", "oversized": False, **a}
+        for a in areas
+    ] + [
+        {"oversized": False, **fa, "kind": "feature"} for fa in feature_areas
+    ]
     return {
-        "areas": areas,
+        "areas": listed,
         "degraded": degraded_reason,
         "total_files": total_files,
         "uncovered_files": uncovered,
+        "source": source,
+        "oversized_areas": [
+            str(a.get("title") or "") for a in listed if a.get("oversized")
+        ],
     }
 
 
@@ -247,11 +348,13 @@ async def create(
     # Clamp k up front so the stored value and the plan (and any launch-time
     # replan) are built from the same number.
     k = max(int(req.k or 3), 1)
-    parts, degraded_reason = await _plan_parts(
+    area_prefix = (req.area_prefix or "").strip()
+    parts, degraded_reason, source = await _plan_parts(
         repository_uid,
         template=template,
         lens_keys=list(req.lens_keys or []),
         k=k,
+        area_prefix=area_prefix,
     )
 
     c = Campaign(
@@ -263,6 +366,7 @@ async def create(
         effort=(req.effort or "").strip(),
         lens_keys=list(req.lens_keys or []),
         k=k,
+        area_prefix=area_prefix,
         parts=parts,
         max_parallel=max(int(req.max_parallel or 2), 1),
         created_by=created_by,
@@ -271,7 +375,7 @@ async def create(
     await c.save()
     # A degraded plan (no/partial file tree) must be distinguishable from a
     # real one — users approve the plan's scope, so mark it on the record.
-    planned_payload = {"parts": len(parts)}
+    planned_payload = {"parts": len(parts), "source": source}
     if degraded_reason:
         planned_payload["degraded"] = degraded_reason
     await record_event(c, "planned", **planned_payload)
@@ -281,7 +385,7 @@ async def create(
         subject_type="Campaign",
         actor_uid=created_by,
         repository_uid=repository_uid,
-        payload={"template": template, "parts": len(parts), **({"degraded": degraded_reason} if degraded_reason else {})},
+        payload={"template": template, "parts": len(parts), "source": source, **({"degraded": degraded_reason} if degraded_reason else {})},
     )
     return c
 
@@ -302,11 +406,12 @@ async def _replan(c: Campaign) -> None:
     A degraded recompute (tree unavailable/truncated) or any error keeps the
     existing parts — a stale-but-real plan beats a fresh-but-blind one."""
     try:
-        parts, degraded_reason = await _plan_parts(
+        parts, degraded_reason, _source = await _plan_parts(
             c.repository_uid,
             template=c.template or "rotation",
             lens_keys=list(c.lens_keys or []),
             k=int(getattr(c, "k", 3) or 3),
+            area_prefix=str(getattr(c, "area_prefix", "") or ""),
         )
     except Exception as exc:  # noqa: BLE001 — launch must not fail on replan
         logger.warning(

@@ -129,6 +129,17 @@ async function cancelCampaign() {
 
 const parts = computed(() => [...(campaign.value?.parts ?? [])].sort((a, b) => a.idx - b.idx))
 
+// Area-map extensions (part kind 'feature', campaign.area_prefix) — read
+// defensively so this view compiles and renders regardless of which backend
+// (docs-derived or area-map) it talks to.
+function isFeaturePart(p: { kind: string }): boolean {
+  return p.kind === 'feature'
+}
+const areaPrefix = computed(() => {
+  const c = campaign.value as (CampaignDTO & { area_prefix?: string }) | null
+  return c?.area_prefix ?? ''
+})
+
 const progress = computed(() =>
   campaign.value ? campaignProgress(campaign.value) : { finished: 0, total: 0 },
 )
@@ -200,6 +211,9 @@ function scopePathsLabel(paths: string[]): string {
             </Badge>
             <Badge variant="outline" class="px-1.5 text-[10px]" title="Effort tier">
               <Zap class="h-3 w-3" /> {{ campaign.effort || 'default tiers' }}
+            </Badge>
+            <Badge v-if="areaPrefix" variant="outline" class="px-1.5 font-mono text-[10px]" title="Scoped to areas under this key prefix">
+              <FolderTree class="h-3 w-3" /> {{ areaPrefix }}
             </Badge>
             <Badge
               v-for="key in campaign.lens_keys"
@@ -286,6 +300,9 @@ function scopePathsLabel(paths: string[]): string {
                         aria-label="Area sweep"
                       />
                       <span class="truncate">{{ p.title || `Part ${p.idx}` }}</span>
+                      <Badge v-if="isFeaturePart(p)" variant="info" class="shrink-0 px-1.5 text-[10px]" title="Spec-anchored feature audit">
+                        feature · spec audit
+                      </Badge>
                     </span>
                   </td>
                   <td class="max-w-[220px] px-4 py-2">

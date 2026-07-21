@@ -25,6 +25,7 @@ def _part(idx):
         "run_uid": "",
         "state": "pending",
         "file_count": 10,
+        "area_key": "",
     }
 
 
@@ -68,13 +69,16 @@ def seams(monkeypatch):
 
 
 def _plan_stub(monkeypatch, result=None, *, error=None, captured=None):
-    async def fake_plan_parts(repository_uid, *, template, lens_keys, k):
+    async def fake_plan_parts(
+        repository_uid, *, template, lens_keys, k, area_prefix=""
+    ):
         if captured is not None:
             captured.update(
                 repository_uid=repository_uid,
                 template=template,
                 lens_keys=lens_keys,
                 k=k,
+                area_prefix=area_prefix,
             )
         if error is not None:
             raise error
@@ -89,7 +93,7 @@ async def test_launch_replaces_parts_and_records_event_when_plan_changed(
     seams.campaign = _campaign(parts=[_part(0)])
     fresh = [_part(0), _part(1)]
     captured = {}
-    _plan_stub(monkeypatch, ([dict(p) for p in fresh], ""), captured=captured)
+    _plan_stub(monkeypatch, ([dict(p) for p in fresh], "", "docs"), captured=captured)
 
     out = await campaign_service.launch("c1", actor_uid="u1")
 
@@ -103,13 +107,14 @@ async def test_launch_replaces_parts_and_records_event_when_plan_changed(
         "template": "full",
         "lens_keys": ["bugs"],
         "k": 3,
+        "area_prefix": "",
     }
 
 
 async def test_launch_stays_silent_when_plan_unchanged(seams, monkeypatch):
     original = [_part(0), _part(1)]
     seams.campaign = _campaign(parts=[dict(p) for p in original])
-    _plan_stub(monkeypatch, ([dict(p) for p in original], ""))
+    _plan_stub(monkeypatch, ([dict(p) for p in original], "", "docs"))
 
     out = await campaign_service.launch("c1")
 
@@ -117,10 +122,21 @@ async def test_launch_stays_silent_when_plan_unchanged(seams, monkeypatch):
     assert [e["type"] for e in seams.events] == ["launched"]
 
 
+async def test_replan_passes_the_stored_area_prefix_through(seams, monkeypatch):
+    seams.campaign = _campaign(area_prefix="backend")
+    captured = {}
+    _plan_stub(monkeypatch, ([_part(0)], "", "area-map"), captured=captured)
+
+    out = await campaign_service.launch("c1")
+
+    assert captured["area_prefix"] == "backend"
+    assert out.area_prefix == "backend"  # DTO passthrough
+
+
 async def test_degraded_replan_keeps_existing_parts(seams, monkeypatch):
     original = [_part(0)]
     seams.campaign = _campaign(parts=[dict(p) for p in original])
-    _plan_stub(monkeypatch, ([], "file tree unavailable (BoomError)"))
+    _plan_stub(monkeypatch, ([], "file tree unavailable (BoomError)", "docs"))
 
     out = await campaign_service.launch("c1")
 
@@ -150,13 +166,15 @@ async def test_replan_error_keeps_existing_parts_and_launch_proceeds(
 
 @pytest.fixture
 def preview_seams(monkeypatch):
-    """Repository lookup + doc/tree loading stubbed; normalize_areas is real."""
+    """Repository lookup + doc/tree/map loading stubbed; normalize_areas and
+    areas_from_map are real. map_inputs=None ⇒ the docs fallback."""
     import domains.repositories.models as repo_models
 
     state = SimpleNamespace(
         repo=SimpleNamespace(uid="repo1"),
         docs=[],
         tree=([], ""),
+        map_inputs=None,
     )
 
     class _Nodes:
@@ -174,8 +192,12 @@ def preview_seams(monkeypatch):
     async def fake_tree(repo):
         return state.tree
 
+    async def fake_map_inputs(repository_uid):
+        return state.map_inputs
+
     monkeypatch.setattr(campaign_service, "_doc_inputs", fake_docs)
     monkeypatch.setattr(campaign_service, "_file_tree_paths", fake_tree)
+    monkeypatch.setattr(campaign_service, "_area_map_inputs", fake_map_inputs)
     return state
 
 
@@ -194,6 +216,47 @@ async def test_preview_areas_reports_partition_without_persisting(preview_seams)
     assert titles == ["API", "Uncovered paths"]
     assert out["areas"][0]["scope_paths"] == ["src/api"]
     assert out["areas"][0]["file_count"] == 2
+    # Docs-derived areas: source "docs", subsystem kind, no keys, no flags.
+    assert out["source"] == "docs"
+    assert out["oversized_areas"] == []
+    assert all(a["kind"] == "subsystem" for a in out["areas"])
+    assert all(a["area_key"] == "" for a in out["areas"])
+    assert all(a["oversized"] is False for a in out["areas"])
+
+
+async def test_preview_areas_uses_the_area_map_when_present(preview_seams):
+    preview_seams.map_inputs = {
+        "subsystem_leaves": [
+            {
+                "area_key": "backend",
+                "title": "Backend",
+                "scope_paths": ["src/api"],
+                "doc_uids": ["d1"],
+            }
+        ],
+        "features": [
+            {
+                "area_key": "features/checkout",
+                "title": "Checkout",
+                "scope_paths": ["src/api/a.py"],
+                "doc_uids": [],
+            }
+        ],
+        "ignore_scopes": ["scripts"],
+    }
+    preview_seams.tree = (["src/api/a.py", "src/api/b.py", "scripts/x.sh"], "")
+
+    out = await campaign_service.preview_areas("repo1")
+
+    assert out["source"] == "area-map"
+    assert out["uncovered_files"] == 0  # scripts ignored, src/api covered
+    by_key = {a["area_key"]: a for a in out["areas"]}
+    assert by_key["backend"]["kind"] == "subsystem"
+    assert by_key["backend"]["file_count"] == 2
+    # Feature overlays ride along in the preview with their own kind.
+    assert by_key["features/checkout"]["kind"] == "feature"
+    assert by_key["features/checkout"]["file_count"] == 1
+    assert out["oversized_areas"] == []
 
 
 async def test_preview_areas_passes_degraded_reason_through(preview_seams):

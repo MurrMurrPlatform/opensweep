@@ -31,9 +31,11 @@ import {
 } from '@/components/ui/select'
 import type {
   AgentEffort,
+  CampaignAreaPreview,
   CampaignAreasPreview,
   CampaignDTO,
   CampaignTemplate,
+  CreateCampaignRequest,
   LensDTO,
 } from '@/types/api'
 
@@ -69,6 +71,36 @@ const areasPreview = ref<CampaignAreasPreview | null>(null)
 const loadingAreas = ref(false)
 const areasOpen = ref(false)
 
+// The area-map backend extends the preview with source / oversized_areas /
+// per-area area_key. Read them defensively so this view compiles and renders
+// sensibly whichever backend it talks to.
+const previewSource = computed(() => {
+  const p = areasPreview.value as (CampaignAreasPreview & { source?: string }) | null
+  return p?.source ?? ''
+})
+const oversizedAreas = computed<string[]>(() => {
+  const p = areasPreview.value as (CampaignAreasPreview & { oversized_areas?: string[] }) | null
+  return p?.oversized_areas ?? []
+})
+function areaKeyOf(a: CampaignAreaPreview): string {
+  return (a as CampaignAreaPreview & { area_key?: string }).area_key ?? ''
+}
+
+/** Scope the campaign to one branch of the area map ('' = everything). */
+const areaPrefix = ref('')
+
+/** Every cumulative "/"-prefix of the previewed area keys, for the datalist. */
+const areaPrefixOptions = computed<string[]>(() => {
+  const prefixes = new Set<string>()
+  for (const a of areasPreview.value?.areas ?? []) {
+    const key = areaKeyOf(a)
+    if (!key) continue
+    const segments = key.split('/')
+    for (let i = 1; i <= segments.length; i++) prefixes.add(segments.slice(0, i).join('/'))
+  }
+  return [...prefixes].sort()
+})
+
 watch(
   () => props.open,
   async (open) => {
@@ -77,6 +109,7 @@ watch(
     effort.value = 'default'
     k.value = 3
     title.value = ''
+    areaPrefix.value = ''
     // Best-effort preview — creation works fine without it.
     areasPreview.value = null
     areasOpen.value = false
@@ -144,13 +177,16 @@ async function create() {
   if (!canCreate.value) return
   creating.value = true
   try {
+    // Cast: area_prefix is the area-map extension of CreateCampaignRequest —
+    // harmless for older backends, which simply ignore it.
     const campaign = await campaigns.create(props.repositoryUid, {
       template: template.value,
       lens_keys: lensKeys.value,
       effort: effort.value === 'default' ? '' : effort.value,
       k: template.value === 'rotation' ? k.value : undefined,
       title: title.value.trim() || undefined,
-    })
+      area_prefix: areaPrefix.value.trim(),
+    } as CreateCampaignRequest)
     emit('created', campaign)
     emit('update:open', false)
   } catch (e) {
@@ -223,6 +259,14 @@ async function create() {
                 <span class="truncate">{{ previewSummary }}</span>
               </CollapsibleTrigger>
               <Badge
+                v-if="previewSource"
+                variant="outline"
+                class="px-1.5 text-[10px]"
+                title="Where this partition comes from"
+              >
+                {{ previewSource === 'area-map' ? 'area map' : 'derived from docs' }}
+              </Badge>
+              <Badge
                 v-if="areasPreview.degraded"
                 variant="warn"
                 class="px-1.5 text-[10px]"
@@ -231,6 +275,13 @@ async function create() {
                 <TriangleAlert class="h-3 w-3" /> degraded
               </Badge>
             </div>
+            <p v-if="oversizedAreas.length" class="mt-1 flex items-start gap-1.5 pl-5 text-xs text-warn">
+              <TriangleAlert class="mt-0.5 h-3 w-3 shrink-0" />
+              <span>
+                <span class="font-mono">{{ oversizedAreas.join(', ') }}</span>
+                — exceeds the target size — ask Map areas to split
+              </span>
+            </p>
             <p v-if="template === 'rotation' && areaCount" class="mt-1 pl-5 text-xs text-muted-foreground">
               Rotation covers {{ rotationCovers }} of {{ areaCount }} areas this pass.
             </p>
@@ -304,6 +355,23 @@ async function create() {
               </label>
             </template>
           </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <Label for="campaign-area-prefix">Area prefix (optional)</Label>
+          <Input
+            id="campaign-area-prefix"
+            v-model="areaPrefix"
+            list="campaign-area-prefix-options"
+            placeholder="e.g. backend/delivery"
+            class="font-mono"
+          />
+          <datalist id="campaign-area-prefix-options">
+            <option v-for="p in areaPrefixOptions" :key="p" :value="p" />
+          </datalist>
+          <p class="text-xs text-muted-foreground">
+            Limit the sweep to areas under this key prefix. Empty = the whole map.
+          </p>
         </div>
 
         <div class="space-y-1.5">

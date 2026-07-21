@@ -68,12 +68,14 @@ class RepositoryService:
             seed_audit_agents,
             seed_audit_stale,
             seed_keep_docs_current,
+            seed_map_areas,
         )
 
         await seed_conventions_doc(r.uid)
         await seed_keep_docs_current(r.uid)
         await seed_audit_stale(r.uid)
         await seed_audit_agents(r.uid)
+        await seed_map_areas(r.uid)
         return _to_dto(r)
 
     async def update(

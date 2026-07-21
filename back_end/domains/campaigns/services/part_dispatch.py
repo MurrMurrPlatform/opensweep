@@ -3,9 +3,11 @@
 Area parts mirror sweep.run_audit's compose+trigger call: the seeded "ask"
 base is the instructions layer, and the code-owned structural slot carries
 the scope contract, the rendered lens checklist, and the coverage
-reporting contract (complete_run's covered/skipped/lens_verdicts). Global
-parts dispatch the lens's seeded variant Agent with a digest of the
-`escalate:<lens-key>` findings the area runs filed for it.
+reporting contract (complete_run's covered/skipped/lens_verdicts). Feature
+parts are area parts with the Area's spec inlined as the contract to
+verify (implementation-gaps lens). Global parts dispatch the lens's seeded
+variant Agent with a digest of the `escalate:<lens-key>` findings the area
+runs filed for it.
 """
 
 from __future__ import annotations
@@ -16,11 +18,13 @@ from typing import Any
 from domains.agents.services.composition import compose_agent_intent
 from domains.agents.services.dispatch import dispatch_agent
 from domains.agents.services.registry import system_agent_by_url, variant_source_url
+from domains.areas.services import area_service
 from domains.lenses.services import lens_service
 from domains.lenses.services.lens_service import lens_checklist
 from domains.run_policies.services.effort import ensure_policy_for_effort
 from domains.runs.schemas import RunTrigger, normalize_effort
 from domains.runs.services.lifecycle import LifecycleError, trigger_run
+from logging_config import logger
 
 # How many escalated findings a global sweep's digest carries.
 _MAX_ESCALATIONS = 20
@@ -51,11 +55,13 @@ _REPORTING_CONTRACT = (
 
 
 def _target(campaign, part: dict, **extra: Any) -> dict[str, Any]:
+    # .get throughout — parts persisted before the area map lack area_key.
     return {
         "paths": list(part.get("scope_paths") or []),
         "doc_uids": list(part.get("doc_uids") or []),
         "campaign_uid": campaign.uid,
         "campaign_part": int(part["idx"]),
+        "area_key": str(part.get("area_key") or ""),
         **extra,
     }
 
@@ -77,11 +83,13 @@ async def _escalation_digest(repository_uid: str, lens_key: str) -> list[str]:
     ]
 
 
-async def _dispatch_area(campaign, part: dict) -> str:
+async def _dispatch_area(campaign, part: dict, *, spec_block: str = "") -> str:
     lenses = [await lens_service.get_by_key(k) for k in (part.get("lens_keys") or [])]
-    structural = "\n\n".join(
-        [_scope_contract(campaign, part), lens_checklist(lenses), _REPORTING_CONTRACT]
-    )
+    blocks = [_scope_contract(campaign, part), lens_checklist(lenses)]
+    if spec_block:
+        blocks.append(spec_block)
+    blocks.append(_REPORTING_CONTRACT)
+    structural = "\n\n".join(blocks)
     composed = await compose_agent_intent(
         repository_uid=campaign.repository_uid,
         agent_key="ask",
@@ -106,6 +114,40 @@ async def _dispatch_area(campaign, part: dict) -> str:
     return run.uid
 
 
+async def _dispatch_feature(campaign, part: dict) -> str:
+    """A feature part is an area part anchored to its Area's spec: the spec
+    block sits between the lens checklist and the reporting contract. The
+    Area is loaded FRESH at dispatch time so the run verifies today's
+    contract, not the plan-time snapshot. Missing/disabled area or empty
+    spec degrades to a plain area dispatch — NEVER raises: part states are
+    sticky (tick.plan_tick), so a raise here would fail the part forever
+    over a fixable map edit."""
+    area_key = str(part.get("area_key") or "")
+    area = (
+        await area_service.get_area_by_key(campaign.repository_uid, area_key)
+        if area_key
+        else None
+    )
+    spec = (area.spec or "").strip() if area is not None else ""
+    if area is None or not bool(area.enabled) or not spec:
+        reason = (
+            "not found"
+            if area is None
+            else ("disabled" if not bool(area.enabled) else "has no spec")
+        )
+        logger.warning(
+            f"campaign {campaign.uid} part {part.get('idx')}: feature area "
+            f"{area_key!r} {reason} — dispatching as a plain area part",
+            extra={"tag": "campaigns"},
+        )
+        return await _dispatch_area(campaign, part)
+    spec_block = (
+        "## Feature spec — verify the implementation matches this contract "
+        "end-to-end\n\n" + spec
+    )
+    return await _dispatch_area(campaign, part, spec_block=spec_block)
+
+
 async def _dispatch_global(campaign, part: dict) -> str:
     keys = list(part.get("lens_keys") or [])
     if not keys:
@@ -126,6 +168,18 @@ async def _dispatch_global(campaign, part: dict) -> str:
             "Escalated observations from this campaign's area runs — verify "
             "each against the current code:\n" + "\n".join(digest)
         )
+    prefix = str(getattr(campaign, "area_prefix", "") or "")
+    if prefix:
+        # The sweep agent stays whole-repo; steer it toward the slice this
+        # campaign covers (scope_hint = union of the filtered areas' scopes).
+        hint = ", ".join(part.get("scope_hint") or []) or prefix
+        scope_note = (
+            f"This campaign is scoped to areas under '{prefix}'. "
+            f"Concentrate on: {hint}."
+        )
+        structural_extra = (
+            f"{structural_extra}\n\n{scope_note}" if structural_extra else scope_note
+        )
     run = await dispatch_agent(
         agent=variant,
         repository_uid=campaign.repository_uid,
@@ -143,6 +197,9 @@ async def _dispatch_global(campaign, part: dict) -> str:
 
 async def dispatch_part(campaign, part: dict) -> str:
     """Dispatch one pending part; returns the child run's uid."""
-    if (part.get("kind") or "area") == "global":
+    kind = part.get("kind") or "area"
+    if kind == "global":
         return await _dispatch_global(campaign, part)
+    if kind == "feature":
+        return await _dispatch_feature(campaign, part)
     return await _dispatch_area(campaign, part)

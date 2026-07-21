@@ -340,6 +340,59 @@ _AGENT_BASES: dict[str, dict] = {
             "this prompt is never composed into a run."
         ),
     },
+    "map-areas": {
+        "title": "OpenSweep agent — Map areas",
+        "description": "Task instructions for map-areas runs: propose the repository's Area map.",
+        "produces": "doc-tree",
+        "tags": ["opensweep-agent-base", "map-areas"],
+        "body": (
+            "Build and maintain this repository's Area map — the partition the audit\n"
+            "campaign planner runs from. Areas carry hierarchical, path-like keys\n"
+            "(\"backend/delivery/convergence\"); parent keys are pure groupings, files\n"
+            "belong to LEAF areas. Walk the repo yourself using your native file tools\n"
+            "and propose the map through the platform's area tool.\n"
+            "\n"
+            "# Subsystem areas\n"
+            "\n"
+            "Subsystem areas jointly cover the ENTIRE tree with exclusive leaf\n"
+            "ownership: every auditable file lives in exactly one subsystem leaf.\n"
+            "Keep leaves roughly 50–150 auditable files; when one grows bigger,\n"
+            "split it by meaning into deeper child keys — never by directory\n"
+            "arithmetic.\n"
+            "\n"
+            "# Ignore areas\n"
+            "\n"
+            "Explicitly classify non-auditable files — lockfiles, generated code,\n"
+            "vendored dependencies, fixtures and binary assets — into ignore areas,\n"
+            "each with its reason in the spec. An unexplained ignore is a coverage\n"
+            "hole.\n"
+            "\n"
+            "# Feature areas\n"
+            "\n"
+            "Propose feature areas for cross-cutting end-to-end flows traceable from\n"
+            "real entry points (HTTP routes, webhooks, celery tasks, MCP tools). A\n"
+            "feature area's spec states the CONTRACT — the expected end-to-end\n"
+            "behavior a future auditor verifies the implementation against. Feature\n"
+            "areas overlay the subsystems and may reference any paths.\n"
+            "\n"
+            "# Stability\n"
+            "\n"
+            "Prefer UPDATING existing areas over renaming or reshuffling — coverage\n"
+            "history hangs off keys. Rename only when the old key is genuinely wrong.\n"
+            "\n"
+            "# Cross-check the docs\n"
+            "\n"
+            "The docs listing is a lead, not truth. Where docs are missing, stale, or\n"
+            "contradict the code you read, note the divergence in the edit's\n"
+            "rationale instead of copying them.\n"
+            "\n"
+            "# Look-before-write (mandatory)\n"
+            "\n"
+            "Study the existing-areas listing first; one propose call per area. Every\n"
+            "claim must be checkable against code you actually read. Do NOT file\n"
+            "Findings — this run shapes the map, not code quality."
+        ),
+    },
 }
 
 

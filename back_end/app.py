@@ -472,6 +472,8 @@ def _include_routers(application: FastAPI):
         "api.v1.scheduled_agents",
         "api.v1.runs",
         "api.v1.docs",
+        # Areas — the reviewed area map (Areas + AreaEdit review + map-areas sweep)
+        "api.v1.areas",
         "api.v1.memories",
         "api.v1.run_policies",
         # Lenses — the decomposed audit vocabulary (read for all, admin tuning)

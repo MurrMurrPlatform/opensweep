@@ -13,6 +13,10 @@ module holds the two repository-level entry points:
                         the run). One Run per page, scoped to its
                         watch_paths via Run.target.
 
+  run_map_areas()     - ONE LLM run that proposes the Area map (the audit
+                        partition) via `propose_area_edit` (proposals land
+                        as pending AreaEdits). Mirrors run_generate_docs.
+
 Triggered Runs use the active LLM provider and the system-default
 RunPolicy.
 """
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
+from domains.areas.models import Area
 from domains.docs.models import Doc
 from domains.runs.schemas import RunTrigger
 from domains.runs.services._intent_helpers import (
@@ -44,6 +49,14 @@ async def _workflow_prompt(repository_uid: str, stage: str) -> str | None:
 
 @dataclass
 class GenerateDocsResult:
+    repository_uid: str
+    run_uid: str = ""
+    errors: list[str] = field(default_factory=list)
+    summary: str = ""
+
+
+@dataclass
+class MapAreasResult:
     repository_uid: str
     run_uid: str = ""
     errors: list[str] = field(default_factory=list)
@@ -117,6 +130,73 @@ async def run_generate_docs(
         subject_uid=repository_uid,
         subject_type="Repository",
         actor_uid=triggered_by or "generate-docs",
+        payload={
+            "run_uid": result.run_uid,
+            "errors": len(result.errors),
+        },
+    )
+
+    return result
+
+
+async def run_map_areas(
+    *,
+    repository_uid: str,
+    triggered_by: str = "",
+    agent_uid: Optional[str] = None,
+    trigger: RunTrigger = RunTrigger.MANUAL,
+) -> MapAreasResult:
+    """Dispatch one map-areas LLM run.
+
+    The LLM walks the repository itself (via its executor's native file
+    tools) and proposes the Area map — the audit partition — via
+    `propose_area_edit`. Every proposal lands as a pending AreaEdit for
+    human review.
+    """
+    result = MapAreasResult(repository_uid=repository_uid)
+
+    try:
+        existing_areas = await _existing_areas_listing(repository_uid)
+        docs_listing = await _docs_metadata_listing(repository_uid)
+        prompt_body = await load_agent_prompt_body(agent_uid)
+        if prompt_body is None:
+            prompt_body = await _workflow_prompt(repository_uid, "discover")
+        composed = await _map_areas_intent(
+            repository_uid=repository_uid,
+            existing_areas_listing=existing_areas,
+            docs_listing=docs_listing,
+            prompt_body=prompt_body,
+        )
+        run = await trigger_run(
+            repository_uid=repository_uid,
+            intent=composed.text,
+            playbook="ask",
+            title="Map areas",
+            stage="discover",
+            agent_uid=composed.agent_uid,
+            agent_rev=composed.agent_rev,
+            trigger=trigger,
+            triggered_by=triggered_by or "map-areas",
+        )
+        result.run_uid = run.uid
+    except LifecycleError as exc:
+        msg = f"map-areas: {exc}"
+        logger.warning(f"sweep: dispatch failed — {msg}")
+        result.errors.append(msg)
+    except Exception as exc:  # noqa: BLE001
+        msg = f"map-areas: {type(exc).__name__}: {exc}"
+        logger.warning(f"sweep: unexpected — {msg}")
+        result.errors.append(msg)
+
+    result.summary = (
+        f"Map areas: {'1 LLM run dispatched' if result.run_uid else 'no run dispatched'}"
+    )
+
+    await write_audit(
+        kind="sweep.map_areas_dispatched",
+        subject_uid=repository_uid,
+        subject_type="Repository",
+        actor_uid=triggered_by or "map-areas",
         payload={
             "run_uid": result.run_uid,
             "errors": len(result.errors),
@@ -500,6 +580,72 @@ async def _existing_pages_listing(repository_uid: str) -> str:
     return "\n".join(lines)
 
 
+async def _existing_areas_listing(repository_uid: str) -> str:
+    """Compact listing of enabled Areas for the map-areas prompt, so re-runs
+    update areas instead of proposing duplicates."""
+    areas = [
+        a for a in await Area.nodes.all()
+        if a.repository_uid == repository_uid and a.enabled
+    ]
+    if not areas:
+        return "(none yet — this is the first Map areas run)"
+    lines: list[str] = []
+    for a in sorted(areas, key=lambda x: x.key)[:150]:
+        paths = ", ".join(str(p) for p in list(a.scope_paths or [])[:3])
+        lines.append(
+            f"- {a.key} [{a.kind or 'subsystem'}] {a.title or a.key} :: {paths}"
+        )
+    if len(areas) > 150:
+        lines.append(f"… and {len(areas) - 150} more areas (elided)")
+    return "\n".join(lines)
+
+
+async def _docs_metadata_listing(repository_uid: str) -> str:
+    """Metadata-only listing of the doc tree for the map-areas prompt: slug,
+    title, watch_paths — never bodies or summaries. Areas must be grounded in
+    the code, not restate the docs; bodies are pulled deliberately via the
+    `read_doc` tool when the agent decides it needs one."""
+    docs = [d for d in await Doc.nodes.all() if d.repository_uid == repository_uid]
+    if not docs:
+        return "(no documentation pages yet)"
+    lines: list[str] = []
+    for d in sorted(docs, key=lambda x: x.slug)[:150]:
+        watch = ", ".join(str(p) for p in (d.watch_paths or [])) or "(no watch paths)"
+        lines.append(f"- {d.slug}: {d.title or d.slug} :: watch_paths: {watch}")
+    if len(docs) > 150:
+        lines.append(f"… and {len(docs) - 150} more pages (elided)")
+    return "\n".join(lines)
+
+
+async def _map_areas_intent(
+    *,
+    repository_uid: str,
+    existing_areas_listing: str,
+    docs_listing: str,
+    prompt_body: Optional[str] = None,
+):
+    # The seeded "map-areas" agent base is the instructions layer (org
+    # override applied; an explicit prompt or the repo's "discover" stage pin
+    # replaces it via prompt_body). The propose_area_edit tooling contract
+    # and the doc-tree metadata ride in the structural slot so no override
+    # can displace them; the existing-areas listing lands in the
+    # existing-state slot, exactly like generate-docs' pages listing.
+    from domains.agents.services.composition import compose_agent_intent
+
+    structural = (
+        _MAP_AREAS_TOOLING_CONTRACT
+        + "\n\n## Doc tree (metadata)\n"
+        + docs_listing
+    )
+    return await compose_agent_intent(
+        repository_uid=repository_uid,
+        agent_key="map-areas",
+        prompt_body=prompt_body,
+        structural=structural,
+        existing_state_listing=existing_areas_listing,
+    )
+
+
 async def _generate_docs_intent(
     *,
     repository_uid: str,
@@ -556,6 +702,21 @@ _GENERATE_DOCS_TOOLING_CONTRACT = """# Tooling
 Write tool — `propose_doc_edit(slug, title, summary, proposed_body,
 watch_paths, rationale)`. Every call proposes ONE page (full body). New
 slugs create pages; existing slugs replace their body."""
+
+
+# Code-owned tooling contract for map-areas runs — lands in the structural
+# slot so an org overlay can never displace it. The task instructions
+# themselves are the seeded "map-areas" agent base
+# (agents/services/seed_agent_bases.py). The existing-areas listing arrives
+# via build_intent's existing-state slot; the doc-tree metadata is appended
+# to this contract.
+_MAP_AREAS_TOOLING_CONTRACT = """# Tooling
+
+Write tool — `propose_area_edit(key, kind, title, scope_paths, spec,
+doc_uids, rationale)`. Every call proposes ONE area (full replacement on
+existing keys). kind is one of subsystem | feature | ignore. Read a doc
+page's body with `read_doc(slug)` only when you actually need it — the
+listing below is metadata only."""
 
 
 _AUDIT_INTENT_TEMPLATE = """Audit the code behind this documentation page.

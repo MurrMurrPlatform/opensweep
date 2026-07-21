@@ -124,6 +124,31 @@ async def trigger_scheduled_agent(
     agent = await Agent.nodes.get_or_none(uid=s.agent_uid)
     if agent is None:
         raise LifecycleError(f"Agent {s.agent_uid} (bound by {s.uid}) not found")
+    if agent_key(agent.source_url or "") == "map-areas":
+        # Map-areas bindings dispatch through the sweep flow so the run gets
+        # the existing-areas + doc-tree listings and the propose_area_edit
+        # tooling contract — a plain dispatch_agent would compose neither.
+        # Callers expect a Run (or an exception), so surface failures as
+        # LifecycleError and hand back the dispatched Run node.
+        from domains.runs.models import Run
+        from domains.runs.services.sweep import run_map_areas
+
+        result = await run_map_areas(
+            repository_uid=s.repository_uid,
+            triggered_by=triggered_by,
+            trigger=trigger,
+        )
+        if not result.run_uid:
+            raise LifecycleError(
+                "map-areas dispatch failed: "
+                + ("; ".join(result.errors) or "no run dispatched")
+            )
+        run = await Run.nodes.get_or_none(uid=result.run_uid)
+        if run is None:
+            raise LifecycleError(
+                f"map-areas run {result.run_uid} dispatched but not found"
+            )
+        return run
     return await dispatch_agent(
         agent=agent,
         repository_uid=s.repository_uid,

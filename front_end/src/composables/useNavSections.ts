@@ -4,6 +4,7 @@ import {
   LayoutGrid, GitPullRequest, ClipboardList, BookOpen,
   Activity, Search, MessageCircleQuestion, ShieldAlert, FolderArchive, Settings2, Sparkles,
   SquareKanban, Github, Building2, User, Radar, Lightbulb, Newspaper, Slack, Bot, Layers, Telescope,
+  Map as MapIcon,
 } from 'lucide-vue-next'
 import { useUiStore } from '@/stores/uiStore'
 import { useCurrentUserStore } from '@/stores/currentUserStore'
@@ -31,6 +32,7 @@ export function useNavSections(): { sections: ComputedRef<NavSection[]> } {
         items: [
           { to: r || '/', label: 'Dashboard', icon: LayoutGrid, scoped: true, exact: true },
           { to: `${r}/docs`, label: 'Documentation', icon: BookOpen, scoped: true },
+          { to: `${r}/areas`, label: 'Areas', icon: MapIcon, scoped: true },
           { to: `${r}/findings`, label: 'Findings', icon: ClipboardList, scoped: true },
           { to: `${r}/workitems`, label: 'Work items', icon: SquareKanban, scoped: true },
         ],

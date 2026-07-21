@@ -84,12 +84,14 @@ async def register_github_repo(
             seed_audit_agents,
             seed_audit_stale,
             seed_keep_docs_current,
+            seed_map_areas,
         )
 
         await seed_conventions_doc(node.uid)
         await seed_keep_docs_current(node.uid)
         await seed_audit_stale(node.uid)
         await seed_audit_agents(node.uid)
+        await seed_map_areas(node.uid)
     except Exception as exc:  # noqa: BLE001
         from logging_config import logger
 

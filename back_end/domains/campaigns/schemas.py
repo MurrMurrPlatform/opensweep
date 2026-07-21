@@ -16,8 +16,11 @@ class CampaignDTO(BaseModel):
     lens_keys: list[str] = Field(default_factory=list)
     # Rotation only: how many areas each pass covers.
     k: int = 3
+    # Area-map campaigns only: the plan is sliced to areas at or under this
+    # key ("" = the whole map).
+    area_prefix: str = ""
     # Part dicts as stored: {idx, kind, title, scope_paths, doc_uids,
-    # lens_keys, run_uid, state, file_count}.
+    # lens_keys, run_uid, state, file_count, area_key}.
     parts: list[dict] = Field(default_factory=list)
     max_parallel: int = 2
     created_by: str = ""
@@ -37,17 +40,28 @@ class CreateCampaignRequest(BaseModel):
     effort: str = ""
     # Rotation only: how many areas this pass covers.
     k: int = 3
+    # Area-map campaigns only: plan just the areas at or under this key
+    # ("" = the whole map; ignored for docs-derived plans).
+    area_prefix: str = ""
     max_parallel: int = 2
     title: str = ""
 
 
 class CampaignAreaPreview(BaseModel):
-    """One area of the would-be partition — planner.normalize_areas output."""
+    """One area of the would-be partition — planner.normalize_areas or
+    planner.areas_from_map output."""
 
     title: str = ""
     scope_paths: list[str] = Field(default_factory=list)
     doc_uids: list[str] = Field(default_factory=list)
     file_count: Optional[int] = None
+    # Area-map source only: the Area's key ("" for docs-derived/remainder).
+    area_key: str = ""
+    # "subsystem" tiles the tree; "feature" overlays it (implementation-gaps).
+    kind: str = "subsystem"
+    # Map leaves above the size target are flagged, never auto-split —
+    # resizing them is the mapping agent's job.
+    oversized: bool = False
 
 
 class CampaignAreasPreview(BaseModel):
@@ -60,3 +74,7 @@ class CampaignAreasPreview(BaseModel):
     total_files: int = 0
     # The remainder ("Uncovered paths") file count — 0 when docs cover everything.
     uncovered_files: int = 0
+    # "area-map" when the enabled Area map planned this; "docs" fallback.
+    source: str = "docs"
+    # Titles of oversized map leaves — the "refine your map" nudge.
+    oversized_areas: list[str] = Field(default_factory=list)

@@ -118,6 +118,8 @@ async def test_area_part_trigger_run_call_shape(area_seams):
     assert target["campaign_part"] == 0
     assert target["paths"] == ["back_end/domains", "back_end/api"]
     assert target["doc_uids"] == ["doc1"]
+    # Parts persisted before the area map lack area_key — tolerated as "".
+    assert target["area_key"] == ""
 
 
 async def test_cron_provenance_dispatches_as_schedule(area_seams):

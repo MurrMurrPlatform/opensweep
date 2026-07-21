@@ -59,6 +59,8 @@ const router = createRouter({
               meta: { title: 'Queue', eyebrow: 'Deliver', section: 'main', repoScoped: true } },
             { path: 'docs', name: 'documentation', component: () => import('@/views/DocumentationView.vue'),
               meta: { title: 'Documentation', eyebrow: 'Knowledge', section: 'main', repoScoped: true } },
+            { path: 'areas', name: 'areas', component: () => import('@/views/AreasView.vue'),
+              meta: { title: 'Areas', eyebrow: 'Knowledge', section: 'main', repoScoped: true } },
             { path: 'analyses', name: 'analyses', component: () => import('@/views/AnalysisListView.vue'),
               meta: { title: 'Analyses', eyebrow: 'Health', section: 'main' } },
             { path: 'health', name: 'health', component: () => import('@/views/HealthView.vue'),

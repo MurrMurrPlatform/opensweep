@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from domains.areas.models import child_key_prefix_of
 from domains.docs.services.doc_freshness import watches_path
 
 # Target area size in files: areas above target_max are split by first-level
@@ -317,6 +318,96 @@ def normalize_areas(
     return areas
 
 
+def areas_from_map(
+    subsystem_leaves: list[dict],
+    ignore_scopes: list[str],
+    file_paths: list[str],
+    *,
+    target_max: int = DEFAULT_TARGET_MAX,
+) -> list[dict]:
+    """Area-map subsystem leaves → area dicts sized against the real tree.
+
+    Leaves are {area_key, title, scope_paths, doc_uids} from the enabled
+    Area map. Unlike normalize_areas, leaves are NEVER auto-split or
+    tiny-merged — semantic sizing is the mapping agent's job; an oversized
+    leaf is only FLAGGED (`oversized`) so the map can be refined. Each
+    output dict carries its `area_key`.
+
+    The remainder — files matched by no leaf scope and no ignore scope —
+    has no semantic owner, so it keeps the mechanical split/merge treatment
+    of the docs planner. Remainder areas carry area_key "". When the tree
+    is unavailable (empty file_paths) leaves pass through with
+    file_count=None and no remainder exists.
+    """
+    paths = [p for p in (_normalize(p) for p in file_paths) if p]
+    ignores = [p for p in (_normalize(p) for p in ignore_scopes) if p]
+
+    out: list[dict] = []
+    covered: set[str] = set()
+    for leaf in subsystem_leaves:
+        scope = [
+            p for p in (_normalize(p) for p in (leaf.get("scope_paths") or [])) if p
+        ]
+        count: int | None = None
+        if paths:
+            matched = [f for f in paths if watches_path(scope, f)]
+            covered.update(matched)
+            count = len(matched)
+        area = _area(
+            str(leaf.get("title") or leaf.get("area_key") or ""),
+            scope,
+            list(leaf.get("doc_uids") or []),
+            count,
+        )
+        area["area_key"] = str(leaf.get("area_key") or "")
+        area["oversized"] = bool(count and count > target_max)
+        out.append(area)
+
+    uncovered = [
+        f for f in paths if f not in covered and not watches_path(ignores, f)
+    ]
+    if uncovered:
+        remainder = _area(
+            REMAINDER_TITLE,
+            sorted({p.split("/", 1)[0] for p in uncovered}),
+            [],
+            len(uncovered),
+        )
+        if len(uncovered) > target_max:
+            pieces = _merge_tiny(
+                _split_by_subdir(remainder, uncovered),
+                target_min=DEFAULT_TARGET_MIN,
+            )
+        else:
+            pieces = [remainder]
+        for piece in pieces:
+            piece.pop("_seg", None)
+            piece["area_key"] = ""
+            piece["oversized"] = bool(
+                piece["file_count"] and piece["file_count"] > target_max
+            )
+        out.extend(pieces)
+    return out
+
+
+def filter_by_prefix(areas: list[dict], area_prefix: str) -> list[dict]:
+    """The areas at or under `area_prefix` in the key hierarchy. Pure.
+
+    Empty prefix keeps everything. Areas with an empty area_key
+    (docs-derived, remainder) have no place in the hierarchy, so they only
+    survive an empty prefix. Boundary via child_key_prefix_of — "backend"
+    never captures "backend-jobs".
+    """
+    if not area_prefix:
+        return list(areas)
+    return [
+        a
+        for a in areas
+        if (key := str(a.get("area_key") or ""))
+        and (key == area_prefix or child_key_prefix_of(area_prefix, key))
+    ]
+
+
 def _area_recency(
     area: dict, path_recency: dict[str, datetime | None]
 ) -> datetime | None:
@@ -348,6 +439,7 @@ def _part(idx: int, kind: str, title: str, area: dict | None, lens_keys: list[st
         "run_uid": "",
         "state": "pending",
         "file_count": (area or {}).get("file_count"),
+        "area_key": str((area or {}).get("area_key") or ""),
     }
 
 
@@ -359,17 +451,20 @@ def build_plan(
     k: int = 3,
     path_recency: dict[str, datetime | None] | None = None,
     focus_lens: str | None = None,
+    feature_areas: list[dict] | None = None,
 ) -> list[dict]:
     """Areas + lenses → the campaign's ordered part list.
 
-    - full:     every area (all enabled local lenses) + one global part per
-                enabled global lens.
+    - full:     every area (all enabled local lenses) + one feature part per
+                `feature_areas` entry (implementation-gaps lens) + one
+                global part per enabled global lens.
     - rotation: the k least-recently-covered areas (never-covered first,
-                scored by `path_recency` over their scope paths); no globals.
+                scored by `path_recency` over their scope paths); no globals
+                and no feature parts.
     - focused:  every area with just `focus_lens`, plus that lens's global
                 sweep when it names a global agent.
 
-    Parts get idx assigned sequentially, areas before globals.
+    Parts get idx assigned sequentially, areas before features before globals.
     """
     enabled = [dict(lens) for lens in lenses if lens.get("enabled", True)]
     local = [lens for lens in enabled if (lens.get("scope") or "local") == "local"]
@@ -400,6 +495,10 @@ def build_plan(
         )
     else:  # full
         picked = [_part(0, "area", a["title"], a, local_keys) for a in areas]
+        picked += [
+            _part(0, "feature", fa["title"], fa, ["implementation-gaps"])
+            for fa in (feature_areas or [])
+        ]
         globals_out = [_global_part(lens) for lens in global_]
 
     parts = picked + globals_out

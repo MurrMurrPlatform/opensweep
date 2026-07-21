@@ -14,6 +14,7 @@ def _part(idx, *, kind="area", state="pending", run_uid=""):
         "run_uid": run_uid,
         "state": state,
         "file_count": 10,
+        "area_key": "",
     }
 
 
@@ -99,6 +100,14 @@ def test_failed_areas_still_unlock_globals():
     parts = [_part(0, state="failed"), _part(1, kind="global")]
     out = plan_tick(parts, {}, 2)
     assert out["dispatch"] == [1]
+
+
+def test_feature_parts_dispatch_like_areas_and_gate_globals():
+    # Feature parts are non-global: they dispatch immediately and their
+    # findings must land before the global sweeps' escalation digests run.
+    parts = [_part(0, kind="feature"), _part(1, kind="global")]
+    out = plan_tick(parts, {}, 4)
+    assert out["dispatch"] == [0]  # the global waits for the feature part
 
 
 def test_capacity_zero_dispatches_nothing():

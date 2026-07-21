@@ -40,6 +40,8 @@ DEEP_HUNT_WEEKLY_TITLE = "Weekly FULL deep issue hunt (Mon)"
 DEEP_HUNT_DAILY_TITLE = "Daily deep issue hunt (Tue–Sat)"
 SECURITY_AUDIT_WEEKLY_TITLE = "Weekly security audit (Mon)"
 ROTATION_CAMPAIGN_WEEKLY_TITLE = "Weekly rotation campaign"
+MAP_AREAS_TITLE = "Map areas"
+MAP_AREAS_MONTHLY_TITLE = "Monthly area-map refresh"
 
 
 def validate_trigger(trigger: str) -> str:
@@ -334,6 +336,31 @@ async def seed_audit_agents(repository_uid: str) -> list[ScheduledAgent]:
             trigger=trigger,
             enabled=enabled,
             target=target,
+        )
+        if s is not None:
+            seeded.append(s)
+    return seeded
+
+
+async def seed_map_areas(repository_uid: str) -> list[ScheduledAgent]:
+    """Idempotent: the two map-areas bindings every repo gets.
+
+    - "Map areas" — INERT (trigger=""), enabled: the manual anchor the UI's
+      trigger endpoint dispatches; no cron ever fires it.
+    - "Monthly area-map refresh" (1st of the month 05:00) — seeded DISABLED;
+      flip `enabled` on to opt into the recurring re-map.
+    """
+    seeded: list[ScheduledAgent] = []
+    for title, trigger, enabled in (
+        (MAP_AREAS_TITLE, "", True),
+        (MAP_AREAS_MONTHLY_TITLE, "cron:0 5 1 * *", False),
+    ):
+        s = await _seed_binding(
+            repository_uid,
+            key="map-areas",
+            title=title,
+            trigger=trigger,
+            enabled=enabled,
         )
         if s is not None:
             seeded.append(s)

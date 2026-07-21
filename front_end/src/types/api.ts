@@ -1640,3 +1640,77 @@ export interface UpdateLensRequest {
 
 export type Repository = RepositoryDTO
 export type FileContent = FileContentDTO
+
+// ── Areas (the reviewed audit partition — the Area map) ─────────────────────
+// Humans edit Areas directly; agents propose AreaEdits that are accepted or
+// rejected on the Areas view. Keys are path-like ("backend/delivery"); the
+// hierarchy is derived from key prefixes, never stored.
+
+export type AreaKind = 'subsystem' | 'feature' | 'ignore'
+export type AreaEditStatus = 'pending' | 'accepted' | 'rejected'
+
+export interface AreaDTO {
+  uid: string
+  repository_uid: string
+  key: string
+  kind: AreaKind
+  title: string
+  scope_paths: string[]
+  spec: string
+  doc_uids: string[]
+  enabled: boolean
+  provenance: string
+  /** Derived: code changed under scope_paths since last review. */
+  stale: boolean
+  stale_paths: string[]
+  code_changed_at?: string | null
+  last_reviewed_at?: string | null
+  pending_edits: number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+/** Agent-proposed full replacement for an area (or a new area when area_uid=''). */
+export interface AreaEditDTO {
+  uid: string
+  repository_uid: string
+  area_uid: string
+  key: string
+  kind: string
+  title: string
+  scope_paths: string[]
+  doc_uids: string[]
+  proposed_spec: string
+  rationale: string
+  source_run_uid: string
+  status: AreaEditStatus
+  resolved_by: string
+  resolved_at?: string | null
+  created_at?: string | null
+  /** Current spec of the target area (empty for new-area proposals) — lets
+   *  the UI hint current vs proposed without a second fetch. */
+  current_spec: string
+}
+
+export interface UpdateAreaRequest {
+  title?: string
+  kind?: AreaKind
+  scope_paths?: string[]
+  spec?: string
+  doc_uids?: string[]
+  enabled?: boolean
+}
+
+/** Accepting an edit applies it and returns partition warnings to eyeball. */
+export interface AcceptAreaEditResponse {
+  area: AreaDTO
+  warnings: string[]
+}
+
+/** Response of POST /repositories/{uid}/sweep/map-areas (409 when already running). */
+export interface MapAreasResponse {
+  repository_uid: string
+  run_uid: string
+  errors: string[]
+  summary: string
+}

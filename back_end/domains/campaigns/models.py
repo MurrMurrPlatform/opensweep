@@ -40,9 +40,16 @@ class Campaign(AsyncStructuredNode):
     # replan with exactly the inputs the campaign was created with.
     k = IntegerProperty(default=3)
 
-    # The plan: [{idx, kind: area|global, title, scope_paths, doc_uids,
-    # lens_keys, run_uid, state: pending|running|done|failed, file_count}].
-    # Part state only moves forward (done/failed are sticky — tick.plan_tick).
+    # Area-map campaigns only: restrict the plan to areas at or under this
+    # key ("backend/delivery"). "" = the whole map. Stored so launch's
+    # replan rebuilds the same slice.
+    area_prefix = StringProperty(default="")
+
+    # The plan: [{idx, kind: area|feature|global, title, scope_paths,
+    # doc_uids, lens_keys, run_uid, state: pending|running|done|failed,
+    # file_count, area_key}]. area_key ties map-derived parts back to their
+    # Area (""= docs-derived/remainder/global). Part state only moves
+    # forward (done/failed are sticky — tick.plan_tick).
     parts = JSONProperty(default=[])
 
     # How many parts may be in flight at once.

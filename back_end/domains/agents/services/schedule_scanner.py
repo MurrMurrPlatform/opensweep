@@ -122,6 +122,7 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
                         k=int(tgt.get("k") or 3),
                         lens_keys=[str(k) for k in (tgt.get("lens_keys") or [])],
                         effort=str(tgt.get("effort") or ""),
+                        area_prefix=str(tgt.get("area_prefix") or ""),
                         max_parallel=int(tgt.get("max_parallel") or 2),
                     ),
                     created_by=f"scheduled-agent:{sa.uid}",
@@ -151,6 +152,38 @@ async def scan_and_dispatch(*, now: datetime | None = None) -> ScanResult:
             result.dispatched += 1
             logger.info(
                 f"schedule campaign sa={sa.uid} expr={payload} campaign={campaign.uid}",
+                extra={"tag": "schedule"},
+            )
+            continue
+        if key == "map-areas":
+            # Area-map refresh: a due tick dispatches one map-areas run that
+            # re-proposes the repository's audit partition; `disabled` stays
+            # the kill-safety even with a cron set.
+            if (sa.autonomy or "") == "disabled":
+                sa.last_scheduled_at = moment
+                await sa.save()
+                continue
+            from domains.runs.services.sweep import run_map_areas
+
+            try:
+                mapped = await run_map_areas(
+                    repository_uid=sa.repository_uid,
+                    triggered_by=f"cron:{payload}",
+                    trigger=RunTrigger.SCHEDULE,
+                )
+            except Exception as exc:  # noqa: BLE001 — one bad repo never stops the scan
+                result.errors.append(f"{sa.uid}: {type(exc).__name__}: {exc}")
+                continue
+            if not mapped.run_uid:
+                # Dispatch failed (errors captured on the result): don't
+                # stamp — the binding retries on the next tick.
+                result.errors.extend(f"{sa.uid}: {e}" for e in mapped.errors)
+                continue
+            sa.last_scheduled_at = moment
+            await sa.save()
+            result.dispatched += 1
+            logger.info(
+                f"schedule map-areas sa={sa.uid} expr={payload} run={mapped.run_uid}",
                 extra={"tag": "schedule"},
             )
             continue
