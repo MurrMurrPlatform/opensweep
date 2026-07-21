@@ -10,11 +10,9 @@ async def find_similar(
     title_substring: str | None = None,
 ) -> list[Finding]:
     """Return open Findings that look similar to the input. Cheap dedupe helper."""
-    nodes = await Finding.nodes.all()
+    nodes = await Finding.nodes.filter(repository_uid=repository_uid)
     out = []
     for f in nodes:
-        if f.repository_uid != repository_uid:
-            continue
         if f.status in ("dismissed", "wont-fix", "superseded"):
             continue
         if dedupe_key and f.dedupe_key == dedupe_key:

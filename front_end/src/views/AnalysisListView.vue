@@ -7,6 +7,7 @@ import { useDocStore } from '@/stores/docStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
+import { daysAgo } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
@@ -41,12 +42,6 @@ function statusVariant(s: string): BadgeVariants['variant'] {
   if (s === 'complete') return 'success'
   if (s === 'in_progress') return 'info'
   return 'warn'
-}
-
-function daysAgo(iso: string | null): string {
-  if (!iso) return '—'
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
-  return days <= 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`
 }
 
 async function load() {

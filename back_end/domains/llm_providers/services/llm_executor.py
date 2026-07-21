@@ -92,6 +92,8 @@ async def invoke(
     working_dir: str | None = None,
     on_chunk: Optional["StreamCallback"] = None,
     run_uid: str = "",
+    extra_cli_args: list[str] | None = None,
+    api_overrides: dict | None = None,
 ) -> LLMInvocation:
     """Run the provider once and return the transcript.
 
@@ -110,6 +112,11 @@ async def invoke(
     total for that stream. Throttling is the caller's job — we fire it on every
     chunk that arrives.
 
+    `extra_cli_args` are appended to the rendered argv (CLI transport only —
+    e.g. codex reasoning `-c` overrides). `api_overrides` merge into the HTTP
+    request overrides (same keys as extra_args JSON; e.g. `reasoning_effort`,
+    `suppress_thinking`) and win over the provider's stored extra_args.
+
     Never raises for transport errors — they're returned as `error` on the
     invocation so callers can persist a failed AgentRun cleanly.
     """
@@ -121,9 +128,9 @@ async def invoke(
     started = time.monotonic()
     try:
         if kind in _CLI_KINDS or (kind == "custom" and provider.cli_command_template):
-            await _run_cli(provider, system_prompt, instruction, inv, timeout_seconds, working_dir, on_chunk, run_uid)
+            await _run_cli(provider, system_prompt, instruction, inv, timeout_seconds, working_dir, on_chunk, run_uid, extra_cli_args)
         elif kind in _HTTP_KINDS or kind == "custom":
-            await _run_http(provider, system_prompt, instruction, inv, timeout_seconds, on_chunk)
+            await _run_http(provider, system_prompt, instruction, inv, timeout_seconds, on_chunk, api_overrides)
         else:
             inv.error = f"unsupported provider kind: {kind!r}"
     except TimeoutError:
@@ -157,6 +164,7 @@ async def _run_cli(
     working_dir: str | None = None,
     on_chunk=None,
     run_uid: str = "",
+    extra_cli_args: list[str] | None = None,
 ) -> None:
     # Platform-owned fallback: rows saved without a template (pre-defaulting
     # UI, or cleared by hand) still run with the catalog default for the kind.
@@ -204,6 +212,9 @@ async def _run_cli(
     argv = with_model_flag(
         argv, kind=(provider.kind or "").strip(), model=provider.model or "", template=template
     )
+    if extra_cli_args:
+        # Caller-supplied per-run flags (e.g. codex `-c model_reasoning_effort=…`).
+        argv = [*argv, *extra_cli_args]
 
     inv.transport = "cli"
     cwd_label = f" (cwd: {working_dir})" if working_dir else ""
@@ -543,6 +554,7 @@ async def _run_http(
     inv: LLMInvocation,
     timeout_seconds: int | None,
     on_chunk=None,
+    api_overrides: dict | None = None,
 ) -> None:
     base = (provider.base_url or "").rstrip("/")
     if not base:
@@ -550,6 +562,10 @@ async def _run_http(
         return
 
     overrides = _parse_extra_args(provider.extra_args or "")
+    # Caller-supplied per-run overrides (e.g. reasoning knobs) win over the
+    # provider's stored extra_args; merged before the pops below so keys like
+    # suppress_thinking take effect rather than passing through verbatim.
+    overrides.update(api_overrides or {})
     # Reasoning models burn tokens on chain-of-thought before they emit `content`.
     # 8192 gives them ~2-3 KB of thinking *plus* a JSON answer. Override per
     # provider via extra_args={"max_tokens": …}.

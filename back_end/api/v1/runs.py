@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pydantic
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user, require_role
@@ -299,7 +299,10 @@ async def list_runs(
         await require_repo_in_org(repository_uid, user.org_uid)
     allowed = await org_repo_uids(user.org_uid)
     await reconcile_stale_runs()
-    nodes = await Run.nodes.all()
+    # Scope the scan to the org's repos in Neo4j (empty => no runs visible).
+    nodes = (
+        await Run.nodes.filter(repository_uid__in=list(allowed)) if allowed else []
+    )
     out: list[RunDTO] = []
     for r in nodes:
         r_surface = r.surface or "runs"
@@ -312,8 +315,6 @@ async def list_runs(
             if r_surface != "chat" or (r.triggered_by or "") != user.uid:
                 continue
         elif surface != "all" and r_surface != surface:
-            continue
-        if r.repository_uid not in allowed:
             continue
         if repository_uid and r.repository_uid != repository_uid:
             continue
@@ -469,6 +470,40 @@ async def get_run(uid: str, user: UserDTO = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail=f"Run {uid} not found")
     await require_repo_in_org(r.repository_uid, user.org_uid)
     return run_to_dto(r)
+
+
+@router.delete("/{uid}", status_code=204, operation_id="opensweep_run_delete")
+async def delete_run(uid: str, user: UserDTO = Depends(require_role("maintainer"))):
+    """Delete the run record and its event stream. Active or awaiting-input
+    runs must be cancelled/ended first — they hold a live turn or workspace.
+    Findings the run produced are kept: they stand on their own."""
+    from infrastructure.audit import write_audit
+
+    r = await Run.nodes.get_or_none(uid=uid)
+    if r is None:
+        raise HTTPException(status_code=404, detail=f"Run {uid} not found")
+    await require_repo_in_org(r.repository_uid, user.org_uid)
+    status = r.status or ""
+    if status in {"queued", "running", "paused_quota", "awaiting_input"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"run is {status} — cancel or end it before deleting",
+        )
+    from domains.runs.services.run_events import events_path
+
+    with contextlib.suppress(OSError):
+        events_path(uid).unlink(missing_ok=True)
+    repository_uid = r.repository_uid
+    await r.delete()
+    await write_audit(
+        kind="run.deleted",
+        subject_uid=uid,
+        subject_type="Run",
+        actor_uid=user.uid,
+        repository_uid=repository_uid,
+        payload={"status": status},
+    )
+    return Response(status_code=204)
 
 
 @router.post(

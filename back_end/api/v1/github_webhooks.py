@@ -536,7 +536,7 @@ async def _delivery_follow_through(
     # Webhook-driven doc freshness (§9): push events carry the changed paths,
     # so mark the Doc pages watching them stale (memory staleness + Checked
     # drift are computed against code_changed_at at read time) and auto-run any
-    # on-event Investigations whose compute_dial allows it. The write-run
+    # on-event Investigations whose autonomy allows it. The write-run
     # finalize does the same off its own changed paths, so this shared helper
     # is idempotent across both. Best-effort — never fails the webhook.
     if event == "push":

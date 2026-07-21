@@ -213,6 +213,7 @@ async def trigger_fix_run(
                 executor=Executor.CLAUDE_CODE,
                 execution_mode=ExecutionMode.IMPLEMENT,
                 run_policy_uid=run_policy.uid,
+                effort=Effort.NORMAL.value,
                 trigger=trigger,
                 triggered_by=triggered_by,
                 sandbox_factory=_make_sandbox,

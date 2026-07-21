@@ -32,7 +32,7 @@ from domains.llm_providers.services.llm_provider_service import (
     get_active_provider,
     repository_org_uid,
 )
-from domains.platform_tools.complete_run import extract_outcome
+from domains.platform_tools.complete_run import extract_coverage, extract_outcome
 from domains.platform_tools.dispatcher import dispatch as dispatch_platform_tool
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.services.ceilings import UsageSnapshot
@@ -94,37 +94,9 @@ def resolve_wall_ceiling(req: DispatchRequest, provider_kind: str) -> int | None
     return DEFAULT_MAX_WALL_SECONDS
 
 
-def budget_briefing(policy, wall_ceiling: int | None) -> str:
-    """Plain-text budget contract rendered into every instruction, for every
-    harness. Best practice is a budget the agent can SEE and pace against
-    (graceful wind-down) rather than a silent post-hoc verdict."""
-    limits: list[str] = []
-    if wall_ceiling:
-        limits.append(f"~{max(1, int(wall_ceiling // 60))} minutes of wall clock")
-    turns = getattr(policy, "max_tool_turns", None) if policy is not None else None
-    if turns:
-        limits.append(f"~{int(turns)} tool turns")
-    dollars = getattr(policy, "max_dollars", None) if policy is not None else None
-    if dollars:
-        limits.append(f"a ${float(dollars):.2f} spend ceiling (where metered)")
-    warn_pct = int(getattr(policy, "warn_at_pct", 80) or 80) if policy is not None else 80
-    if limits:
-        return (
-            "# Run budget\n\n"
-            f"This run has {', '.join(limits)}. Pace yourself against it:\n"
-            f"- Keep a running coverage checklist of areas done / remaining.\n"
-            f"- At roughly {warn_pct}% of budget, STOP opening new areas: file what\n"
-            "  you have, record what you skipped, and finish with `complete_run`.\n"
-            "- Never end the run without `complete_run` — an unfinished run gets\n"
-            "  resumed and told to continue."
-        )
-    return (
-        "# Run budget\n\n"
-        "This run has no fixed budget — work to full completion of the intent,\n"
-        "however long that takes. Keep a running coverage checklist, file results\n"
-        "as you go, and finish with `complete_run` only when the whole scope is\n"
-        "genuinely covered. Never end the run without `complete_run`."
-    )
+# The budget briefing that used to live here is now
+# `domains.executors.prompt_kit.stance_block` (budget + effort stance in one
+# paragraph, shared with the review-run intent).
 
 
 # ── Ceiling accounting (Task 5) ───────────────────────────────────────────
@@ -345,10 +317,16 @@ class StreamRecorder:
 
 def extract_envelope(text: str) -> dict[str, Any] | None:
     """Best-effort: pull the final `{"tool_calls": […]}` JSON envelope out
-    of a transcript (fenced ```json block preferred, else last { … })."""
+    of a transcript (fenced ```json block preferred, else last { … }).
+
+    A bare top-level JSON array — some models emit just the tool-call list —
+    is accepted too and wrapped as `{"tool_calls": [...]}`. Object envelopes
+    always win over arrays: an array inside `{"tool_calls": [...]}` must not
+    shadow its envelope (which may carry `summary`)."""
     s = (text or "").strip()
     if not s:
         return None
+    fenced_array: list[Any] | None = None
     if "```" in s:
         parts = s.split("```")
         for i in range(len(parts) - 2, 0, -2):
@@ -357,27 +335,40 @@ def extract_envelope(text: str) -> dict[str, Any] | None:
                 block = block[4:]
             try:
                 obj = json.loads(block.strip())
-                if isinstance(obj, dict) and "tool_calls" in obj:
-                    return obj
             except json.JSONDecodeError:
                 continue
+            if isinstance(obj, dict) and "tool_calls" in obj:
+                return obj
+            if isinstance(obj, list) and fenced_array is None:
+                fenced_array = obj
     # Fall back to the last balanced-brace object in the text. A naive
     # rfind("{")/rfind("}") breaks on nested objects (the last "{" is an
     # inner one), so scan for depth-0 spans instead — string-aware so braces
     # inside JSON string values don't throw off the depth count.
-    for start, end in reversed(_balanced_brace_spans(s)):
+    for start, end in reversed(_balanced_spans(s, "{", "}")):
         try:
             obj = json.loads(s[start : end + 1])
         except json.JSONDecodeError:
             continue
         if isinstance(obj, dict) and "tool_calls" in obj:
             return obj
+    if fenced_array is not None:
+        return {"tool_calls": fenced_array}
+    # Last resort: a bare top-level [...] array of tool calls.
+    for start, end in reversed(_balanced_spans(s, "[", "]")):
+        try:
+            obj = json.loads(s[start : end + 1])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, list):
+            return {"tool_calls": obj}
     return None
 
 
-def _balanced_brace_spans(s: str) -> list[tuple[int, int]]:
-    """Return (start, end) index pairs for every top-level {...} span in ``s``,
-    tracking string literals and escapes so braces inside strings are ignored."""
+def _balanced_spans(s: str, opener: str, closer: str) -> list[tuple[int, int]]:
+    """Return (start, end) index pairs for every top-level span delimited by
+    ``opener``/``closer`` in ``s``, tracking string literals and escapes so
+    delimiters inside strings are ignored."""
     spans: list[tuple[int, int]] = []
     depth = 0
     start = -1
@@ -394,11 +385,11 @@ def _balanced_brace_spans(s: str) -> list[tuple[int, int]]:
             continue
         if ch == '"':
             in_str = True
-        elif ch == "{":
+        elif ch == opener:
             if depth == 0:
                 start = i
             depth += 1
-        elif ch == "}":
+        elif ch == closer:
             if depth > 0:
                 depth -= 1
                 if depth == 0 and start != -1:
@@ -489,12 +480,27 @@ async def execute_envelope_tool_calls(
         if not isinstance(name, str) or not name:
             continue
         if name == "complete_run":
-            outcome = extract_outcome(dict(call.get("args") or {}))
+            raw_cr = call.get("args")
+            cr_args = raw_cr if isinstance(raw_cr, dict) else {}
+            outcome = extract_outcome(cr_args)
+            # Coverage (covered_paths / skipped_paths / lens_verdicts) rides on
+            # the outcome dict so it reaches the lifecycle's finalize
+            # complete_run call unchanged — build_outcome ignores the extra
+            # keys, so the summary itself is not polluted.
+            outcome.update(extract_coverage(cr_args))
             continue
         if name in deny_tools:
             results.append({"tool": name, "error": deny_tools[name]})
             continue
-        args = dict(call.get("args") or {})
+        raw_args = call.get("args")
+        if raw_args is not None and not isinstance(raw_args, dict):
+            # Model-emitted text: a malformed args entry fails THIS call,
+            # never the whole envelope (later calls still dispatch).
+            err = "args must be a JSON object"
+            results.append({"tool": name, "error": err})
+            append_event(req.run_uid, "tool_result", name=name, output=err, is_error=True)
+            continue
+        args = dict(raw_args or {})
         if name in _BY_UID_TOOLS:
             target_repo = await _envelope_target_repository_uid(name, args)
             if not target_repo or target_repo != req.repository_uid:

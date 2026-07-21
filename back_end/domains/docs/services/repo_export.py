@@ -113,7 +113,9 @@ async def export_docs_to_repo(*, repository_uid: str, actor: str = "") -> dict[s
     docs = [
         d
         for d in await Doc.nodes.all()
-        if d.repository_uid == repository_uid and (d.body or "").strip()
+        if d.repository_uid == repository_uid
+        and not d.archived
+        and (d.body or "").strip()
     ]
     if not docs:
         raise ExportError("no documentation pages with content to export")

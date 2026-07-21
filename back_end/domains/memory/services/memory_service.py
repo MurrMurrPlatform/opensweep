@@ -29,8 +29,8 @@ async def _anchor_change_times(repository_uid: str) -> dict[str, datetime]:
 
     return {
         d.uid: d.code_changed_at
-        for d in await Doc.nodes.all()
-        if d.repository_uid == repository_uid and d.code_changed_at
+        for d in await Doc.nodes.filter(repository_uid=repository_uid)
+        if d.code_changed_at
     }
 
 
@@ -72,9 +72,7 @@ async def write_memory(
 
     duplicate: Memory | None = None
     same_title: Memory | None = None
-    for m in await Memory.nodes.all():
-        if m.repository_uid != repository_uid:
-            continue
+    for m in await Memory.nodes.filter(repository_uid=repository_uid):
         if m.fingerprint == fingerprint and (m.anchor_uid or "") == (anchor_uid or ""):
             duplicate = m
             break
@@ -137,9 +135,7 @@ async def search_memory(
     q = (query or "").strip().lower()
     change_times = await _anchor_change_times(repository_uid)
     matched: list[tuple[bool, datetime, Memory]] = []
-    for m in await Memory.nodes.all():
-        if m.repository_uid != repository_uid:
-            continue
+    for m in await Memory.nodes.filter(repository_uid=repository_uid):
         if anchor_uid and (m.anchor_uid or "") != anchor_uid:
             continue
         if q and q not in f"{m.title or ''}\n{m.body or ''}".lower():

@@ -20,6 +20,8 @@ class DocDTO(BaseModel):
     summary: str = ""
     body: str = ""
     pinned: bool = False
+    # Retired page: excluded from listings/briefing/export/audit selection.
+    archived: bool = False
     watch_paths: list[str] = []
     # Derived: code changed under watch_paths since last review.
     stale: bool = False
@@ -41,6 +43,8 @@ class DocEditDTO(BaseModel):
     watch_paths: list[str] = []
     proposed_body: str = ""
     rationale: str = ""
+    # True = the edit proposes RETIRING the target page (applied on accept).
+    proposed_archived: bool = False
     source_run_uid: str = ""
     status: DocEditStatus = DocEditStatus.PENDING
     resolved_by: str = ""

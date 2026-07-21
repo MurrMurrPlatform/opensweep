@@ -22,7 +22,7 @@ from domains.agents.services.registry import (
     playbook_for_produces,
     stage_for_agent_key,
 )
-from domains.runs.schemas import Effort, RunTrigger, normalize_effort
+from domains.runs.schemas import Effort, RunTrigger, normalize_effort, resolve_reasoning
 
 
 def _scope_summary(target: dict[str, Any]) -> str:
@@ -51,6 +51,9 @@ async def dispatch_agent(
     trigger: RunTrigger = RunTrigger.MANUAL,
     triggered_by: str = "",
     title: str = "",
+    # Extra code-owned structural material appended after the scope block
+    # (e.g. a campaign's escalation digest) — same slot, never displaceable.
+    structural_extra: str = "",
 ):
     """Compose and dispatch one run of an Agent on a repository."""
     from domains.run_policies.services.effort import ensure_policy_for_effort
@@ -69,19 +72,23 @@ async def dispatch_agent(
     target = dict(target or {})
 
     is_system = (agent.provenance or "") == "system" and key
+    structural = _scope_summary(target)
+    if structural_extra.strip():
+        structural = f"{structural}\n\n{structural_extra.strip()}"
     composed = await compose_agent_intent(
         repository_uid=repository_uid,
         agent_key=key if is_system else playbook,
         # A user/imported agent's own prompt takes the instructions slot; a
         # system agent's prompt IS the platform base and resolves by key.
         prompt_body=None if is_system else (agent.prompt or ""),
-        structural=_scope_summary(target),
+        structural=structural,
     )
 
     resolved_effort = (effort or agent.default_effort or "normal").strip()
+    tier = normalize_effort(resolved_effort)
     policy_uid = run_policy_uid
     if not policy_uid:
-        policy = await ensure_policy_for_effort(normalize_effort(resolved_effort))
+        policy = await ensure_policy_for_effort(tier)
         policy_uid = policy.uid
 
     return await trigger_run(
@@ -91,12 +98,16 @@ async def dispatch_agent(
         title=title or agent.title,
         target=target,
         run_policy_uid=policy_uid,
+        effort=tier.value,
+        reasoning=resolve_reasoning(agent.reasoning or "", tier),
         trigger=trigger,
         triggered_by=triggered_by,
         scheduled_agent_uid=scheduled_agent_uid,
         agent_uid=agent.uid,
         agent_rev=composed.agent_rev,
         stage=stage_for_agent_key(key, playbook),
+        composed_degraded=composed.composed_degraded,
+        degraded_layers=composed.degraded_layers,
     )
 
 
@@ -115,6 +126,31 @@ async def trigger_scheduled_agent(
     agent = await Agent.nodes.get_or_none(uid=s.agent_uid)
     if agent is None:
         raise LifecycleError(f"Agent {s.agent_uid} (bound by {s.uid}) not found")
+    if agent_key(agent.source_url or "") == "map-areas":
+        # Map-areas bindings dispatch through the sweep flow so the run gets
+        # the existing-areas + doc-tree listings and the propose_area_edit
+        # tooling contract — a plain dispatch_agent would compose neither.
+        # Callers expect a Run (or an exception), so surface failures as
+        # LifecycleError and hand back the dispatched Run node.
+        from domains.runs.models import Run
+        from domains.runs.services.sweep import run_map_areas
+
+        result = await run_map_areas(
+            repository_uid=s.repository_uid,
+            triggered_by=triggered_by,
+            trigger=trigger,
+        )
+        if not result.run_uid:
+            raise LifecycleError(
+                "map-areas dispatch failed: "
+                + ("; ".join(result.errors) or "no run dispatched")
+            )
+        run = await Run.nodes.get_or_none(uid=result.run_uid)
+        if run is None:
+            raise LifecycleError(
+                f"map-areas run {result.run_uid} dispatched but not found"
+            )
+        return run
     return await dispatch_agent(
         agent=agent,
         repository_uid=s.repository_uid,

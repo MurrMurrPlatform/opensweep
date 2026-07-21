@@ -273,7 +273,7 @@ def filter_candidates(
     watch_paths for audits). No prefixes = no filter."""
     if not allowed_paths:
         return list(candidates)
-    from domains.docs.services.doc_freshness import watches_path
+    from domains.repositories.services.path_matching import watches_path
 
     return [c for c in candidates if watches_path(allowed_paths, c.path)]
 

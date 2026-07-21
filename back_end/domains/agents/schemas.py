@@ -4,7 +4,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
+
+
+class OverlayMode(StrEnum):
+    """How an org override revision composes with the system agent's prompt:
+    `replace` substitutes it, `append` stacks under it as
+    "## Organization guidance"."""
+
+    REPLACE = "replace"
+    APPEND = "append"
 
 
 class Produces(StrEnum):
@@ -50,7 +59,8 @@ class AgentDTO(BaseModel):
     prompt: str = ""
     produces: str = "findings"
     default_effort: str = "normal"
-    default_executor: str = ""
+    # "" = inherit from the effort tier | low | medium | high.
+    reasoning: str = ""
     tags: list[str] = Field(default_factory=list)
     provenance: str = "user"  # system | user | imported
     # Stable slug for system rows ("ask", "review-guidance", "audit-stale" …)
@@ -72,7 +82,7 @@ class CreateAgentRequest(BaseModel):
     prompt: str = ""
     produces: str = "findings"
     default_effort: str = "normal"
-    default_executor: str = ""
+    reasoning: str = ""
     tags: list[str] = Field(default_factory=list)
     enabled: bool = True
 
@@ -83,7 +93,7 @@ class UpdateAgentRequest(BaseModel):
     prompt: Optional[str] = None
     produces: Optional[str] = None
     default_effort: Optional[str] = None
-    default_executor: Optional[str] = None
+    reasoning: Optional[str] = None
     tags: Optional[list[str]] = None
     enabled: Optional[bool] = None
 
@@ -134,7 +144,7 @@ class ScheduledAgentDTO(BaseModel):
     target: dict[str, Any] = Field(default_factory=dict)
     effort: str = ""
     run_policy_uid: str | None = None
-    compute_dial: str = "ask-before-run"
+    autonomy: str = "ask-before-run"
     enabled: bool = True
     provenance: str = "user"
     last_scheduled_at: Optional[datetime] = None
@@ -154,7 +164,11 @@ class CreateScheduledAgentRequest(BaseModel):
     target: dict[str, Any] = Field(default_factory=dict)
     effort: str = ""
     run_policy_uid: str | None = None
-    compute_dial: str = "ask-before-run"
+    # validation_alias keeps pre-rename API clients ("compute_dial") working.
+    autonomy: str = Field(
+        default="ask-before-run",
+        validation_alias=AliasChoices("autonomy", "compute_dial"),
+    )
     enabled: bool = True
 
 
@@ -166,7 +180,9 @@ class UpdateScheduledAgentRequest(BaseModel):
     target: Optional[dict[str, Any]] = None
     effort: Optional[str] = None
     run_policy_uid: Optional[str] = None
-    compute_dial: Optional[str] = None
+    autonomy: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("autonomy", "compute_dial")
+    )
     enabled: Optional[bool] = None
 
 

@@ -20,14 +20,16 @@ async def prior_findings(
     title_substring: Optional[str] = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    nodes = await Finding.nodes.all()
+    nodes = (
+        await Finding.nodes.filter(
+            repository_uid=repository_uid, status__in=list(statuses)
+        )
+        if statuses
+        else await Finding.nodes.filter(repository_uid=repository_uid)
+    )
     out: list[dict[str, Any]] = []
     needle = (title_substring or "").lower()
     for f in nodes:
-        if f.repository_uid != repository_uid:
-            continue
-        if statuses and f.status not in statuses:
-            continue
         if tag and tag not in (f.tags or []):
             continue
         if kind and f.kind != kind:

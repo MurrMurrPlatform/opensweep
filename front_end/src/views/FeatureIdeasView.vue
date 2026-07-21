@@ -143,7 +143,7 @@ function onFiled(finding: FindingDTO) {
           >
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-medium">{{ f.title }}</span>
-              <Badge variant="outline" class="px-1.5 text-[10px]">effort: {{ f.effort }}</Badge>
+              <Badge variant="outline" class="px-1.5 text-[10px]">size: {{ f.size }}</Badge>
               <span
                 v-for="t in f.tags || []"
                 :key="t"

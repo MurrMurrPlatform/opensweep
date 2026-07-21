@@ -12,10 +12,10 @@ from fastapi import HTTPException
 
 from domains.findings.models import Finding
 from domains.findings.schemas import (
-    Effort,
     FileFindingRequest,
     FindingDTO,
     FindingKind,
+    FindingSize,
     FindingStatus,
     ParseStatus,
     Severity,
@@ -70,7 +70,7 @@ def finding_to_dto(f: Finding) -> FindingDTO:
         tags=list(f.tags or []),
         kind=FindingKind(f.kind),
         severity=Severity(f.severity or "medium"),
-        effort=Effort(f.effort or "medium"),
+        size=FindingSize(f.size or "medium"),
         subtype=f.subtype or "",
         title=f.title,
         confidence=float(f.confidence or 0.7),
@@ -82,6 +82,8 @@ def finding_to_dto(f: Finding) -> FindingDTO:
         affected_paths=list(f.affected_paths or []),
         dedupe_key=f.dedupe_key,
         source_run_uid=f.source_run_uid,
+        source_run_uids=list(f.source_run_uids or ([f.source_run_uid] if f.source_run_uid else [])),
+        last_confirmed_at=f.last_confirmed_at,
         executor=f.executor or "manual",
         source_path=SourcePath(f.source_path or "tool-call"),
         parse_status=ParseStatus(f.parse_status or "ok"),
@@ -104,16 +106,20 @@ class FindingService:
         exclude_kind: str | None = None,
         status: str | None = None,
         severity: str | None = None,
-        effort: str | None = None,
+        size: str | None = None,
         detected_by_tool: str | None = None,
         sort_by: str = "updated_at",
         sort_dir: str = "desc",
     ) -> list[FindingDTO]:
-        nodes = await Finding.nodes.all()
+        nodes = (
+            await Finding.nodes.filter(repository_uid=repository_uid)
+            if repository_uid
+            # intentional: repository_uid is optional here; without it this is a
+            # deliberate cross-repo listing (admin surfaces), no tenant column to push.
+            else await Finding.nodes.all()
+        )
         out = []
         for f in nodes:
-            if repository_uid and f.repository_uid != repository_uid:
-                continue
             if source_run_uid and f.source_run_uid != source_run_uid:
                 continue
             if tag and tag not in (f.tags or []):
@@ -126,7 +132,7 @@ class FindingService:
                 continue
             if severity and (f.severity or "medium") != severity:
                 continue
-            if effort and (f.effort or "medium") != effort:
+            if size and (f.size or "medium") != size:
                 continue
             if detected_by_tool and (f.detected_by_tool or "") != detected_by_tool:
                 continue
@@ -163,6 +169,15 @@ class FindingService:
         if existing is not None:
             existing.confidence = max(float(existing.confidence or 0.0), req.confidence)
             existing.evidence = {**(existing.evidence or {}), **(req.evidence or {})}
+            # Confirmation ledger — keep this path in step with the platform
+            # tool's _merge_into (create_finding.py).
+            run_uids = [u for u in (existing.source_run_uids or []) if u]
+            if not run_uids and existing.source_run_uid:
+                run_uids = [existing.source_run_uid]
+            if req.source_run_uid and req.source_run_uid not in run_uids:
+                run_uids.append(req.source_run_uid)
+            existing.source_run_uids = run_uids
+            existing.last_confirmed_at = datetime.now(UTC)
             existing.updated_at = datetime.now(UTC)
             await existing.save()
             return finding_to_dto(existing)
@@ -173,7 +188,7 @@ class FindingService:
             tags=normalize_tags(req.tags),
             kind=req.kind.value,
             severity=req.severity.value,
-            effort=req.effort.value,
+            size=req.size.value,
             subtype=req.subtype or "",
             title=req.title,
             confidence=req.confidence,
@@ -187,6 +202,8 @@ class FindingService:
             detected_by_tool=req.detected_by_tool or "",
             detected_by_rule=req.detected_by_rule or "",
             source_run_uid=req.source_run_uid,
+            source_run_uids=[req.source_run_uid] if req.source_run_uid else [],
+            last_confirmed_at=datetime.now(UTC),
             executor=req.executor or "manual",
             source_path=SourcePath.TOOL_CALL.value,
             parse_status=ParseStatus.OK.value,
@@ -213,7 +230,7 @@ class FindingService:
         for key, value in fields.items():
             if key == "tags":
                 value = normalize_tags(value)
-            elif key in ("kind", "severity", "effort") and value is not None:
+            elif key in ("kind", "severity", "size") and value is not None:
                 value = value.value  # StrEnum → stored string
             setattr(f, key, value)
         f.updated_at = datetime.now(UTC)

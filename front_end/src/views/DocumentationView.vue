@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   AlertTriangle,
+  Archive,
   BookOpen,
   Brain,
   Check,
@@ -10,6 +11,7 @@ import {
   ChevronRight,
   FolderOpen,
   GitPullRequest,
+  Layers,
   Pencil,
   Pin,
   PinOff,
@@ -22,13 +24,14 @@ import {
   X,
 } from 'lucide-vue-next'
 import { useAgentStore } from '@/stores/agentStore'
+import { useAreaStore } from '@/stores/areaStore'
 import { useDocStore } from '@/stores/docStore'
 import type { AgentDTO } from '@/types/api'
 import { useMemoryStore } from '@/stores/memoryStore'
 import { useCurrentRepo } from '@/composables/useCurrentRepo'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
-import { collapseContext, lineDiff } from '@/lib/lineDiff'
+import DocEditReviewCard from '@/components/docs/DocEditReviewCard.vue'
 import { MarkdownView } from '@/components/ui/markdown'
 import { PageHeader } from '@/components/ui/page-header'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -70,10 +73,11 @@ import type { DocDTO, DocEditDTO, MemoryDTO } from '@/types/api'
 const docs = useDocStore()
 const memories = useMemoryStore()
 const agents = useAgentStore()
+const areaStore = useAreaStore()
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
-const { uid: repoUid } = useCurrentRepo()
+const { uid: repoUid, slug: repoSlug } = useCurrentRepo()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -86,6 +90,13 @@ async function reload() {
   if (!repoUid.value) return
   loading.value = true
   error.value = null
+  // Docs gate: the doc tree is generated one page per area, so generation
+  // needs the area map first. Best-effort — an areas fetch failure must
+  // never gate (or break) the docs page.
+  void areaStore
+    .fetchAreas(repoUid.value)
+    .then(() => (areasKnown.value = true))
+    .catch(() => (areasKnown.value = false))
   try {
     await Promise.all([
       docs.fetchAll({ repository_uid: repoUid.value }),
@@ -108,53 +119,128 @@ async function reload() {
 onMounted(reload)
 watch(repoUid, reload)
 
+// ── Docs gate: no enabled areas → generation has nothing to hang pages on ────
+
+/** true once the areas fetch landed — an unknown map never gates. */
+const areasKnown = ref(false)
+const docsGated = computed(() => areasKnown.value && !areaStore.areas.some((a) => a.enabled))
+const GATE_TOOLTIP = 'Map areas first — the doc tree is generated one page per area'
+
 // ── Pages: a folder tree derived from "/"-segmented slugs ───────────────────
 
+// Retired pages are hidden by default (kept for history, out of the wiki).
+const showArchived = ref(false)
+const archivedCount = computed(() => docs.list.filter((d) => d.archived).length)
+
 const pages = computed<DocDTO[]>(() =>
-  [...docs.list].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-    return a.slug.localeCompare(b.slug)
-  }),
+  [...docs.list]
+    .filter((d) => showArchived.value || !d.archived)
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      return a.slug.localeCompare(b.slug)
+    }),
 )
 
-/** Root pages (no "/" in the slug) come first; folders group by first segment. */
+/** Root pages (no "/" in the slug) come first; folders nest below them. */
 const rootPages = computed<DocDTO[]>(() => pages.value.filter((d) => !d.slug.includes('/')))
 
-interface DocFolder {
-  name: string
-  pages: DocDTO[]
-}
-
-const folders = computed<DocFolder[]>(() => {
-  const byFolder = new Map<string, DocDTO[]>()
-  for (const doc of pages.value) {
-    if (!doc.slug.includes('/')) continue
-    const folder = doc.slug.split('/')[0]
-    const list = byFolder.get(folder) || []
-    list.push(doc)
-    byFolder.set(folder, list)
-  }
-  return [...byFolder.entries()]
-    .map(([name, docsInFolder]) => ({
-      name,
-      pages: docsInFolder.sort((a, b) => a.slug.localeCompare(b.slug)),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-})
-
-// Expanded by default; the set tracks folders the user collapsed.
+// Expanded by default; the set tracks folder paths the user collapsed.
 const collapsedFolders = ref<Set<string>>(new Set())
 
-function toggleFolder(name: string) {
+function toggleFolder(path: string) {
   const next = new Set(collapsedFolders.value)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
   collapsedFolders.value = next
 }
 
+// The TOC renders the full "/"-segment hierarchy (area keys nest arbitrarily
+// deep), flattened into rows so the template stays non-recursive.
+interface FolderRow {
+  type: 'folder'
+  path: string
+  name: string
+  depth: number
+  count: number
+}
+interface PageRow {
+  type: 'page'
+  doc: DocDTO
+  depth: number
+}
+type TocRow = FolderRow | PageRow
+
+interface FolderNode {
+  pages: DocDTO[]
+  children: Map<string, FolderNode>
+}
+
+function countPages(node: FolderNode): number {
+  return (
+    node.pages.length +
+    [...node.children.values()].reduce((sum, c) => sum + countPages(c), 0)
+  )
+}
+
+const tocRows = computed<TocRow[]>(() => {
+  const root: FolderNode = { pages: [], children: new Map() }
+  for (const doc of pages.value) {
+    const segments = doc.slug.split('/')
+    if (segments.length === 1) continue // root pages render separately
+    let node = root
+    for (const seg of segments.slice(0, -1)) {
+      let child = node.children.get(seg)
+      if (!child) {
+        child = { pages: [], children: new Map() }
+        node.children.set(seg, child)
+      }
+      node = child
+    }
+    node.pages.push(doc)
+  }
+  const rows: TocRow[] = []
+  const walk = (node: FolderNode, path: string, depth: number) => {
+    for (const [name, child] of [...node.children.entries()].sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      const childPath = path ? `${path}/${name}` : name
+      rows.push({ type: 'folder', path: childPath, name, depth, count: countPages(child) })
+      if (collapsedFolders.value.has(childPath)) continue
+      for (const doc of [...child.pages].sort((a, b) => a.slug.localeCompare(b.slug))) {
+        rows.push({ type: 'page', doc, depth: depth + 1 })
+      }
+      walk(child, childPath, depth + 1)
+    }
+  }
+  walk(root, '', 0)
+  return rows
+})
+
 const selected = computed<DocDTO | null>(() => docs.list.find((d) => d.uid === selectedUid.value) || null)
 
-const staleDocs = computed(() => docs.list.filter((d) => d.stale))
+// ── Features: a derived, read-only view over the area map's feature specs ────
+// Feature areas carry their contract in Area.spec (verified end-to-end by
+// feature audit runs) — rendered here as documentation, never duplicated
+// into generated pages that would drift from the spec.
+
+const featureAreas = computed(() =>
+  [...areaStore.areas]
+    .filter((a) => a.enabled && a.kind === 'feature' && a.spec.trim())
+    .sort((a, b) => a.key.localeCompare(b.key)),
+)
+
+const selectedFeatureUid = ref('')
+const selectedFeature = computed(
+  () => featureAreas.value.find((a) => a.uid === selectedFeatureUid.value) || null,
+)
+
+function selectFeature(uid: string) {
+  selectedFeatureUid.value = uid
+  selectedUid.value = ''
+  cancelEdit()
+}
+
+const staleDocs = computed(() => docs.list.filter((d) => d.stale && !d.archived))
 
 /** Rough token estimate for the combined pinned pages agents see every run. */
 const pinnedTokenEstimate = computed(() => {
@@ -162,14 +248,14 @@ const pinnedTokenEstimate = computed(() => {
   return Math.round(chars / 4)
 })
 
-/** Page label without the folder prefix, for rows nested under a folder header. */
+/** Page label without its folder path, for rows nested under a folder header. */
 function leafSlug(doc: DocDTO): string {
-  const i = doc.slug.indexOf('/')
-  return i >= 0 ? doc.slug.slice(i + 1) : doc.slug
+  return doc.slug.split('/').pop() || doc.slug
 }
 
 function selectPage(doc: DocDTO) {
   selectedUid.value = doc.uid
+  selectedFeatureUid.value = ''
   cancelEdit()
   router.replace({ query: { ...route.query, doc: doc.slug } })
 }
@@ -179,6 +265,28 @@ async function togglePin(doc: DocDTO) {
     await docs.setPinned(doc.uid, !doc.pinned)
   } catch (e: unknown) {
     toast.error('Pin failed', e instanceof Error ? e.message : String(e))
+  }
+}
+
+// ── Reset (destructive: wipe the whole doc tree) ─────────────────────────────
+const resetDocsOpen = ref(false)
+const resettingDocs = ref(false)
+
+async function confirmResetDocs() {
+  if (!repoUid.value) return
+  resetDocsOpen.value = false
+  resettingDocs.value = true
+  try {
+    const result = await docs.resetAll(repoUid.value)
+    toast.success(
+      'Documentation deleted',
+      `${result.docs_deleted} page${result.docs_deleted === 1 ? '' : 's'} and ${result.edits_deleted} edit${result.edits_deleted === 1 ? '' : 's'} removed.`,
+    )
+    await reload()
+  } catch (e: unknown) {
+    toast.error('Reset failed', e instanceof Error ? e.message : String(e))
+  } finally {
+    resettingDocs.value = false
   }
 }
 
@@ -209,7 +317,7 @@ async function confirmDeleteSelected() {
 const generating = ref(false)
 
 async function generateDocs() {
-  if (!repoUid.value || generating.value) return
+  if (!repoUid.value || generating.value || docsGated.value) return
   generating.value = true
   try {
     const result = await docs.generate(repoUid.value)
@@ -464,10 +572,6 @@ function editTarget(edit: DocEditDTO): string {
   return doc ? doc.slug : edit.slug || edit.doc_uid.slice(0, 8)
 }
 
-function diffFor(edit: DocEditDTO) {
-  return collapseContext(lineDiff(edit.current_body || '', edit.proposed_body || ''))
-}
-
 const resolvingUid = ref('')
 
 async function acceptEdit(edit: DocEditDTO) {
@@ -518,10 +622,12 @@ async function confirmResolveAllOther() {
   bulkResolving.value = action
   try {
     const result = action === 'accept' ? await docs.bulkAccept(uids) : await docs.bulkReject(uids)
-    if (result.errors?.length) {
-      toast.warn(`Some edits failed to ${action}`, result.errors.join('; '))
+    const errorMsgs = Object.values(result.errors ?? {})
+    const doneCount = (action === 'accept' ? result.accepted : result.rejected)?.length ?? 0
+    if (errorMsgs.length) {
+      toast.warn(`Some edits failed to ${action}`, errorMsgs.join('; '))
     } else {
-      toast.success(action === 'accept' ? `Accepted ${uids.length} edits` : `Rejected ${uids.length} edits`)
+      toast.success(action === 'accept' ? `Accepted ${doneCount} edits` : `Rejected ${doneCount} edits`)
     }
     if (repoUid.value) {
       await Promise.all([
@@ -590,10 +696,23 @@ async function confirmDeleteMemory() {
       title="Documentation"
       subtitle="The repository's wiki: path-organized pages that watch the code they describe. Pinned pages ride along in every run's prompt; agents propose edits that land here as diffs."
     >
-      <Button variant="outline" size="sm" :loading="generating" @click="generateDocs" title="Dispatch one LLM run that proposes doc pages for this repository. Proposals land below as pending edits.">
-        <Wand2 v-if="!generating" />
-        Generate docs
+      <Button
+        v-if="docs.list.length || docs.edits.length"
+        variant="outline"
+        size="sm"
+        class="text-destructive hover:text-destructive"
+        :loading="resettingDocs"
+        title="Delete every doc page and pending edit for this repository."
+        @click="resetDocsOpen = true"
+      >
+        Reset docs…
       </Button>
+      <span :title="docsGated ? GATE_TOOLTIP : 'Dispatch one LLM run that proposes doc pages for this repository. Proposals land below as pending edits.'">
+        <Button variant="outline" size="sm" :loading="generating" :disabled="docsGated" @click="generateDocs">
+          <Wand2 v-if="!generating" />
+          Generate docs
+        </Button>
+      </span>
       <Button variant="outline" size="sm" :loading="syncing" @click="syncToRepo" title="Sync docs to the repo as an AGENTS.md + docs/** pull request.">
         <GitPullRequest v-if="!syncing" />
         Sync to repo
@@ -616,6 +735,23 @@ async function confirmDeleteMemory() {
     </ErrorState>
 
     <template v-else>
+      <!-- Docs gate: generation hangs pages on the area map — map first. -->
+      <div
+        v-if="docsGated"
+        class="flex items-center gap-2 rounded-sm border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+      >
+        <BookOpen class="h-4 w-4 shrink-0" />
+        <span>
+          The doc tree is generated one page per area —
+          <RouterLink
+            v-if="repoSlug"
+            :to="{ name: 'areas', params: { repoSlug } }"
+            class="text-primary hover:underline"
+          >map the areas first</RouterLink>
+          <template v-else>map the areas first</template>.
+        </span>
+      </div>
+
       <!-- Stale banner: pages whose watched code moved on without them. -->
       <div
         v-if="staleDocs.length"
@@ -642,9 +778,21 @@ async function confirmDeleteMemory() {
         <Card>
           <CardHeader class="flex-row items-center justify-between space-y-0">
             <CardTitle class="text-base">Pages</CardTitle>
-            <Button variant="outline" size="sm" @click="openCreate">
-              <Plus /> New page
-            </Button>
+            <div class="flex items-center gap-2">
+              <Button
+                v-if="archivedCount"
+                variant="ghost"
+                size="sm"
+                :title="showArchived ? 'Hide retired pages' : `Show ${archivedCount} retired page${archivedCount === 1 ? '' : 's'}`"
+                @click="showArchived = !showArchived"
+              >
+                <Archive />
+                {{ showArchived ? 'Hide retired' : `Retired (${archivedCount})` }}
+              </Button>
+              <Button variant="outline" size="sm" @click="openCreate">
+                <Plus /> New page
+              </Button>
+            </div>
           </CardHeader>
           <CardContent class="p-0">
             <div class="px-4 py-2 text-xs text-muted-foreground border-b border-border">
@@ -681,6 +829,9 @@ async function confirmDeleteMemory() {
                       </div>
                       <div class="truncate font-mono text-[10px] text-muted-foreground">{{ doc.slug }}</div>
                     </div>
+                    <Badge v-if="doc.archived" variant="secondary" class="px-1.5 text-[10px]" title="Retired — hidden from the wiki, exports, and audits">
+                      retired
+                    </Badge>
                     <Badge v-if="doc.pending_edits > 0" variant="warn" class="px-1.5 text-[10px]" title="Pending agent edits">
                       {{ doc.pending_edits }}
                     </Badge>
@@ -688,74 +839,152 @@ async function confirmDeleteMemory() {
                 </li>
               </ul>
 
-              <!-- Folders (first slug segment) -->
-              <div v-for="folder in folders" :key="folder.name">
+              <!-- Folder tree: the full "/"-segment hierarchy -->
+              <template v-for="row in tocRows" :key="row.type === 'folder' ? `f:${row.path}` : `p:${row.doc.uid}`">
                 <button
+                  v-if="row.type === 'folder'"
                   type="button"
-                  class="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-accent"
-                  @click="toggleFolder(folder.name)"
+                  class="flex w-full items-center gap-1.5 border-t border-border py-2 pr-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-accent"
+                  :style="{ paddingLeft: `${0.75 + row.depth * 0.75}rem` }"
+                  @click="toggleFolder(row.path)"
                 >
-                  <component :is="collapsedFolders.has(folder.name) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
+                  <component :is="collapsedFolders.has(row.path) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
                   <FolderOpen class="h-3.5 w-3.5" />
-                  <span class="truncate font-mono normal-case">{{ folder.name }}/</span>
-                  <span class="ml-auto font-normal">{{ folder.pages.length }}</span>
+                  <span class="truncate font-mono normal-case">{{ row.name }}/</span>
+                  <span class="ml-auto font-normal">{{ row.count }}</span>
                 </button>
-                <ul v-if="!collapsedFolders.has(folder.name)" class="divide-y divide-border">
-                  <li v-for="doc in folder.pages" :key="doc.uid">
-                    <div
-                      :class="[
-                        'flex items-center gap-2 py-2 pl-7 pr-3 cursor-pointer transition-colors',
-                        selectedUid === doc.uid ? 'bg-primary/10' : 'hover:bg-accent',
-                      ]"
-                      @click="selectPage(doc)"
-                    >
-                      <button
-                        type="button"
-                        :title="doc.pinned ? 'Unpin — stop injecting into every run' : 'Pin — inject verbatim into every run'"
-                        :class="['rounded-sm p-1', doc.pinned ? 'text-amber-600' : 'text-muted-foreground hover:text-foreground']"
-                        @click.stop="togglePin(doc)"
-                      >
-                        <component :is="doc.pinned ? Pin : PinOff" class="h-3.5 w-3.5" />
-                      </button>
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-1.5">
-                          <span class="truncate text-sm font-medium">{{ doc.title || leafSlug(doc) }}</span>
-                          <span
-                            v-if="doc.stale"
-                            class="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-                            :title="`Code changed since last review:\n${doc.stale_paths.join('\n')}`"
-                          />
-                        </div>
-                        <div class="truncate font-mono text-[10px] text-muted-foreground">{{ leafSlug(doc) }}</div>
-                      </div>
-                      <Badge v-if="doc.pending_edits > 0" variant="warn" class="px-1.5 text-[10px]" title="Pending agent edits">
-                        {{ doc.pending_edits }}
-                      </Badge>
+                <div
+                  v-else
+                  :class="[
+                    'flex items-center gap-2 py-2 pr-3 cursor-pointer border-t border-border transition-colors',
+                    selectedUid === row.doc.uid ? 'bg-primary/10' : 'hover:bg-accent',
+                  ]"
+                  :style="{ paddingLeft: `${0.75 + row.depth * 0.75}rem` }"
+                  @click="selectPage(row.doc)"
+                >
+                  <button
+                    type="button"
+                    :title="row.doc.pinned ? 'Unpin — stop injecting into every run' : 'Pin — inject verbatim into every run'"
+                    :class="['rounded-sm p-1', row.doc.pinned ? 'text-amber-600' : 'text-muted-foreground hover:text-foreground']"
+                    @click.stop="togglePin(row.doc)"
+                  >
+                    <component :is="row.doc.pinned ? Pin : PinOff" class="h-3.5 w-3.5" />
+                  </button>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5">
+                      <span class="truncate text-sm font-medium">{{ row.doc.title || leafSlug(row.doc) }}</span>
+                      <span
+                        v-if="row.doc.stale"
+                        class="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                        :title="`Code changed since last review:\n${row.doc.stale_paths.join('\n')}`"
+                      />
                     </div>
-                  </li>
-                </ul>
+                    <div class="truncate font-mono text-[10px] text-muted-foreground">{{ leafSlug(row.doc) }}</div>
+                  </div>
+                  <Badge v-if="row.doc.archived" variant="secondary" class="px-1.5 text-[10px]" title="Retired — hidden from the wiki, exports, and audits">
+                    retired
+                  </Badge>
+                  <Badge v-if="row.doc.pending_edits > 0" variant="warn" class="px-1.5 text-[10px]" title="Pending agent edits">
+                    {{ row.doc.pending_edits }}
+                  </Badge>
+                </div>
+              </template>
+            </template>
+
+            <!-- Features: derived from the area map's feature specs, read-only -->
+            <template v-if="featureAreas.length">
+              <div class="flex items-center gap-1.5 border-t border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <Layers class="h-3.5 w-3.5" />
+                <span>Features</span>
+                <span class="ml-auto font-normal" title="Derived from the area map — not generated pages">{{ featureAreas.length }}</span>
               </div>
+              <ul class="divide-y divide-border">
+                <li v-for="feature in featureAreas" :key="feature.uid">
+                  <div
+                    :class="[
+                      'flex items-center gap-2 py-2 pl-7 pr-3 cursor-pointer transition-colors',
+                      selectedFeatureUid === feature.uid ? 'bg-primary/10' : 'hover:bg-accent',
+                    ]"
+                    @click="selectFeature(feature.uid)"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-1.5">
+                        <span class="truncate text-sm font-medium">{{ feature.title || feature.key }}</span>
+                        <span
+                          v-if="feature.stale"
+                          class="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                          title="Code changed under this feature's scope since its last review"
+                        />
+                      </div>
+                      <div class="truncate font-mono text-[10px] text-muted-foreground">{{ feature.key }}</div>
+                    </div>
+                  </div>
+                </li>
+              </ul>
             </template>
 
             <div v-else class="p-4">
               <EmptyState
                 :icon="BookOpen"
                 title="No pages yet"
-                description="Generate docs to let an agent propose a wiki from the code — or create a page by hand."
+                :description="docsGated
+                  ? 'The doc tree is generated one page per area, so the wiki needs the area map first. Map the areas, then generate docs — or create a page by hand.'
+                  : 'Generate docs to let an agent propose a wiki from the code — or create a page by hand.'"
                 class="border-0"
               >
-                <Button size="sm" :loading="generating" @click="generateDocs">
-                  <Wand2 v-if="!generating" />
-                  Generate docs
-                </Button>
+                <RouterLink v-if="docsGated && repoSlug" :to="{ name: 'areas', params: { repoSlug } }">
+                  <Button size="sm" variant="outline">Map areas first</Button>
+                </RouterLink>
+                <span v-else :title="docsGated ? GATE_TOOLTIP : undefined">
+                  <Button size="sm" :loading="generating" :disabled="docsGated" @click="generateDocs">
+                    <Wand2 v-if="!generating" />
+                    Generate docs
+                  </Button>
+                </span>
               </EmptyState>
             </div>
           </CardContent>
         </Card>
 
-        <!-- ── Selected page ─────────────────────────────────────────────── -->
+        <!-- ── Selected page / feature ───────────────────────────────────── -->
         <div class="space-y-4 min-w-0">
-          <Card v-if="selected">
+          <!-- Feature spec: rendered from the area map, not an editable page -->
+          <Card v-if="selectedFeature">
+            <CardHeader class="flex-row items-start justify-between gap-2 space-y-0">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span class="font-mono">{{ selectedFeature.key }}</span>
+                  <Badge variant="info" class="px-1.5 text-[10px]" title="This is the feature area's spec — the contract feature audits verify. Edit it on the area, not here.">
+                    <Layers class="h-3 w-3" /> derived from area map
+                  </Badge>
+                </div>
+                <h2 class="truncate font-semibold">{{ selectedFeature.title || selectedFeature.key }}</h2>
+              </div>
+              <RouterLink :to="{ name: 'area-detail', params: { uid: selectedFeature.uid } }">
+                <Button variant="outline" size="sm">Open area</Button>
+              </RouterLink>
+            </CardHeader>
+            <CardContent class="space-y-3">
+              <MarkdownView :model-value="selectedFeature.spec" preview-only />
+              <div>
+                <div class="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Scope paths</div>
+                <div v-if="selectedFeature.scope_paths.length" class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="path in selectedFeature.scope_paths"
+                    :key="path"
+                    class="rounded-full border border-border px-2.5 py-0.5 font-mono text-xs"
+                  >
+                    {{ path }}
+                  </span>
+                </div>
+                <div v-else class="text-xs text-muted-foreground italic">
+                  No scope paths — this feature is a parent grouping.
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card v-else-if="selected">
             <CardHeader class="flex-row items-start justify-between gap-2 space-y-0">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -765,6 +994,9 @@ async function confirmDeleteMemory() {
                   </Badge>
                   <Badge v-if="selected.stale" variant="warn" class="px-1.5 text-[10px]" :title="selected.stale_paths.join('\n')">
                     <AlertTriangle class="h-3 w-3" /> stale
+                  </Badge>
+                  <Badge v-if="selected.archived" variant="secondary" class="px-1.5 text-[10px]" title="Retired — hidden from the wiki, exports, and audits">
+                    <Archive class="h-3 w-3" /> retired
                   </Badge>
                   <span v-if="selected.last_reviewed_at">reviewed {{ selected.last_reviewed_at.slice(0, 10) }}</span>
                   <span v-else-if="selected.updated_at">updated {{ selected.updated_at.slice(0, 10) }}</span>
@@ -901,58 +1133,15 @@ async function confirmDeleteMemory() {
               <span class="text-xs text-muted-foreground">{{ selectedEdits.length }}</span>
             </CardHeader>
             <CardContent class="p-0">
-              <div
+              <DocEditReviewCard
                 v-for="edit in selectedEdits"
                 :key="edit.uid"
-                class="border-b border-border p-4 last:border-b-0 space-y-2"
-              >
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div class="min-w-0 text-xs text-muted-foreground">
-                    <span v-if="edit.source_run_uid">
-                      proposed by run
-                      <RouterLink
-                        :to="{ name: 'run-detail', params: { uid: edit.source_run_uid } }"
-                        class="font-mono text-primary hover:underline"
-                      >{{ edit.source_run_uid.slice(0, 8) }}</RouterLink>
-                    </span>
-                    <span v-if="edit.created_at"> · {{ edit.created_at.slice(0, 10) }}</span>
-                  </div>
-                  <div class="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      :disabled="!!resolvingUid"
-                      @click="rejectEdit(edit)"
-                    >
-                      <X /> Reject
-                    </Button>
-                    <Button
-                      size="sm"
-                      :loading="resolvingUid === edit.uid"
-                      :disabled="!!resolvingUid && resolvingUid !== edit.uid"
-                      @click="acceptEdit(edit)"
-                    >
-                      <Check /> Accept
-                    </Button>
-                  </div>
-                </div>
-                <p v-if="edit.rationale" class="text-sm text-muted-foreground">{{ edit.rationale }}</p>
-                <div class="overflow-x-auto rounded-md border border-border bg-muted font-mono text-xs leading-5">
-                  <div
-                    v-for="(line, i) in diffFor(edit)"
-                    :key="i"
-                    :class="[
-                      'whitespace-pre-wrap break-all px-3',
-                      line.type === 'add' ? 'bg-green-500/15 text-green-800 dark:text-green-300' : '',
-                      line.type === 'del' ? 'bg-red-500/15 text-red-800 dark:text-red-300' : '',
-                      line.type === 'skip' ? 'py-0.5 text-center text-muted-foreground select-none' : '',
-                    ]"
-                  >
-                    <template v-if="line.type === 'skip'">··· {{ line.count }} unchanged lines ···</template>
-                    <template v-else>{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }} {{ line.text }}</template>
-                  </div>
-                </div>
-              </div>
+                :edit="edit"
+                :resolving="resolvingUid === edit.uid"
+                :disabled="!!resolvingUid && resolvingUid !== edit.uid"
+                @accept="acceptEdit(edit)"
+                @reject="rejectEdit(edit)"
+              />
             </CardContent>
           </Card>
         </div>
@@ -984,59 +1173,16 @@ async function confirmDeleteMemory() {
           </div>
         </CardHeader>
         <CardContent class="p-0">
-          <div
+          <DocEditReviewCard
             v-for="edit in otherEdits"
             :key="edit.uid"
-            class="border-b border-border p-4 last:border-b-0 space-y-2"
-          >
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">
-                  {{ editTarget(edit) }}
-                  <Badge v-if="!edit.doc_uid" variant="info" class="px-1.5 text-[10px]">new page</Badge>
-                </div>
-                <div class="text-xs text-muted-foreground">
-                  <span v-if="edit.source_run_uid">
-                    run
-                    <RouterLink
-                      :to="{ name: 'run-detail', params: { uid: edit.source_run_uid } }"
-                      class="font-mono text-primary hover:underline"
-                    >{{ edit.source_run_uid.slice(0, 8) }}</RouterLink>
-                  </span>
-                  <span v-if="edit.created_at"> · {{ edit.created_at.slice(0, 10) }}</span>
-                </div>
-              </div>
-              <div class="flex gap-2">
-                <Button variant="outline" size="sm" :disabled="!!resolvingUid || !!bulkResolving" @click="rejectEdit(edit)">
-                  <X /> Reject
-                </Button>
-                <Button
-                  size="sm"
-                  :loading="resolvingUid === edit.uid"
-                  :disabled="(!!resolvingUid && resolvingUid !== edit.uid) || !!bulkResolving"
-                  @click="acceptEdit(edit)"
-                >
-                  <Check /> Accept
-                </Button>
-              </div>
-            </div>
-            <p v-if="edit.rationale" class="text-sm text-muted-foreground">{{ edit.rationale }}</p>
-            <div class="overflow-x-auto rounded-md border border-border bg-muted font-mono text-xs leading-5">
-              <div
-                v-for="(line, i) in diffFor(edit)"
-                :key="i"
-                :class="[
-                  'whitespace-pre-wrap break-all px-3',
-                  line.type === 'add' ? 'bg-green-500/15 text-green-800 dark:text-green-300' : '',
-                  line.type === 'del' ? 'bg-red-500/15 text-red-800 dark:text-red-300' : '',
-                  line.type === 'skip' ? 'py-0.5 text-center text-muted-foreground select-none' : '',
-                ]"
-              >
-                <template v-if="line.type === 'skip'">··· {{ line.count }} unchanged lines ···</template>
-                <template v-else>{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }} {{ line.text }}</template>
-              </div>
-            </div>
-          </div>
+            :edit="edit"
+            :target="editTarget(edit)"
+            :resolving="resolvingUid === edit.uid"
+            :disabled="(!!resolvingUid && resolvingUid !== edit.uid) || !!bulkResolving"
+            @accept="acceptEdit(edit)"
+            @reject="rejectEdit(edit)"
+          />
         </CardContent>
       </Card>
 
@@ -1183,6 +1329,26 @@ async function confirmDeleteMemory() {
             @click="confirmDeleteSelected"
           >
             Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog v-model:open="resetDocsOpen">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete all documentation?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently deletes all {{ docs.list.length }} page{{ docs.list.length === 1 ? '' : 's' }}
+            and {{ docs.edits.length }} pending edit{{ docs.edits.length === 1 ? '' : 's' }} for this repository.
+            Memories anchored to these pages keep their content but lose their freshness anchor, and
+            audits lose their doc-derived scoping until docs are regenerated. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction class="bg-destructive text-destructive-foreground hover:bg-destructive/90" @click="confirmResetDocs">
+            Delete everything
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

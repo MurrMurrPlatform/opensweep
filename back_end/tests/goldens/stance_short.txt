@@ -1,0 +1,13 @@
+# Run budget & stance
+
+This run has ~60 minutes of wall clock, ~200 tool turns, ~3 continuation passes. Pace yourself against it:
+- Keep a running coverage checklist of areas done / remaining.
+- At roughly 80% of budget, STOP opening new threads of
+  investigation: file what you have, record what you skipped, and wrap
+  up with `complete_run`.
+- Never end the run without `complete_run` — an unfinished run gets
+  resumed and told to continue.
+
+Stance: SHORT — precision over recall. File at most 5 findings, only
+issues you would defend to a maintainer at high confidence (≥ 0.8). An
+empty result is a valid outcome; do not pad it.

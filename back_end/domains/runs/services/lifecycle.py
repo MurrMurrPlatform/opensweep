@@ -58,7 +58,7 @@ from domains.run_policies.services.policy_resolver import (
 )
 from infrastructure.audit import write_audit
 from infrastructure.kill_switch import KillSwitchActiveError, assert_runnable
-from infrastructure.process_role import get_role
+from infrastructure.process_role import WORKER, get_role
 from logging_config import logger
 
 
@@ -111,12 +111,22 @@ async def trigger_run(
     executor: Executor | None = None,
     execution_mode: ExecutionMode | None = None,
     run_policy_uid: str | None = None,
+    # Resolved effort tier + reasoning level, stamped on the Run and threaded
+    # into the DispatchRequest. "" = unknown (non-agent callers may not have
+    # a tier to report).
+    effort: str = "",
+    reasoning: str = "",
     trigger: RunTrigger = RunTrigger.MANUAL,
     triggered_by: str = "",
     surface: str = "runs",
     wait_for_completion: bool = False,
     prepared_sandbox: SandboxDTO | None = None,
     sandbox_factory: Callable[[], Awaitable[SandboxDTO]] | None = None,
+    # Intent composition degraded to in-code fallbacks (a layer resolver hit
+    # its except path). The run still ran, but not against the real layers —
+    # stamped on the Run so the surface never reports a clean compose.
+    composed_degraded: bool = False,
+    degraded_layers: tuple[str, ...] | list[str] = (),
 ) -> Run:
     """Create a Run and dispatch its first turn.
 
@@ -277,6 +287,8 @@ async def trigger_run(
         execution_mode=chosen_mode.value,
         run_policy_uid=resolved.policy.uid,
         provider_uid=(active_provider.uid or "").strip(),
+        effort=effort or "",
+        reasoning=reasoning or "",
         agent_uid=agent_uid,
         agent_rev=agent_rev,
         status=RunStatus.QUEUED.value,
@@ -323,8 +335,24 @@ async def trigger_run(
                     prepared_sandbox.container_path if prepared_sandbox else None
                 ),
             },
+            # Degraded intent composition (in-code fallbacks used) — surfaced
+            # on the run so a fallback-composed run is never reported clean.
+            **(
+                {
+                    "composed_degraded": True,
+                    "degraded_layers": list(degraded_layers),
+                }
+                if composed_degraded
+                else {}
+            ),
         },
     )
+    if composed_degraded:
+        logger.error(
+            f"run {run_uid}: intent composed with degraded layers "
+            f"{list(degraded_layers)} — dispatching against in-code fallbacks",
+            extra={"tag": "lifecycle"},
+        )
     await run.save()
     await write_audit(
         kind="run.started",
@@ -340,42 +368,121 @@ async def trigger_run(
         },
     )
 
-    adapter = AdapterRegistry.get(chosen_executor)
-    pipeline = _prepare_dispatch_and_finalize(
-        run_uid=run.uid,
-        repository_uid=repository_uid,
-        intent=intent,
-        target=target,
-        repo=repo,
-        adapter=adapter,
-        chosen_executor=chosen_executor,
-        chosen_mode=chosen_mode,
-        trigger=trigger,
-        triggered_by=triggered_by,
-        policy=resolved.policy,
-        warnings=resolved.warnings + override_warnings,
-        provider_uid=(active_provider.uid or "").strip(),
-        model_override=overrides["model"],
-        max_wall_seconds_override=int(overrides["max_wall_seconds"] or 0),
-        context=context,
-        prepared_sandbox=prepared_sandbox,
-        sandbox_factory=sandbox_factory,
+    def _make_pipeline():
+        adapter = AdapterRegistry.get(chosen_executor)
+        return _prepare_dispatch_and_finalize(
+            run_uid=run.uid,
+            repository_uid=repository_uid,
+            intent=intent,
+            target=target,
+            repo=repo,
+            adapter=adapter,
+            chosen_executor=chosen_executor,
+            chosen_mode=chosen_mode,
+            trigger=trigger,
+            triggered_by=triggered_by,
+            policy=resolved.policy,
+            warnings=resolved.warnings + override_warnings,
+            provider_uid=(active_provider.uid or "").strip(),
+            model_override=overrides["model"],
+            max_wall_seconds_override=int(overrides["max_wall_seconds"] or 0),
+            effort=effort or "",
+            reasoning=reasoning or "",
+            context=context,
+            prepared_sandbox=prepared_sandbox,
+            sandbox_factory=sandbox_factory,
+        )
+
+    return await _launch_dispatch(
+        run, _make_pipeline, wait_for_completion=wait_for_completion
     )
 
+
+def _log_task_failure(run_uid: str, done: asyncio.Task) -> None:
+    try:
+        done.result()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"run dispatch task crashed for {run_uid}: {type(exc).__name__}: {exc}"
+        )
+
+
+async def _launch_dispatch(run: Run, make_pipeline, *, wait_for_completion: bool) -> Run:
+    """Start (or hand off) a run's dispatch pipeline.
+
+    The pipeline — clone → RUNNING → agent turn — can run for an hour. Under
+    the FastAPI backend the event loop is long-lived, so we run it as an
+    in-process background task. Under a Celery WORKER the loop is torn down by
+    `asyncio.run` the instant we return, which would cancel the pipeline
+    mid-clone and leave the run stuck QUEUED — so hand off to a dedicated
+    per-run Celery task (extended time limits) that owns its own loop. Beat
+    ticks (campaign, auto-audit, schedule) all dispatch through here, so this
+    single check fixes every worker-context path. `get_role()` is the same
+    signal stamped as usage["dispatch_runtime"]."""
     if wait_for_completion:
-        await pipeline
+        await make_pipeline()
         return await Run.nodes.get(uid=run.uid)
+    if get_role() == WORKER:
+        from domains.runs.tasks.dispatch_runs import dispatch_run
 
-    task = asyncio.create_task(pipeline)
-
-    def _log_task_failure(done: asyncio.Task) -> None:
-        try:
-            done.result()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"run dispatch task crashed for {run.uid}: {type(exc).__name__}: {exc}")
-
-    task.add_done_callback(_log_task_failure)
+        dispatch_run.delay(run.uid)
+        return run
+    task = asyncio.create_task(make_pipeline())
+    task.add_done_callback(lambda done: _log_task_failure(run.uid, done))
     return run
+
+
+async def execute_queued_run(run_uid: str) -> dict:
+    """Run the dispatch pipeline for a QUEUED run, rebuilding its inputs from
+    the persisted row. Entry point for the per-run Celery task
+    (tasks/dispatch_runs.dispatch_run): a worker-created run can't be
+    dispatched via an in-loop asyncio task (the tick's `asyncio.run` loop would
+    cancel it mid-clone), so the tick queues the row and this executes it in a
+    task that owns its own loop. Idempotent — a run no longer QUEUED (cancelled
+    or already dispatched) is skipped. Only CLI/discovery runs reach here
+    (worker dispatches never carry a prepared sandbox), so prepared_sandbox /
+    sandbox_factory are always None — the CLI clone path recreates the
+    workspace."""
+    run = await Run.nodes.get_or_none(uid=run_uid)
+    if run is None:
+        return {"outcome": "missing"}
+    if run.status != RunStatus.QUEUED.value:
+        return {"outcome": "skipped", "status": run.status or ""}
+    usage = dict(run.usage or {})
+    input_blob = dict(usage.get("input") or {})
+    overrides = dict(usage.get("workflow_overrides") or {})
+    target = dict(input_blob.get("target") or run.target or {})
+    repo = await Repository.nodes.get_or_none(uid=run.repository_uid)
+    policy = None
+    if run.run_policy_uid:
+        from domains.run_policies.models import RunPolicy
+
+        policy = await RunPolicy.nodes.get_or_none(uid=run.run_policy_uid)
+    context = await _load_briefing(repository_uid=run.repository_uid, target=target)
+    chosen_executor = Executor(run.executor)
+    await _prepare_dispatch_and_finalize(
+        run_uid=run.uid,
+        repository_uid=run.repository_uid,
+        intent=str(input_blob.get("intent") or ""),
+        target=target,
+        repo=repo,
+        adapter=AdapterRegistry.get(chosen_executor),
+        chosen_executor=chosen_executor,
+        chosen_mode=ExecutionMode(run.execution_mode or ExecutionMode.ANALYZE_ONLY.value),
+        trigger=RunTrigger(run.trigger or RunTrigger.MANUAL.value),
+        triggered_by=run.triggered_by or "",
+        policy=policy,
+        warnings=list(usage.get("warnings") or []),
+        provider_uid=str(usage.get("provider_uid") or run.provider_uid or ""),
+        model_override=str(overrides.get("model") or ""),
+        max_wall_seconds_override=int(overrides.get("max_wall_seconds") or 0),
+        effort=run.effort or "",
+        reasoning=run.reasoning or "",
+        context=context,
+        prepared_sandbox=None,
+        sandbox_factory=None,
+    )
+    return {"outcome": "dispatched", "run_uid": run.uid}
 
 
 async def _prepare_dispatch_and_finalize(
@@ -398,6 +505,8 @@ async def _prepare_dispatch_and_finalize(
     sandbox_factory: Callable[[], Awaitable[SandboxDTO]] | None,
     model_override: str = "",
     max_wall_seconds_override: int = 0,
+    effort: str = "",
+    reasoning: str = "",
 ) -> None:
     """Background half of trigger_run: sandbox prep → running → dispatch.
 
@@ -488,6 +597,8 @@ async def _prepare_dispatch_and_finalize(
         provider_uid=provider_uid,
         model_override=model_override,
         max_wall_seconds_override=max_wall_seconds_override,
+        effort=effort,
+        reasoning=reasoning,
     )
     await _dispatch_and_finalize(
         adapter=adapter,
@@ -699,6 +810,11 @@ async def _dispatch_and_finalize(
         succeeded=outcome.get("succeeded"),
         failed=outcome.get("failed"),
         next_steps=outcome.get("next_steps"),
+        # Coverage contract harvested from the trailer complete_run call
+        # (execute_envelope_tool_calls folds it into the outcome dict).
+        covered_paths=outcome.get("covered_paths"),
+        skipped_paths=outcome.get("skipped_paths"),
+        lens_verdicts=outcome.get("lens_verdicts"),
         output_refs=list(result.output_refs or []),
         usage={**(result.usage or {}), **{"warnings": warnings}},
         raw_artifact_uri=result.raw_artifact_uri or None,
@@ -938,6 +1054,8 @@ async def redispatch_run(
         provider_uid=(provider.uid or "").strip(),
         model_override=resumed_model_override,
         max_wall_seconds_override=int(wf_overrides.get("max_wall_seconds") or 0),
+        effort=run.effort or "",
+        reasoning=run.reasoning or "",
     )
     await _dispatch_and_finalize(
         adapter=adapter,
@@ -991,18 +1109,24 @@ async def _load_briefing(
     repository_uid: str,
     target: dict[str, Any],
 ) -> str:
-    """KNOWLEDGE_V3 briefing: pinned + targeted Docs verbatim, unpinned
-    index, target-anchored memories — plus the comment threads on every data
-    item the run targets (human comments are standing instructions). Rendered
-    once here; executors insert it into their first-turn prompt as-is."""
+    """KNOWLEDGE_V3 briefing: pinned Docs verbatim, a likely-relevant doc
+    listing for the run's target (linked doc_uids + watch-path overlap with
+    the target's paths), unpinned index, target-anchored memories — plus the
+    comment threads on every data item the run targets (human comments are
+    standing instructions). Rendered once here; executors insert it into
+    their first-turn prompt as-is."""
     raw_target_docs = target.get("doc_uids") or target.get("doc_uid") or []
     if isinstance(raw_target_docs, str):
         raw_target_docs = [raw_target_docs]
+    raw_target_paths = target.get("paths") or []
+    if isinstance(raw_target_paths, str):
+        raw_target_paths = [raw_target_paths]
     briefing = ""
     try:
         briefing = await build_briefing(
             repository_uid=repository_uid,
             target_doc_uids=[str(uid) for uid in raw_target_docs if uid],
+            target_paths=[str(p) for p in raw_target_paths if p],
         )
     except Exception as exc:  # noqa: BLE001 — a briefing failure must not block dispatch
         logger.warning(

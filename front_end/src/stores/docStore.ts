@@ -55,10 +55,14 @@ export interface SweepEstimate {
   note: string
 }
 
+/** Response of the bulk accept/reject doc-edit endpoints — per-uid outcomes. */
 export interface BulkEditResult {
-  accepted?: number
-  rejected?: number
-  errors: string[]
+  /** bulk-accept: uids the server applied. */
+  accepted?: string[]
+  /** bulk-reject: uids the server rejected. */
+  rejected?: string[]
+  /** Per-uid failure reasons — those edits stay reviewable. */
+  errors: Record<string, string>
 }
 
 export const useDocStore = defineStore('docs', () => {
@@ -111,7 +115,14 @@ export const useDocStore = defineStore('docs', () => {
     return apiPost<{ run_uid: string }>(`/docs/${uid}/verify`)
   }
 
-  /** One LLM run that proposes doc pages for the repository (409 when already running). */
+  /** Destructive: deletes every doc page + edit for the repo. */
+  async function resetAll(repoUid: string): Promise<{ docs_deleted: number; edits_deleted: number }> {
+    const result = await apiPost<{ docs_deleted: number; edits_deleted: number }>(
+      `/repositories/${repoUid}/docs/reset`,
+    )
+    return result
+  }
+
   async function generate(repoUid: string, agent_uid?: string): Promise<GenerateDocsResult> {
     return apiPost<GenerateDocsResult>(`/repositories/${repoUid}/sweep/generate-docs`, {
       agent_uid,
@@ -125,7 +136,9 @@ export const useDocStore = defineStore('docs', () => {
 
   /** Audit runs against selected doc pages (empty = whole repository).
    *  auto_select picks the stalest / never-checked pages instead (mutually
-   *  exclusive with docUids); max_findings caps each dispatched run. */
+   *  exclusive with docUids); max_findings caps each dispatched run.
+   *  area_uids (empty docUids only) narrow the repo-scoped run to the
+   *  selected areas — their scope paths become the run's target. */
   async function audit(
     repoUid: string,
     docUids: string[],
@@ -136,10 +149,12 @@ export const useDocStore = defineStore('docs', () => {
       limit?: number
       max_findings?: number
       effort?: 'short' | 'normal' | 'deep' | 'unlimited'
+      area_uids?: string[]
     } = {},
   ): Promise<DocAuditResult> {
     return apiPost<DocAuditResult>(`/repositories/${repoUid}/sweep/audit`, {
       doc_uids: docUids,
+      area_uids: options.area_uids ?? [],
       agent_uid: options.agent_uid,
       custom_intent: options.custom_intent,
       auto_select: options.auto_select ?? false,
@@ -172,7 +187,8 @@ export const useDocStore = defineStore('docs', () => {
     return apiGet<SweepEstimate>(`/repositories/${repoUid}/sweep/estimate`)
   }
 
-  /** Checked stamps rolled up per doc — "has this page been looked at since the code changed?" */
+  /** Audit-coverage stamps rolled up per doc — "when was this page last audited,
+   *  and what was the outcome?" Staleness is the Doc DTO's derived `stale` field. */
   async function fetchFreshness(repoUid: string): Promise<ScopeFreshnessDTO[]> {
     return apiGet<ScopeFreshnessDTO[]>(`/repositories/${repoUid}/freshness`)
   }
@@ -207,14 +223,16 @@ export const useDocStore = defineStore('docs', () => {
 
   async function bulkAccept(uids: string[]): Promise<BulkEditResult> {
     const result = await apiPost<BulkEditResult>('/doc-edits/bulk-accept', { uids })
-    const done = new Set(uids)
+    // Only drop the edits the server confirmed — failed ones stay reviewable.
+    const done = new Set(result.accepted ?? [])
     edits.value = edits.value.filter((e) => !done.has(e.uid))
     return result
   }
 
   async function bulkReject(uids: string[]): Promise<BulkEditResult> {
     const result = await apiPost<BulkEditResult>('/doc-edits/bulk-reject', { uids })
-    const done = new Set(uids)
+    // Only drop the edits the server confirmed — failed ones stay reviewable.
+    const done = new Set(result.rejected ?? [])
     edits.value = edits.value.filter((e) => !done.has(e.uid))
     return result
   }
@@ -231,6 +249,7 @@ export const useDocStore = defineStore('docs', () => {
     draft,
     verify,
     generate,
+    resetAll,
     exportToRepo,
     audit,
     deepScan,

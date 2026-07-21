@@ -183,6 +183,7 @@ async def reconcile_orphaned_runs(
     """
     now = datetime.now(timezone.utc)
     changed = 0
+    # intentional: cross-tenant reconciliation must sweep every repo's runs.
     for run in await Run.nodes.all():
         if run.status not in _REPAIRABLE_STATUSES:
             continue

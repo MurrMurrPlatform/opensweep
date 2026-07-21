@@ -8,19 +8,20 @@ of the API); future auth integrates here.
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from api.dependencies import get_current_user
 from api.platform_scope import require_tool_repo_access, require_tool_run_access
 from domains.findings.models import Finding
 from domains.findings.schemas import (
-    Effort,
     FindingKind,
+    FindingSize,
     ParseStatus,
     Severity,
     SourcePath,
 )
 from domains.platform_tools.add_analysis_note import add_analysis_note
+from domains.platform_tools.areas_tools import propose_area_edit
 from domains.platform_tools.ask_question import ask_question
 from domains.platform_tools.attach_artifact import attach_artifact
 from domains.platform_tools.complete_run import complete_run
@@ -45,7 +46,12 @@ class CreateFindingRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     kind: FindingKind = FindingKind.DEFECT
     severity: Severity = Severity.MEDIUM
-    effort: Effort = Effort.MEDIUM
+    # validation_alias keeps pre-rename callers ("effort") working — seeded
+    # prompts may still name the fix-size estimate that way.
+    size: FindingSize = Field(
+        default=FindingSize.MEDIUM,
+        validation_alias=AliasChoices("size", "effort"),
+    )
     subtype: str = ""
     title: str
     confidence: float = 0.7
@@ -119,6 +125,23 @@ class ProposeDocEditRequest(BaseModel):
     executor: str = "manual"
 
 
+class ProposeAreaEditRequest(BaseModel):
+    repository_uid: str
+    key: str
+    kind: str = "subsystem"
+    title: str = ""
+    scope_paths: list[str] = Field(default_factory=list)
+    spec: str = ""
+    rationale: str = ""
+    doc_uids: list[str] = Field(default_factory=list)
+    enabled: bool = Field(
+        default=True,
+        description="false proposes RETIRING the area (applied on human accept)",
+    )
+    source_run_uid: Optional[str] = None
+    executor: str = "manual"
+
+
 class ConfirmDocCurrentRequest(BaseModel):
     repository_uid: str
     slug: str
@@ -154,6 +177,23 @@ class CompleteRunRequest(BaseModel):
     failed: list[str] = Field(default_factory=list, description="What failed and why.")
     next_steps: list[str] = Field(
         default_factory=list, description="Next steps or future suggestions."
+    )
+    # Coverage contract — stored under Run.usage["coverage"] and stamped onto
+    # the Checked records, so freshness reflects what was ACTUALLY examined.
+    covered_paths: list[str] = Field(
+        default_factory=list,
+        description="Repo-relative paths you actually examined this run.",
+    )
+    skipped_paths: list[str] = Field(
+        default_factory=list,
+        description="Paths in scope you did not examine.",
+    )
+    lens_verdicts: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "[{lens, verdict: checked-clean|checked-findings|skipped, note}] — "
+            "one entry per assigned lens."
+        ),
     )
     output_refs: list[str] = Field(default_factory=list)
     usage: dict[str, Any] = Field(default_factory=dict)
@@ -405,8 +445,8 @@ async def http_submit_thread_plan(
         resolve_thread,
     )
 
-    executor = request.headers.get("x-opensweep-run-uid") or "manual"
-    thread = await resolve_thread(thread_uid, run_uid=executor)
+    run_uid = request.headers.get("x-opensweep-run-uid") or ""
+    thread = await resolve_thread(thread_uid, run_uid=run_uid)
     if thread is None:
         raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
     await require_tool_repo_access(request, user, thread.repository_uid)
@@ -415,7 +455,8 @@ async def http_submit_thread_plan(
         submit_thread_plan,
         thread_uid=thread.uid,
         plan_markdown=req.plan_markdown,
-        executor=executor,
+        run_uid=run_uid,
+        executor=run_uid or "manual",
     )
 
 
@@ -461,6 +502,20 @@ async def http_propose_doc_edit(
         "x-opensweep-run-uid"
     )
     return await _invoke_platform_tool("propose_doc_edit", propose_doc_edit, **data)
+
+
+@router.post("/propose-area-edit", operation_id="opensweep_platform_propose_area_edit")
+async def http_propose_area_edit(
+    req: ProposeAreaEditRequest,
+    request: Request,
+    user: UserDTO = Depends(get_current_user),
+):
+    await require_tool_repo_access(request, user, req.repository_uid)
+    data = req.model_dump()
+    data["source_run_uid"] = data.get("source_run_uid") or request.headers.get(
+        "x-opensweep-run-uid"
+    )
+    return await _invoke_platform_tool("propose_area_edit", propose_area_edit, **data)
 
 
 @router.post("/write-memory", operation_id="opensweep_platform_write_memory")

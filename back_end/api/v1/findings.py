@@ -48,7 +48,7 @@ async def list_findings(
     exclude_kind: str | None = Query(None),
     status: str | None = Query(None),
     severity: str | None = Query(None),
-    effort: str | None = Query(None),
+    size: str | None = Query(None),
     sort_by: str = Query("updated_at"),
     sort_dir: str = Query("desc"),
     user: UserDTO = Depends(get_current_user),
@@ -70,7 +70,7 @@ async def list_findings(
         exclude_kind=exclude_kind,
         status=status,
         severity=severity,
-        effort=effort,
+        size=size,
         sort_by=sort_by,
         sort_dir=sort_dir,
     )

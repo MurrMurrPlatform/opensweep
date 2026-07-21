@@ -20,6 +20,16 @@ export function formatRelativeTime(iso: string | Date | null | undefined): strin
   return d.toLocaleDateString()
 }
 
+/** Coarse day-granularity relative time ("today" / "1 day ago" / "N days ago").
+ *  Coarser than formatRelativeTime — used where sub-day precision is noise. */
+export function daysAgo(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  if (days <= 0) return 'today'
+  if (days === 1) return '1 day ago'
+  return `${days} days ago`
+}
+
 export function pluralize(n: number, singular: string, plural?: string): string {
   return `${n} ${n === 1 ? singular : plural ?? singular + 's'}`
 }

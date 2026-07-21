@@ -77,7 +77,7 @@ class _FakeAgent:
     def __init__(self, **kw):
         self.__dict__.update(
             uid=None, org_uid="", title="", description="", prompt="",
-            produces="findings", default_effort="normal", default_executor="",
+            produces="findings", default_effort="normal", reasoning="",
             tags=[], provenance="", source_url="", source_commit="",
             seed_checksum="", rev=0, enabled=True,
         )

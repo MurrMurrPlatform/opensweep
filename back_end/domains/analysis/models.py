@@ -26,7 +26,9 @@ class Analysis(AsyncStructuredNode):
 
     title = StringProperty(default="")
     status = StringProperty(default="in_progress", index=True)
-    # in_progress | complete | superseded | archived
+    # in_progress | complete | incomplete | superseded | archived
+    # incomplete = the run ended before the agent authored a verdict (forced
+    # finalize); it carries no health_grade and never surfaces as a grade.
 
     # Refine-with-answers chain: a superseding Analysis points back at the one
     # it replaced, and the replaced one is flipped to status=superseded.
@@ -68,7 +70,13 @@ class Analysis(AsyncStructuredNode):
     completed_at = DateTimeProperty()
 
 
-ANALYSIS_STATUSES = {"in_progress", "complete", "superseded", "archived"}
+ANALYSIS_STATUSES = {
+    "in_progress",
+    "complete",
+    "incomplete",
+    "superseded",
+    "archived",
+}
 
 QUESTION_STATUSES = {"open", "answered", "dismissed"}
 

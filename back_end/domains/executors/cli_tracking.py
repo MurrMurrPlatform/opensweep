@@ -18,7 +18,6 @@ from typing import Any
 from domains.executors._shared import (
     StreamRecorder,
     _completed_via_mcp,
-    budget_briefing,
     ceiling_warnings,
     execute_envelope_tool_calls,
     extract_envelope,
@@ -27,7 +26,9 @@ from domains.executors._shared import (
     resolve_wall_ceiling,
 )
 from domains.executors.base import AdapterRegistry, DispatchRequest, DispatchResult, ExecutorAdapter
+from domains.executors.prompt_kit import stance_block, system_prompt as build_system_prompt
 from domains.executors.quota import detect_quota_exhaustion
+from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
 from domains.llm_providers.services.llm_executor import (
@@ -139,6 +140,10 @@ class _CLITrackingAdapter(ExecutorAdapter):
                     append_event(req.run_uid, "assistant_text", text=delta)
             await recorder.record_total(stream, text)
 
+        # Reasoning level → codex `-c model_reasoning_effort=…` argv override
+        # (empty for opencode and for unset levels).
+        reasoning_cli_args = reasoning_args(req.reasoning, provider.kind).get("cli_config") or []
+
         try:
             inv = await invoke_provider(
                 provider,
@@ -148,6 +153,7 @@ class _CLITrackingAdapter(ExecutorAdapter):
                 working_dir=req.repository_local_path,
                 on_chunk=_on_chunk,
                 run_uid=req.run_uid,
+                extra_cli_args=reasoning_cli_args,
             )
         finally:
             await recorder.close()
@@ -204,8 +210,14 @@ class _CLITrackingAdapter(ExecutorAdapter):
         continuation_pass = False
         if self.provider_kind == "codex_subscription":
             remaining_wall = (timeout - wall) if timeout is not None else None
+            # Policy gate: max_continuation_passes=0 disables the (single)
+            # codex continuation; None/>=1 allows it.
+            policy_passes = (
+                req.policy.max_continuation_passes if req.policy is not None else None
+            )
             if (
                 inv.ok  # gate: a crashed/timed-out first pass must NOT be re-prompted
+                and (policy_passes is None or int(policy_passes) >= 1)
                 and not envelope_has_complete_run(envelope)
                 and not await _completed_via_mcp(req.run_uid)
                 and (remaining_wall is None or remaining_wall > _MIN_CONTINUATION_WALL_SECONDS)
@@ -237,6 +249,7 @@ class _CLITrackingAdapter(ExecutorAdapter):
                         working_dir=req.repository_local_path,
                         on_chunk=_on_cont_chunk,
                         run_uid=req.run_uid,
+                        extra_cli_args=reasoning_cli_args,
                     )
                 finally:
                     await cont_recorder.close()
@@ -355,56 +368,10 @@ class OpenCodeAdapter(_CLITrackingAdapter):
     provider_kind = "opencode"
 
 
-_SYSTEM_PROMPT = """You are an investigative agent inside OpenSweep, a tracking-only
-repo intelligence platform.
-
-You may inspect code and run read-only commands. Do not edit files, create
-patches, commit, open PRs, or apply changes.
-
-At the end, return one JSON object:
-
-```json
-{
-  "summary": "<short summary>",
-  "tool_calls": [
-    {"tool": "create_finding", "args": {...}},
-    {"tool": "write_memory", "args": {...}},
-    {"tool": "propose_doc_edit", "args": {...}},
-    {"tool": "attach_artifact", "args": {...}},
-    {"tool": "complete_run", "args": {
-      "summary": "<one short paragraph on the run outcome>",
-      "did": ["<what you did>"],
-      "skipped": ["<what you skipped and why>"],
-      "succeeded": ["<what succeeded>"],
-      "failed": ["<what failed and why>"],
-      "next_steps": ["<follow-ups or future suggestions>"]
-    }}
-  ]
-}
-```
-
-Always end the tool_calls with that `complete_run` entry — one short sentence
-per list item, omitting lists you have nothing for. It is stored on the Run
-and shown to humans who did not watch the run.
-
-Allowed tools are create_finding, update_finding, propose_doc_edit,
-confirm_doc_current, write_memory, attach_artifact, and complete_run.
-
-If `opensweep` MCP tools (opensweep_*) appear in your NATIVE tool list, prefer
-calling them directly as you work — they land immediately with full
-provenance. Do NOT repeat a call you already made natively in the final
-JSON envelope; list only the calls you could not make plus the closing
-`complete_run` entry. Without native opensweep_* tools, put every intended
-call in the envelope as described above.
-
-Treat incomplete or stale documentation inside the repository as a Finding
-tagged `docs`. Use `write_memory` for small durable facts future runs should
-know: gotchas, decisions, non-obvious constraints — one paragraph, never
-anything derivable from the code. Use `propose_doc_edit` to improve OpenSweep's
-documentation pages (conventions, architecture, features) when they are
-wrong, missing, or bloated; proposals land as pending edits for human
-review.
-"""
+# Assembled by the prompt kit: shared core + the cli_tracking delta (tool
+# list rendered from the registry, JSON envelope output contract, native
+# opensweep_* MCP preference note).
+_SYSTEM_PROMPT = build_system_prompt("cli_tracking")
 
 
 def _instruction(req: DispatchRequest, wall_ceiling: int | None = None) -> str:
@@ -425,7 +392,7 @@ run_uid: {req.run_uid}
 
 {req.context or ""}
 
-{budget_briefing(req.policy, wall_ceiling)}
+{stance_block(req.policy, wall_ceiling, req.effort)}
 
 Investigate only. Record bugs, gaps, and improvements through the final
 JSON tool_calls envelope; persist durable facts with write_memory.

@@ -127,7 +127,7 @@ function open(s: ScheduledAgentDTO) {
                 </div>
               </td>
               <td class="px-4 py-2.5 font-mono text-xs">{{ triggerLabel(s) }}</td>
-              <td class="px-4 py-2.5 text-xs text-muted-foreground">{{ s.compute_dial }}</td>
+              <td class="px-4 py-2.5 text-xs text-muted-foreground">{{ s.autonomy }}</td>
               <td class="px-4 py-2.5 text-xs text-muted-foreground">
                 {{ s.last_scheduled_at ? formatRelativeTime(s.last_scheduled_at) : '—' }}
               </td>

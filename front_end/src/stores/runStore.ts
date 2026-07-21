@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { apiGet, apiPost } from '@/services/api'
+import { apiDelete, apiGet, apiPost } from '@/services/api'
 import type {
   ActiveRunDTO,
   ActiveRunFilters,
@@ -90,6 +90,13 @@ export const useRunStore = defineStore('runs', () => {
     return apiPost<RunDTO>(`/runs/${uid}/workspace/recreate`)
   }
 
+  /** Delete the run record + transcript. 409 while active/awaiting-input —
+   *  cancel or end it first. Findings the run produced are kept. */
+  async function remove(uid: string): Promise<void> {
+    await apiDelete(`/runs/${uid}`)
+    list.value = list.value.filter((r) => r.uid !== uid)
+  }
+
   async function getArtifact(uri: string): Promise<ArtifactDTO> {
     const qs = new URLSearchParams({ uri })
     return apiGet<ArtifactDTO>(`/artifacts?${qs.toString()}`)
@@ -127,6 +134,7 @@ export const useRunStore = defineStore('runs', () => {
     handoff,
     end,
     cancel,
+    remove,
     recreateWorkspace,
     getArtifact,
     fetchActive,

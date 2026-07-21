@@ -8,7 +8,8 @@ export type RepositoryMode = 'github'
 
 export type FindingKind = 'defect' | 'improvement' | 'gap' | 'proposal' | 'observation' | 'feature-idea'
 export type Severity = 'low' | 'medium' | 'high' | 'critical'
-export type Effort = 'trivial' | 'small' | 'medium' | 'large'
+/** Fix-size estimate for a finding — distinct from AgentEffort (run compute tier). */
+export type FindingSize = 'trivial' | 'small' | 'medium' | 'large'
 export type FindingStatus =
   | 'open'
   | 'acknowledged'
@@ -23,7 +24,7 @@ export type ParseStatus = 'ok' | 'degraded'
 
 export type Executor = 'internal_llm' | 'claude_code' | 'codex' | 'opencode' | 'manual'
 export type ExecutionMode = 'analyze_only' | 'implement'
-export type ComputeDial = 'disabled' | 'suggest' | 'ask-before-run' | 'auto-run-cheap' | 'auto-run-any'
+export type Autonomy = 'disabled' | 'suggest' | 'ask-before-run' | 'auto-run-cheap' | 'auto-run-any'
 export type AgentProvenance = 'system' | 'user' | 'imported'
 /** V3 run states (PLATFORM_V3_DESIGN.md §2). 'awaiting_input' = turn done,
  *  follow-ups accepted; 'ended' = workspace destroyed (a follow-up reopens). */
@@ -40,8 +41,8 @@ export type RunPlaybook = 'chat' | 'ask' | 'review' | 'fix' | 'implement' | 'ver
 export type RunTrigger = 'manual' | 'event' | 'schedule'
 export type RunSurface = 'runs' | 'comment' | 'chat'
 export type AgentEffort = 'short' | 'normal' | 'deep' | 'unlimited'
-
-export type OnExceed = 'abort' | 'pause_for_approval'
+/** Reasoning level on agents/runs; '' = inherit from the effort tier. */
+export type ReasoningLevel = '' | 'low' | 'medium' | 'high'
 
 // ── Repository ──────────────────────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ export interface FindingDTO {
   tags: string[]
   kind: FindingKind
   severity: Severity
-  effort: Effort
+  size: FindingSize
   subtype: string
   title: string
   confidence: number
@@ -175,6 +176,10 @@ export interface FindingDTO {
   affected_paths: string[]
   dedupe_key: string
   source_run_uid?: string | null
+  /** Every run that filed or re-confirmed this finding. */
+  source_run_uids?: string[]
+  /** Last time any run re-found (confirmed) this finding. */
+  last_confirmed_at?: string | null
   executor: string
   source_path: SourcePath
   parse_status: ParseStatus
@@ -192,7 +197,7 @@ export interface FileFindingRequest {
   tags?: string[]
   kind?: FindingKind
   severity?: Severity
-  effort?: Effort
+  size?: FindingSize
   subtype?: string
   title: string
   confidence?: number
@@ -213,7 +218,7 @@ export interface UpdateFindingRequest {
   tags?: string[]
   kind?: FindingKind
   severity?: Severity
-  effort?: Effort
+  size?: FindingSize
   subtype?: string
   title?: string
   description?: string
@@ -300,7 +305,8 @@ export interface AgentDTO {
   prompt: string
   produces: ProducesKind
   default_effort: AgentEffort
-  default_executor: string
+  /** '' = inherit the effort tier's default reasoning level. */
+  reasoning: ReasoningLevel
   tags: string[]
   provenance: AgentProvenance
   /** Stable slug for system rows ("ask", "audit-stale", …); "" for user rows. */
@@ -321,7 +327,7 @@ export interface CreateAgentRequest {
   prompt?: string
   produces?: ProducesKind
   default_effort?: AgentEffort
-  default_executor?: string
+  reasoning?: ReasoningLevel
   tags?: string[]
   enabled?: boolean
 }
@@ -332,7 +338,7 @@ export interface UpdateAgentRequest {
   prompt?: string
   produces?: ProducesKind
   default_effort?: AgentEffort
-  default_executor?: string
+  reasoning?: ReasoningLevel
   tags?: string[]
   enabled?: boolean
 }
@@ -373,7 +379,7 @@ export interface ScheduledAgentDTO {
   /** "" = inherit the agent's default effort. */
   effort: AgentEffort | ''
   run_policy_uid?: string | null
-  compute_dial: ComputeDial
+  autonomy: Autonomy
   enabled: boolean
   provenance: 'system' | 'user'
   last_scheduled_at?: string | null
@@ -392,7 +398,7 @@ export interface CreateScheduledAgentRequest {
   target?: Record<string, unknown>
   effort?: AgentEffort | ''
   run_policy_uid?: string | null
-  compute_dial?: ComputeDial
+  autonomy?: Autonomy
   enabled?: boolean
 }
 
@@ -403,7 +409,7 @@ export interface UpdateScheduledAgentRequest {
   target?: Record<string, unknown>
   effort?: AgentEffort | ''
   run_policy_uid?: string | null
-  compute_dial?: ComputeDial
+  autonomy?: Autonomy
   enabled?: boolean
 }
 
@@ -430,6 +436,9 @@ export interface RunDTO {
   executor: Executor
   execution_mode: ExecutionMode
   run_policy_uid?: string | null
+  /** Resolved effort tier + reasoning level at dispatch; '' = unknown/legacy. */
+  effort: string
+  reasoning: string
   status: RunStatus
   linked_pr_uid: string
   linked_ticket_uid: string
@@ -640,6 +649,9 @@ export interface DocDTO {
   stale_paths: string[]
   code_changed_at?: string | null
   last_reviewed_at?: string | null
+  /** Retired page — kept for history but hidden from the wiki, exports, briefing,
+   *  and audit selection. Retirement lands as an accepted DocEdit proposal. */
+  archived: boolean
   /** Count of pending DocEdits against this page. */
   pending_edits: number
   created_at?: string | null
@@ -676,6 +688,8 @@ export interface DocEditDTO {
   watch_paths: string[]
   /** Full replacement markdown — the UI renders the diff against current_body. */
   proposed_body: string
+  /** true = the edit proposes retiring (archiving) the page on accept. */
+  proposed_archived: boolean
   rationale: string
   source_run_uid: string
   status: DocEditStatus
@@ -707,13 +721,13 @@ export interface MemoryDTO {
 export type CheckedOutcome = 'clean' | 'findings' | 'failed'
 
 /** Row of GET /repositories/{uid}/freshness — one per Doc (scope_uid = doc uid,
- *  or the repository uid for the repo-level stamp). */
+ *  or the repository uid for the repo-level stamp). Coverage-only: staleness is
+ *  the Doc DTO's derived `stale` field, not a competing "changed since" flag. */
 export interface ScopeFreshnessDTO {
   scope_uid: string
   last_checked: string | null
   revision: string
   outcome: CheckedOutcome
-  code_changed_since: boolean
 }
 
 // ── RunPolicy ───────────────────────────────────────────────────────────────
@@ -722,18 +736,16 @@ export interface RunPolicyDTO {
   uid: string
   name: string
   description: string
-  max_tokens?: number | null
-  max_dollars?: number | null
   max_wall_seconds?: number | null
   max_tool_turns?: number | null
   max_files_touched?: number | null
-  max_test_seconds?: number | null
+  /** null = unbounded continuation passes (wall-limited only). */
+  max_continuation_passes?: number | null
   cloud_allowed: boolean
   local_only: boolean
   allowed_executors: string[]
   dry_run: boolean
   warn_at_pct: number
-  on_exceed: OnExceed
   daily_repo_run_count?: number | null
   daily_repo_wall_seconds?: number | null
   daily_repo_dollars?: number | null
@@ -1496,9 +1508,454 @@ export interface ThreadProgress {
   last_verdict: string
 }
 
+// ── Campaigns (partitioned audit sweeps) ────────────────────────────────────
+
+export type CampaignStatus = 'planning' | 'running' | 'finalizing' | 'done' | 'failed' | 'cancelled'
+export type CampaignTemplate = 'full' | 'rotation' | 'focused'
+export type CampaignPartKind = 'area' | 'feature' | 'global'
+export type CampaignPartState = 'pending' | 'running' | 'done' | 'failed'
+
+/** One bounded slice of a campaign — an area sweep or a whole-repo pass. */
+export interface CampaignPart {
+  idx: number
+  kind: CampaignPartKind
+  title: string
+  /** Area-map keys bundled into this part (empty for global sweeps). */
+  area_keys: string[]
+  scope_paths: string[]
+  doc_uids: string[]
+  lens_keys: string[]
+  /** '' until the part's run is dispatched. */
+  run_uid: string
+  state: CampaignPartState
+  file_count: number | null
+}
+
+export interface CampaignCoveragePart {
+  idx: number
+  title: string
+  covered: number
+  skipped: number
+  state: CampaignPartState
+}
+
+/** One sub-feature leaf rolled up under its parent feature grouping. */
+export interface FeatureRollupLeaf {
+  area_key: string
+  idx: number
+  title: string
+  covered: number
+  skipped: number
+  state: string
+}
+
+/** Parent-feature health — aggregates its sub-feature leaves' coverage. */
+export interface FeatureRollup {
+  feature_key: string
+  covered: number
+  skipped: number
+  findings: number
+  leaf_count: number
+  state: string
+  leaves: FeatureRollupLeaf[]
+}
+
+/** End-of-campaign digest; {} until finalization. */
+export interface CampaignSummary {
+  counts?: {
+    by_severity: Record<string, number>
+    by_part: Record<string, number>
+    total: number
+  }
+  coverage?: {
+    parts: CampaignCoveragePart[]
+    /** Scope paths of failed/never-run parts — the coverage debt left behind. */
+    holes: string[]
+    /** Parent-feature health — feature-leaf parts aggregated by parent grouping. */
+    feature_rollup?: FeatureRollup[]
+  }
+  failed_parts?: number[]
+}
+
+/** How the planner reconciled the area map into the part list — set at plan
+ *  time (and again by a launch-time replan); {} on campaigns planned before
+ *  the field existed. Map-level counts are whole-map; part counts describe
+ *  the actual plan. */
+export interface CampaignPlanSummary {
+  source?: 'area-map' | 'docs'
+  /** Total enabled areas on the map (all kinds). */
+  map_areas?: number
+  /** Auditable subsystem leaves. */
+  leaves?: number
+  /** Subsystem non-leaves — groupings, not audit targets. */
+  groupings?: number
+  /** Enabled feature LEAVES (audit targets). */
+  features?: number
+  /** Parent feature groupings (not audit targets). */
+  feature_groupings?: number
+  /** Enabled ignore areas. */
+  ignored?: number
+  area_parts?: number
+  /** Leaves that share a part with siblings (bundled at plan time). */
+  bundled_leaves?: number
+  feature_parts?: number
+  global_parts?: number
+  /** Titles of areas exceeding the target part size. */
+  oversized?: string[]
+  /** '' = planned against the full tree; else why planning degraded. */
+  degraded?: string
+  /** '' = the whole map; else the plan was sliced to this key prefix. */
+  area_prefix?: string
+}
+
+/** Append-only lifecycle log entry (created/launched/part_done/finalized/…). */
+export interface CampaignEvent {
+  ts: string
+  type: string
+  [key: string]: unknown
+}
+
+export interface CampaignDTO {
+  uid: string
+  repository_uid: string
+  title: string
+  status: CampaignStatus
+  template: CampaignTemplate
+  /** '' = default tiers (areas normal, global sweeps deep). */
+  effort: AgentEffort | ''
+  lens_keys: string[]
+  /** Rotation only: how many areas each pass covers. */
+  k: number
+  /** '' = the whole map; else the sweep is scoped to areas under this key prefix. */
+  area_prefix: string
+  parts: CampaignPart[]
+  max_parallel: number
+  created_by: string
+  trigger_provenance: string
+  summary: CampaignSummary
+  plan_summary: CampaignPlanSummary
+  events: CampaignEvent[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface CreateCampaignRequest {
+  template: CampaignTemplate
+  /** Empty = every enabled lens; 'focused' reads its focus lens from [0]. */
+  lens_keys?: string[]
+  effort?: AgentEffort | ''
+  /** Rotation only: how many areas this pass covers. */
+  k?: number
+  max_parallel?: number
+  title?: string
+  /** Scope the sweep to areas under this key prefix ('' = the whole map). */
+  area_prefix?: string
+}
+
+/** One area of the would-be partition (campaign-areas preview). */
+export interface CampaignAreaPreview {
+  /** The area-map key ('' for docs-derived partitions). */
+  area_key: string
+  title: string
+  scope_paths: string[]
+  /** Scope paths that match no files in the current tree. */
+  dead_scope_paths: string[]
+  doc_uids: string[]
+  /** null when the file tree was unavailable (degraded sizing). */
+  file_count: number | null
+}
+
+/** The partition a campaign would use right now — computed live, never persisted. */
+export interface CampaignAreasPreview {
+  areas: CampaignAreaPreview[]
+  /** Where the partition comes from ('area-map' or docs-derived). */
+  source: string
+  /** '' = planned against the full tree; else why sizing degraded. */
+  degraded: string
+  total_files: number
+  /** Files no partition leaf covers (the map-drift remainder). */
+  uncovered_files: number
+  /** Files claimed by more than one partition leaf. */
+  overlapping_files: number
+  /** Area keys whose file count exceeds the target part size. */
+  oversized_areas: string[]
+  /** Ignore-area scope paths that match nothing in the tree. */
+  dead_ignore_scopes: string[]
+}
+
+// ── Analysis (whole-repo deep-scan reports) ─────────────────────────────────
+// Mirror back_end/domains/analysis/schemas.py.
+
+export type AnalysisStatus = 'in_progress' | 'complete' | 'superseded' | 'archived'
+export type QuestionStatus = 'open' | 'answered' | 'dismissed'
+
+export interface ScorecardEntry {
+  dimension: string
+  score: number | null
+  max: number
+  grade: string
+  rationale: string
+}
+
+export interface CoverageEntry {
+  area: string
+  paths: string[]
+  status: string // examined | partial | skipped
+  note: string
+}
+
+export interface StrengthEntry {
+  title: string
+  detail: string
+  paths: string[]
+}
+
+export interface ValidationEntry {
+  check: string
+  command: string
+  result: string
+  details: string
+}
+
+export interface AnalysisQuestion {
+  uid: string
+  question: string
+  why_it_matters: string
+  category: string
+  status: QuestionStatus
+  answer: string
+  answered_by: string
+  answered_at: string | null
+}
+
+export interface AnalysisDTO {
+  uid: string
+  repository_uid: string
+  source_run_uid: string
+  revision: string
+  title: string
+  status: AnalysisStatus
+  supersedes: string
+  superseded_by: string
+  executor: string
+  health_grade: string
+  health_score: number | null
+  scorecard: ScorecardEntry[]
+  confidence: string
+  limitations: string
+  stats: Record<string, unknown>
+  sections: Record<string, string>
+  coverage: CoverageEntry[]
+  strengths: StrengthEntry[]
+  validation_baseline: ValidationEntry[]
+  questions: AnalysisQuestion[]
+  finding_count: number
+  findings_by_severity: Record<string, number>
+  open_question_count: number
+  created_at: string | null
+  updated_at: string | null
+  completed_at: string | null
+}
+
+/** Response of POST /analyses/{uid}/refine — dispatches a superseding deep-scan. */
+export interface RefineAnalysisResponse {
+  analysis_uid: string
+  run_uid: string
+  supersedes: string
+}
+
+// ── Lenses (audit checklist prompts — platform rows, org-tunable) ───────────
+
+export type LensScope = 'local' | 'global'
+
+export interface LensDTO {
+  uid: string
+  key: string
+  title: string
+  scope: LensScope
+  body: string
+  tags: string[]
+  wants: string[]
+  /** Global lenses only: the sweep agent this lens backs. */
+  global_agent_key: string
+  enabled: boolean
+  provenance: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+/** PATCH /lenses/{key} — structure (key/scope/wants) stays platform-owned;
+ *  the tunable surface is the prose and its labels. */
+export interface UpdateLensRequest {
+  title?: string
+  body?: string
+  tags?: string[]
+  enabled?: boolean
+}
+
 // ── Legacy short-name aliases ───────────────────────────────────────────────
 // Components written before the *DTO rename import these. Cheaper to keep the
 // aliases than touch every component.
 
 export type Repository = RepositoryDTO
 export type FileContent = FileContentDTO
+
+// ── Areas (the reviewed audit partition — the Area map) ─────────────────────
+// Humans edit Areas directly; agents propose AreaEdits that are accepted or
+// rejected on the Areas view. Keys are path-like ("backend/delivery"); the
+// hierarchy is derived from key prefixes, never stored.
+
+export type AreaKind = 'subsystem' | 'feature' | 'ignore'
+export type AreaEditStatus = 'pending' | 'accepted' | 'rejected'
+
+export interface AreaDTO {
+  uid: string
+  repository_uid: string
+  key: string
+  kind: AreaKind
+  title: string
+  scope_paths: string[]
+  spec: string
+  doc_uids: string[]
+  enabled: boolean
+  provenance: string
+  /** Derived: code changed under scope_paths since last review. */
+  stale: boolean
+  stale_paths: string[]
+  code_changed_at?: string | null
+  last_reviewed_at?: string | null
+  pending_edits: number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+/** Agent-proposed full replacement for an area (or a new area when area_uid=''). */
+export interface AreaEditDTO {
+  uid: string
+  repository_uid: string
+  area_uid: string
+  key: string
+  kind: string
+  title: string
+  scope_paths: string[]
+  doc_uids: string[]
+  proposed_spec: string
+  /** false = the edit proposes retiring the area. */
+  proposed_enabled: boolean
+  rationale: string
+  /** Partition warnings this edit would create — shown before accept (advisory). */
+  warnings: string[]
+  source_run_uid: string
+  status: AreaEditStatus
+  resolved_by: string
+  resolved_at?: string | null
+  created_at?: string | null
+  /** Current spec of the target area (empty for new-area proposals) — lets
+   *  the UI hint current vs proposed without a second fetch. */
+  current_spec: string
+}
+
+export interface UpdateAreaRequest {
+  title?: string
+  kind?: AreaKind
+  scope_paths?: string[]
+  spec?: string
+  doc_uids?: string[]
+  enabled?: boolean
+}
+
+/** PATCH /areas/{uid} — applies the edit and returns partition warnings to eyeball. */
+export interface UpdateAreaResponse {
+  area: AreaDTO
+  warnings: string[]
+}
+
+/** One scope path of an area, sized against the current file tree. */
+export interface AreaScopeEntry {
+  path: string
+  /** null when the file tree was unavailable. */
+  file_count: number | null
+  /** true = the path matches nothing in the tree. */
+  dead: boolean
+  /** Capped sample of matched files. */
+  files: string[]
+}
+
+/** A doc page related to an area (agent-linked or watch-path overlap). */
+export interface AreaDocLink {
+  uid: string
+  slug: string
+  title: string
+}
+
+/** Another area adjacent to this one (shared paths / docs / parent-child). */
+export interface AreaRelated {
+  uid: string
+  key: string
+  kind: AreaKind
+  title: string
+}
+
+/** A sub-feature leaf under a parent feature area — its own audit target with a
+ *  spec, staleness, and coverage. Parents aggregate their leaves' health. */
+export interface SubFeatureDTO {
+  uid: string
+  key: string
+  title: string
+  spec: string
+  stale: boolean
+  has_spec: boolean
+  coverage_count: number
+}
+
+/** One campaign-part coverage stamp touching this area. */
+export interface AreaCoverageStamp {
+  run_uid: string
+  outcome: string
+  checked_at: string | null
+  lens_verdicts: { lens: string; verdict: string; note?: string }[]
+}
+
+/** GET /areas/{uid}/detail — everything the area detail page renders. */
+export interface AreaDetailDTO {
+  area: AreaDTO
+  scope: AreaScopeEntry[]
+  /** '' = scope sized against the full tree; else why sizing degraded. */
+  tree_degraded: string
+  /** Agent-proposed doc_uids plus watch-path-overlap pages — informational;
+   *  audit runs get the same set as likely-relevant leads at dispatch. */
+  related_docs: AreaDocLink[]
+  related_areas: AreaRelated[]
+  coverage: AreaCoverageStamp[]
+  pending_edits: AreaEditDTO[]
+  /** True when this feature area is a grouping parent — render its sub_features
+   *  as leaves and aggregate their coverage rather than auditing it directly. */
+  is_feature_parent: boolean
+  /** Sub-feature leaves under a parent feature (empty otherwise). */
+  sub_features: SubFeatureDTO[]
+}
+
+/** Accepting an edit applies it and returns partition warnings to eyeball. */
+export interface AcceptAreaEditResponse {
+  area: AreaDTO
+  warnings: string[]
+}
+
+/** Response of POST /repositories/{uid}/sweep/map-areas (409 when already running). */
+export interface MapAreasResponse {
+  repository_uid: string
+  run_uid: string
+  errors: string[]
+  summary: string
+}
+
+/** Response of POST /repositories/{uid}/sweep/generate-specs — drafts/refreshes
+ *  feature-leaf specs (409 when nothing needs a spec). `targets` = feature keys
+ *  the dispatched run will author specs for. */
+export interface GenerateSpecsResponse {
+  repository_uid: string
+  run_uid: string
+  targets: string[]
+  errors: string[]
+  summary: string
+}

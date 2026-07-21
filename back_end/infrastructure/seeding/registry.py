@@ -89,6 +89,12 @@ async def _seed_variant_prompts(mode: SeedMode) -> SeedResult:
     return await seed_variant_prompts(mode)
 
 
+async def _seed_lenses(mode: SeedMode) -> SeedResult:
+    from domains.lenses.services.seed_lenses import seed_lenses
+
+    return await seed_lenses(mode)
+
+
 async def _seed_agent_base_prompts(mode: SeedMode) -> SeedResult:
     from domains.agents.services.seed_agent_bases import seed_agent_base_prompts
 
@@ -144,6 +150,7 @@ SEEDERS: list[Seeder] = [
     Seeder("ecc_prompts", PLATFORM, _seed_ecc_prompts),
     Seeder("workflow_default_prompts", PLATFORM, _seed_workflow_default_prompts),
     Seeder("variant_prompts", PLATFORM, _seed_variant_prompts),
+    Seeder("lenses", PLATFORM, _seed_lenses),
     Seeder("agent_base_prompts", PLATFORM, _seed_agent_base_prompts),
     Seeder("per_repo", PLATFORM, _seed_per_repo),
     Seeder("local_user", DEV, _seed_local_user),

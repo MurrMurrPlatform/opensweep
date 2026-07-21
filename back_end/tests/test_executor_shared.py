@@ -218,6 +218,24 @@ def test_extract_envelope_requires_tool_calls_key():
     assert extract_envelope("") is None
 
 
+def test_extract_envelope_bare_array_wraps_as_tool_calls():
+    env = extract_envelope('narration [{"tool": "create_finding", "args": {}}]')
+    assert env == {"tool_calls": [{"tool": "create_finding", "args": {}}]}
+
+
+def test_extract_envelope_fenced_array_wraps_as_tool_calls():
+    text = 'prose\n```json\n[{"tool": "complete_run", "args": {}}]\n```\n'
+    env = extract_envelope(text)
+    assert env == {"tool_calls": [{"tool": "complete_run", "args": {}}]}
+
+
+def test_extract_envelope_object_wins_over_its_inner_array():
+    """The array INSIDE {"tool_calls": [...]} must not shadow its envelope —
+    the object carries the summary the adapters harvest."""
+    env = extract_envelope('{"summary": "s", "tool_calls": [{"tool": "x", "args": {}}]}')
+    assert env is not None and env.get("summary") == "s"
+
+
 # ── Wall-kill detection (audit #33) + ceiling_warnings (Task 5) ──────────
 
 
@@ -243,9 +261,6 @@ class _Policy:
     max_wall_seconds = 100
     max_tool_turns = 10
     max_files_touched = None
-    max_test_seconds = None
-    max_tokens = None
-    max_dollars = None
     warn_at_pct = 80
 
 
@@ -288,9 +303,6 @@ def _policy(**fields):
         max_wall_seconds=None,
         max_tool_turns=None,
         max_files_touched=None,
-        max_test_seconds=None,
-        max_tokens=None,
-        max_dollars=None,
         warn_at_pct=80,
     )
     base.update(fields)
@@ -349,23 +361,15 @@ class TestCeilingWarnings:
         assert isinstance(warnings, list)
         assert any("max_wall_seconds" in w for w in warnings)
 
-    def test_local_skip_disables_wall_but_not_cost(self):
+    def test_local_skip_disables_wall_but_not_turns(self):
         warnings = ceiling_warnings(
-            policy=_policy(max_wall_seconds=300, max_dollars=1.0),
-            usage=UsageSnapshot(wall_seconds=10_000, dollars=2.5),
+            policy=_policy(max_wall_seconds=300, max_tool_turns=5),
+            usage=UsageSnapshot(wall_seconds=10_000, tool_turns=6),
             wall_ceiling=None,
         )
-        # Wall is skipped (wall_ceiling=None), dollars still warns.
-        assert any("max_dollars" in w for w in warnings)
+        # Wall is skipped (wall_ceiling=None), turns still warn.
+        assert any("max_tool_turns" in w for w in warnings)
         assert not any("max_wall_seconds" in w for w in warnings)
-
-    def test_dollars_ceiling_yields_warning(self):
-        warnings = ceiling_warnings(
-            policy=_policy(max_dollars=0.5),
-            usage=UsageSnapshot(wall_seconds=1, dollars=0.75),
-            wall_ceiling=None,
-        )
-        assert any("max_dollars" in w for w in warnings)
 
     def test_tool_turns_ceiling_yields_warning(self):
         warnings = ceiling_warnings(
@@ -383,10 +387,12 @@ class TestCeilingWarnings:
         )
         assert any("max_wall_seconds" in w for w in warnings)
 
-    def test_unmetered_cost_is_ignored(self):
+    def test_reported_cost_usage_is_not_checked(self):
+        """tokens/dollars stay reportable on UsageSnapshot but no per-run
+        cost ceiling exists any more — nothing to warn about."""
         warnings = ceiling_warnings(
-            policy=_policy(max_tokens=10, max_dollars=0.1),
-            usage=UsageSnapshot(wall_seconds=1, tokens=0, dollars=0.0),
+            policy=_policy(),
+            usage=UsageSnapshot(wall_seconds=1, tokens=10_000, dollars=99.0),
             wall_ceiling=None,
         )
         assert warnings == []

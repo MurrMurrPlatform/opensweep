@@ -37,10 +37,32 @@ def test_four_effort_tiers_have_policies():
     assert _EFFORT_POLICIES[Effort.UNLIMITED]["max_tool_turns"] is None
 
 
+def test_tier_operational_ceilings():
+    expected = {
+        Effort.SHORT: (900, 50, 25, 1),
+        Effort.NORMAL: (3600, 200, 100, 3),
+        Effort.DEEP: (14400, 3000, 10000, 8),
+        Effort.UNLIMITED: (0, None, None, None),
+    }
+    for tier, (wall, turns, files, passes) in expected.items():
+        config = _EFFORT_POLICIES[tier]
+        assert config["max_wall_seconds"] == wall
+        assert config["max_tool_turns"] == turns
+        assert config["max_files_touched"] == files
+        assert config["max_continuation_passes"] == passes
+
+
+def test_no_tier_carries_money_ceilings():
+    for config in _EFFORT_POLICIES.values():
+        assert "max_dollars" not in config
+        assert "max_tokens" not in config
+
+
 def test_system_default_is_unlimited():
     assert _DEFAULTS["max_wall_seconds"] == 0
     assert _DEFAULTS["max_tool_turns"] is None
-    assert _DEFAULTS["max_dollars"] is None
+    assert _DEFAULTS["max_continuation_passes"] is None
+    assert "max_dollars" not in _DEFAULTS
 
 
 class _P:

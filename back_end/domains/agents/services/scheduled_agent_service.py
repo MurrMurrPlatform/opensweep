@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from domains.agents.models import COMPUTE_DIALS, Agent, ScheduledAgent
+from domains.agents.models import AUTONOMY_LEVELS, Agent, ScheduledAgent
 from domains.agents.schemas import (
     CreateScheduledAgentRequest,
     ScheduledAgentDTO,
@@ -35,9 +35,13 @@ AUDIT_STALE_TITLE = "Audit stale code"
 # it is the higher-frequency, higher-cost sweep.
 DEEP_ISSUE_HUNT_KEY = "deep-issue-hunt"
 SECURITY_AUDIT_KEY = "security-audit"
+RUN_CAMPAIGN_KEY = "run-campaign"
 DEEP_HUNT_WEEKLY_TITLE = "Weekly FULL deep issue hunt (Mon)"
 DEEP_HUNT_DAILY_TITLE = "Daily deep issue hunt (Tue–Sat)"
 SECURITY_AUDIT_WEEKLY_TITLE = "Weekly security audit (Mon)"
+ROTATION_CAMPAIGN_WEEKLY_TITLE = "Weekly rotation campaign"
+MAP_AREAS_TITLE = "Map areas"
+MAP_AREAS_MONTHLY_TITLE = "Monthly area-map refresh"
 
 
 def validate_trigger(trigger: str) -> str:
@@ -54,12 +58,12 @@ def validate_trigger(trigger: str) -> str:
     return raw
 
 
-def validate_dial(dial: str) -> str:
+def validate_autonomy(dial: str) -> str:
     d = (dial or "").strip()
-    if d not in COMPUTE_DIALS:
+    if d not in AUTONOMY_LEVELS:
         raise HTTPException(
             status_code=422,
-            detail=f"invalid compute_dial {dial!r}; valid: {sorted(COMPUTE_DIALS)}",
+            detail=f"invalid autonomy {dial!r}; valid: {sorted(AUTONOMY_LEVELS)}",
         )
     return d
 
@@ -77,7 +81,7 @@ async def to_dto(s: ScheduledAgent, *, agent: Agent | None = None) -> ScheduledA
         target=dict(s.target or {}),
         effort=s.effort or "",
         run_policy_uid=s.run_policy_uid or None,
-        compute_dial=s.compute_dial or "ask-before-run",
+        autonomy=s.autonomy or "ask-before-run",
         enabled=bool(s.enabled),
         provenance=s.provenance or "user",
         last_scheduled_at=s.last_scheduled_at,
@@ -125,7 +129,7 @@ async def create_scheduled_agent(
         target=dict(req.target or {}),
         effort=req.effort or "",
         run_policy_uid=req.run_policy_uid or "",
-        compute_dial=validate_dial(req.compute_dial),
+        autonomy=validate_autonomy(req.autonomy),
         enabled=bool(req.enabled),
         provenance="user",
     )
@@ -139,7 +143,7 @@ async def create_scheduled_agent(
             "agent_uid": s.agent_uid,
             "repository_uid": s.repository_uid,
             "trigger": s.trigger,
-            "compute_dial": s.compute_dial,
+            "autonomy": s.autonomy,
         },
     )
     return await to_dto(s, agent=agent)
@@ -164,8 +168,8 @@ async def update_scheduled_agent(
     data = req.model_dump(exclude_unset=True)
     if "trigger" in data and data["trigger"] is not None:
         data["trigger"] = validate_trigger(data["trigger"])
-    if "compute_dial" in data and data["compute_dial"] is not None:
-        data["compute_dial"] = validate_dial(data["compute_dial"])
+    if "autonomy" in data and data["autonomy"] is not None:
+        data["autonomy"] = validate_autonomy(data["autonomy"])
     for key, value in data.items():
         if value is None:
             continue
@@ -218,7 +222,7 @@ async def seed_keep_docs_current(repository_uid: str) -> ScheduledAgent | None:
         title=KEEP_DOCS_CURRENT_TITLE,
         trigger="on-event",
         target={},  # empty = repo-wide: any change makes it a candidate
-        compute_dial="suggest",
+        autonomy="suggest",
         provenance="system",
     )
     await s.save()
@@ -248,7 +252,7 @@ async def seed_audit_stale(repository_uid: str) -> ScheduledAgent | None:
         title=AUDIT_STALE_TITLE,
         trigger="",
         target={"limit": 3},
-        compute_dial="ask-before-run",
+        autonomy="ask-before-run",
         provenance="system",
     )
     await s.save()
@@ -262,6 +266,7 @@ async def _seed_binding(
     title: str,
     trigger: str,
     enabled: bool,
+    target: dict | None = None,
 ) -> ScheduledAgent | None:
     """Idempotent one-off: bind system agent `key` to a repo on `trigger`.
 
@@ -287,8 +292,8 @@ async def _seed_binding(
         repository_uid=repository_uid,
         title=title,
         trigger=trigger,
-        target={},  # empty = repo-wide
-        compute_dial="ask-before-run",
+        target=dict(target or {}),  # empty = repo-wide
+        autonomy="ask-before-run",
         enabled=enabled,
         provenance="system",
     )
@@ -303,19 +308,59 @@ async def seed_audit_agents(repository_uid: str) -> list[ScheduledAgent]:
     - Weekly security audit (Mondays 08:00)         — enabled.
     - Daily deep issue hunt (Tue–Sat 06:00)         — seeded DISABLED; flip
       `enabled` on to opt into the higher-frequency (higher-cost) daily sweep.
+    - Weekly rotation campaign (Mondays 07:00)      — seeded DISABLED; each
+      due tick plans + launches a rotation campaign over the k least-recently
+      covered areas (run-campaign anchor).
 
-    All seed with compute_dial="ask-before-run": an enabled binding's cron tick
+    All seed with autonomy="ask-before-run": an enabled binding's cron tick
     proposes a run for approval rather than auto-billing. Dial up to
     auto-run-cheap/auto-run-any for unattended operation.
     """
     seeded: list[ScheduledAgent] = []
-    for key, title, trigger, enabled in (
-        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_WEEKLY_TITLE, "cron:0 6 * * 1", True),
-        (SECURITY_AUDIT_KEY, SECURITY_AUDIT_WEEKLY_TITLE, "cron:0 8 * * 1", True),
-        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_DAILY_TITLE, "cron:0 6 * * 2-6", False),
+    for key, title, trigger, enabled, target in (
+        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_WEEKLY_TITLE, "cron:0 6 * * 1", True, {}),
+        (SECURITY_AUDIT_KEY, SECURITY_AUDIT_WEEKLY_TITLE, "cron:0 8 * * 1", True, {}),
+        (DEEP_ISSUE_HUNT_KEY, DEEP_HUNT_DAILY_TITLE, "cron:0 6 * * 2-6", False, {}),
+        (
+            RUN_CAMPAIGN_KEY,
+            ROTATION_CAMPAIGN_WEEKLY_TITLE,
+            "cron:0 7 * * 1",
+            False,
+            {"template": "rotation", "k": 3},
+        ),
     ):
         s = await _seed_binding(
-            repository_uid, key=key, title=title, trigger=trigger, enabled=enabled
+            repository_uid,
+            key=key,
+            title=title,
+            trigger=trigger,
+            enabled=enabled,
+            target=target,
+        )
+        if s is not None:
+            seeded.append(s)
+    return seeded
+
+
+async def seed_map_areas(repository_uid: str) -> list[ScheduledAgent]:
+    """Idempotent: the two map-areas bindings every repo gets.
+
+    - "Map areas" — INERT (trigger=""), enabled: the manual anchor the UI's
+      trigger endpoint dispatches; no cron ever fires it.
+    - "Monthly area-map refresh" (1st of the month 05:00) — seeded DISABLED;
+      flip `enabled` on to opt into the recurring re-map.
+    """
+    seeded: list[ScheduledAgent] = []
+    for title, trigger, enabled in (
+        (MAP_AREAS_TITLE, "", True),
+        (MAP_AREAS_MONTHLY_TITLE, "cron:0 5 1 * *", False),
+    ):
+        s = await _seed_binding(
+            repository_uid,
+            key="map-areas",
+            title=title,
+            trigger=trigger,
+            enabled=enabled,
         )
         if s is not None:
             seeded.append(s)

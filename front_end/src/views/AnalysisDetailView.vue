@@ -106,7 +106,7 @@ const SECTION_ORDER = [
 
 const orderedSections = computed<{ key: string; label: string; body: string }[]>(() => {
   const secs = item.value?.sections ?? {}
-  const known = SECTION_ORDER.map(([k, label]) => k)
+  const known = SECTION_ORDER.map(([k]) => k)
   const out: { key: string; label: string; body: string }[] = []
   for (const [key, label] of SECTION_ORDER) {
     if (secs[key]?.trim()) out.push({ key, label, body: secs[key] })

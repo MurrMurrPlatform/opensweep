@@ -128,6 +128,58 @@ async def test_list_check_runs_caps_defensively():
     await c.aclose()
 
 
+# ── Recursive tree listing (repo-wide scope for area planning) ──────────────
+
+
+@pytest.mark.asyncio
+async def test_get_tree_returns_blob_paths_and_truncated_flag():
+    seen_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "sha": "abc",
+                "tree": [
+                    {"path": "src/app.py", "type": "blob"},
+                    {"path": "src", "type": "tree"},  # directories are not scope
+                    {"path": "vendored", "type": "commit"},  # nor submodules
+                    {"path": "README.md", "type": "blob"},
+                ],
+                "truncated": False,
+            },
+        )
+
+    c = GitHubClient(token="x")
+    c._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.github.com"
+    )
+    out = await c.get_tree("acme", "repo", "abc")
+    assert out == {"paths": ["src/app.py", "README.md"], "truncated": False}
+    assert "/repos/acme/repo/git/trees/abc" in seen_urls[0]
+    assert "recursive=1" in seen_urls[0]
+    await c.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_tree_surfaces_truncation_and_honors_recursive_flag():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "recursive" not in str(request.url)
+        return httpx.Response(
+            200, json={"tree": [{"path": "a.py", "type": "blob"}], "truncated": True}
+        )
+
+    c = GitHubClient(token="x")
+    c._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.github.com"
+    )
+    out = await c.get_tree("acme", "repo", "HEAD", recursive=False)
+    assert out["truncated"] is True
+    assert out["paths"] == ["a.py"]
+    await c.aclose()
+
+
 # ── Loop-aware default client (Celery: fresh loop per asyncio.run) ──────────
 
 

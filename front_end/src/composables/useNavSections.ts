@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import {
   LayoutGrid, GitPullRequest, ClipboardList, BookOpen,
   Activity, Search, MessageCircleQuestion, ShieldAlert, FolderArchive, Settings2, Sparkles,
-  SquareKanban, Github, Building2, User, Radar, Lightbulb, Newspaper, Slack, Bot,
+  SquareKanban, Github, Building2, User, Radar, Lightbulb, Newspaper, Slack, Bot, Layers, Telescope,
+  Map as MapIcon,
 } from 'lucide-vue-next'
 import { useUiStore } from '@/stores/uiStore'
 import { useCurrentUserStore } from '@/stores/currentUserStore'
@@ -31,6 +32,7 @@ export function useNavSections(): { sections: ComputedRef<NavSection[]> } {
         items: [
           { to: r || '/', label: 'Dashboard', icon: LayoutGrid, scoped: true, exact: true },
           { to: `${r}/docs`, label: 'Documentation', icon: BookOpen, scoped: true },
+          { to: `${r}/areas`, label: 'Areas', icon: MapIcon, scoped: true },
           { to: `${r}/findings`, label: 'Findings', icon: ClipboardList, scoped: true },
           { to: `${r}/workitems`, label: 'Work items', icon: SquareKanban, scoped: true },
         ],
@@ -40,6 +42,7 @@ export function useNavSections(): { sections: ComputedRef<NavSection[]> } {
         items: [
           { to: `${r}/ask`, label: 'Ask', icon: MessageCircleQuestion, scoped: true },
           { to: `${r}/agents`, label: 'Agents', icon: Bot, scoped: true },
+          { to: `${r}/campaigns`, label: 'Campaigns', icon: Layers, scoped: true },
           { to: `${r}/analyses`, label: 'Analyses', icon: Radar, scoped: true },
           { to: `${r}/health`, label: 'Health', icon: Search, scoped: true },
           { to: `${r}/runs`, label: 'Runs', icon: Activity, scoped: true },
@@ -58,6 +61,7 @@ export function useNavSections(): { sections: ComputedRef<NavSection[]> } {
         items: [
           { to: '/settings/organization', label: 'Organization', icon: Building2 },
           { to: '/agents', label: 'Agent library', icon: Bot },
+          { to: '/lenses', label: 'Lens library', icon: Telescope },
           { to: '/settings/slack', label: 'Slack', icon: Slack },
           { to: '/admin/llm-providers', label: 'LLM providers', icon: Sparkles },
           { to: '/settings/account', label: 'Account', icon: User },

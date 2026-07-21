@@ -17,6 +17,8 @@ from domains.delivery.services.pull_request_service import (
 )
 from domains.delivery.services.resolution_service import ensure_merge_policy
 from domains.delivery.services.run_dispatch import dispatch_serialized
+from domains.docs.services.doc_freshness import docs_watching_paths
+from domains.executors.prompt_kit import stance_block
 from domains.runs.models import Run
 from domains.runs.schemas import (
     Executor,
@@ -33,40 +35,15 @@ from domains.repositories.services.workflow import (
 )
 from domains.run_policies.services.effort import ensure_policy_for_effort
 from infrastructure.audit import write_audit
+from logging_config import logger
 
 
 # Depth → seeded variant guidance (opensweep://library/<slug>). "normal" uses the
 # repo's configured review-stage prompt instead. "short" is the canonical key
 # because normalize_effort maps the legacy "quick" workflow depth to SHORT.
+# Variant resolution (_resolve_guidance) is the ONLY depth-prose path — the
+# budget/stance paragraph itself comes from prompt_kit.stance_block.
 REVIEW_DEPTH_VARIANTS = {"short": "review-quick-gate", "deep": "review-adversarial"}
-
-
-def depth_block(depth: str, max_findings: int | None = None) -> str:
-    """The intent's budget/stance paragraph. `max_findings` is the numeric
-    knob: it overrides short's default cap of 5 and puts a cap on
-    normal/deep, which are otherwise uncapped."""
-    depth = normalize_effort(depth).value
-    if depth == "short":
-        cap = max_findings or 5
-        return (
-            f"Depth: QUICK — precision over recall. File at most {cap} findings, only issues\n"
-            "you would block the merge over, at confidence you would defend to the author\n"
-            "(≥ 0.8). An empty review is a valid outcome; do not pad it."
-        )
-    budget = (
-        f"File at most {max_findings} findings — rank by severity × confidence and file\n"
-        "the clearest, highest-impact ones first."
-        if max_findings
-        else "No hard finding cap; file every issue you can defend with concrete evidence."
-    )
-    if depth == "deep":
-        return (
-            "Depth: DEEP — exhaustive review. Work lens by lens: correctness, security,\n"
-            "API/compatibility, performance, tests, maintainability. Where your executor\n"
-            "supports subagents, delegate one lens per subagent and merge their results.\n"
-            f"{budget} Note in the verdict any lens you did not check."
-        )
-    return f"Depth: NORMAL — {budget} Skip style-only observations."
 
 
 def build_review_intent(
@@ -77,6 +54,8 @@ def build_review_intent(
     depth: str = "normal",
     prior_verdict_sha: str = "",
     max_findings: int | None = None,
+    run_policy=None,
+    wall_ceiling_seconds: int | None = None,
 ) -> str:
     ref = f"repository_uid={pr.repository_uid} github_number={pr.github_number}"
     if prior_verdict_sha:
@@ -98,7 +77,7 @@ def build_review_intent(
     return (
         f"Review pull request #{pr.github_number} (\"{pr.title}\") and finish with a verdict.\n"
         "\n"
-        f"## Depth\n{depth_block(depth, max_findings)}\n"
+        f"{stance_block(run_policy, wall_ceiling_seconds, depth, max_findings)}\n"
         "\n"
         "## Setup\n"
         f"1. `git checkout {pr.head_ref}` (branch may already be checked out).\n"
@@ -166,6 +145,30 @@ async def _resolve_guidance(repository_uid: str, depth: Effort) -> str | None:
     return await stage_prompt_body(repository_uid, "review")
 
 
+async def _docs_for_pr(pr: PullRequest) -> list[str]:
+    """Doc uids watching the PR's touched paths — for briefing pre-load
+    (mirrors fix_run_service._docs_for_findings). Best-effort: any failure
+    yields no pre-load (the index + read_doc cover it)."""
+    try:
+        from domains.delivery.services.pull_request_service import PullRequestService
+
+        changes = await PullRequestService().files(pr)
+        paths = [
+            p
+            for f in changes.get("files") or []
+            for p in (f.get("path"), f.get("old_path"))
+            if p
+        ]
+        return await docs_watching_paths(pr.repository_uid, paths)
+    except Exception as exc:  # noqa: BLE001 — pre-load must never block dispatch
+        logger.warning(
+            f"doc pre-load for PR #{pr.github_number} review failed "
+            f"({pr.repository_uid}): {exc}",
+            extra={"tag": "delivery"},
+        )
+        return []
+
+
 async def trigger_review_run(
     pr: PullRequest,
     *,
@@ -204,12 +207,18 @@ async def trigger_review_run(
                 "incremental_from": prior_verdict_sha,
             },
         )
+        # Pre-load the pages documenting the code this PR touches, so the
+        # briefing inlines them verbatim (agent doesn't have to fetch first).
+        # Best-effort — a resolution failure must not block the dispatch.
+        target_doc_uids = await _docs_for_pr(pr)
+
         # Org-agent-overlays composition: framing header + platform review
         # instructions (org overlay applied) + repo review guidance stack
         # AROUND the structural review contract (which lands in the scope
         # slot and can never be displaced by an overlay).
         from domains.agents.services.composition import compose_agent_intent
 
+        wall = int(run_policy.max_wall_seconds or 0) or None
         composed = await compose_agent_intent(
             repository_uid=pr.repository_uid,
             agent_key="review",
@@ -221,6 +230,8 @@ async def trigger_review_run(
                 depth=resolved_depth.value,
                 prior_verdict_sha=prior_verdict_sha,
                 max_findings=max_findings,
+                run_policy=run_policy,
+                wall_ceiling_seconds=wall,
             ),
         )
         run = await trigger_run(
@@ -237,10 +248,12 @@ async def trigger_review_run(
                 "depth": resolved_depth.value,
                 "prior_verdict_sha": prior_verdict_sha,
                 "max_findings": max_findings or 0,
+                "doc_uids": target_doc_uids,
             },
             linked_pr_uid=pr.uid,
             executor=Executor.CLAUDE_CODE,
             run_policy_uid=run_policy.uid,
+            effort=resolved_depth.value,
             trigger=trigger,
             triggered_by=triggered_by,
         )

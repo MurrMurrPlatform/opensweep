@@ -56,7 +56,7 @@ def test_intent_is_read_only_and_policy_aware():
 def test_quick_depth_caps_findings_and_allows_empty_review():
     intent = build_review_intent(_pr(), {"default": "high"}, depth="quick")
     assert "at most 5 findings" in intent.lower()
-    assert "empty review is a valid outcome" in intent.lower()
+    assert "empty result is a valid outcome" in intent.lower()
 
 
 def test_short_depth_is_identical_to_quick():
@@ -65,7 +65,7 @@ def test_short_depth_is_identical_to_quick():
     short = build_review_intent(_pr(), {"default": "high"}, depth="short")
     assert quick == short
     assert "at most 5 findings" in short.lower()
-    assert "empty review is a valid outcome" in short.lower()
+    assert "empty result is a valid outcome" in short.lower()
 
 
 def test_deep_depth_is_exhaustive_with_subagent_lenses():

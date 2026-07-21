@@ -26,20 +26,21 @@ async def _run_upsert(monkeypatch, existing: RunPolicy) -> RunPolicy:
     return await system_default.ensure_system_default()
 
 
-async def test_legacy_seeded_dollars_migrate_forward(monkeypatch):
-    # Both prior seeded caps ($1, then $3) were never human-tuned; the
+async def test_legacy_seeded_turns_migrate_forward(monkeypatch):
+    # Both prior seeded turn caps (40, then 200) were never human-tuned; the
     # upsert moves them to the current default.
-    for legacy in (1.0, 3.0):
-        p = await _run_upsert(monkeypatch, _node(max_dollars=legacy))
-        assert p.max_dollars == system_default._DEFAULTS["max_dollars"]
+    for legacy in (40, 200):
+        p = await _run_upsert(monkeypatch, _node(max_tool_turns=legacy))
+        assert p.max_tool_turns == system_default._DEFAULTS["max_tool_turns"]
 
 
-async def test_human_tuned_dollars_preserved(monkeypatch):
-    p = await _run_upsert(monkeypatch, _node(max_dollars=7.5))
-    assert p.max_dollars == 7.5
+async def test_human_tuned_turns_preserved(monkeypatch):
+    p = await _run_upsert(monkeypatch, _node(max_tool_turns=77))
+    assert p.max_tool_turns == 77
 
 
 async def test_current_default_is_unlimited(monkeypatch):
-    assert system_default._DEFAULTS["max_dollars"] is None
+    assert "max_dollars" not in system_default._DEFAULTS
     assert system_default._DEFAULTS["max_wall_seconds"] == 0
     assert system_default._DEFAULTS["max_tool_turns"] is None
+    assert system_default._DEFAULTS["max_continuation_passes"] is None

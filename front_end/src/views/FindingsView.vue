@@ -316,7 +316,7 @@ function ticketRequestFor(f: FindingDTO) {
     ].filter(Boolean),
     labels: f.tags || [],
     priority: SEVERITY_TO_PRIORITY[f.severity] || 'medium',
-    size: (TICKET_SIZES.includes(f.effort) ? f.effort : '') as TicketSize,
+    size: (TICKET_SIZES.includes(f.size) ? f.size : '') as TicketSize,
     origin: 'finding' as const,
     origin_finding_uid: f.uid,
   }

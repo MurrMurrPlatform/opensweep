@@ -75,6 +75,13 @@ def test_paused_quota_is_attention():
     assert category_for(event_types_for("run.paused_quota", {})) == CATEGORY_ATTENTION
 
 
+def test_campaign_outcomes_are_catalogued():
+    assert event_types_for("campaign.completed", {}) == ["campaign.completed"]
+    assert category_for(["campaign.completed"]) == CATEGORY_ACTIVITY
+    assert event_types_for("campaign.failed", {}) == ["campaign.failed"]
+    assert category_for(["campaign.failed"]) == CATEGORY_ATTENTION
+
+
 def test_normal_run_completion_notifies():
     # Every self-completed run lands as `run.awaiting_input` (complete_run
     # aliases the agent's "completed" onto it) — that is the everyday "run

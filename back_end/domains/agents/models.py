@@ -44,6 +44,8 @@ from neomodel import (
     StringProperty,
 )
 
+from domains.agents.schemas import OverlayMode
+
 AGENT_PROVENANCES = {"system", "user", "imported"}
 
 # What an Agent produces — the user-facing replacement for job_type AND for
@@ -64,9 +66,17 @@ PRODUCES = {
 # service with a clear 422.
 AGENT_PROMPT_MAX_BYTES = 32 * 1024
 
-OVERRIDE_MODES = {"append", "replace"}
+# Derived from the OverlayMode enum so the model constant and the DTO/service
+# validation surface can never disagree.
+OVERRIDE_MODES = {mode.value for mode in OverlayMode}
 
-COMPUTE_DIALS = {
+# Agent.reasoning values — "" = inherit from the effort tier.
+REASONING_LEVELS = {"", "low", "medium", "high"}
+
+# Autonomy levels — how much permission a ScheduledAgent has to run on its
+# own. (Formerly "compute_dial"; renamed because it gates permission, not
+# compute — effort is the compute dial.)
+AUTONOMY_LEVELS = {
     "disabled",
     "suggest",
     "ask-before-run",
@@ -86,8 +96,10 @@ class Agent(AsyncStructuredNode):
     prompt = StringProperty(default="")  # markdown instructions body
 
     produces = StringProperty(default="findings", index=True)
-    default_effort = StringProperty(default="normal")  # quick | normal | deep
-    default_executor = StringProperty(default="")  # "" = provider-derived
+    default_effort = StringProperty(default="normal")  # short | normal | deep | unlimited
+    # "" = inherit the effort tier's default reasoning level (see
+    # runs.schemas.REASONING_TIER_DEFAULTS) | low | medium | high.
+    reasoning = StringProperty(default="")
 
     tags = JSONProperty(default=[])  # list[str]
 
@@ -149,9 +161,9 @@ class ScheduledAgent(AsyncStructuredNode):
     effort = StringProperty(default="")
     run_policy_uid = StringProperty(default="", index=True)
 
-    # Compute-permission dial: disabled | suggest | ask-before-run |
+    # Autonomy (run-permission) level: disabled | suggest | ask-before-run |
     # auto-run-cheap | auto-run-any.
-    compute_dial = StringProperty(default="ask-before-run")
+    autonomy = StringProperty(default="ask-before-run")
 
     enabled = BooleanProperty(default=True)
 

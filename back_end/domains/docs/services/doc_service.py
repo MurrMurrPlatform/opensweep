@@ -32,6 +32,7 @@ def doc_to_dto(d: Doc, *, pending_edits: int = 0) -> DocDTO:
         summary=d.summary or "",
         body=d.body or "",
         pinned=bool(d.pinned),
+        archived=bool(d.archived),
         watch_paths=list(d.watch_paths or []),
         stale=doc_is_stale(d),
         stale_paths=list(d.stale_paths or []),
@@ -54,6 +55,7 @@ def edit_to_dto(e: DocEdit, *, current_body: str = "") -> DocEditDTO:
         watch_paths=list(e.watch_paths or []),
         proposed_body=e.proposed_body or "",
         rationale=e.rationale or "",
+        proposed_archived=bool(getattr(e, "proposed_archived", False)),
         source_run_uid=e.source_run_uid or "",
         status=DocEditStatus(e.status or "pending"),
         resolved_by=e.resolved_by or "",
@@ -79,12 +81,12 @@ def _mark_reviewed(d: Doc, now: datetime) -> None:
 
 
 async def list_docs(repository_uid: str) -> list[DocDTO]:
-    docs = [d for d in await Doc.nodes.all() if d.repository_uid == repository_uid]
-    pending = [
-        e
-        for e in await DocEdit.nodes.all()
-        if e.repository_uid == repository_uid and e.status == "pending"
-    ]
+    docs = list(
+        await Doc.nodes.filter(repository_uid=repository_uid, archived=False)
+    )
+    pending = list(
+        await DocEdit.nodes.filter(repository_uid=repository_uid, status="pending")
+    )
     counts: dict[str, int] = {}
     for e in pending:
         if e.doc_uid:
@@ -98,10 +100,10 @@ async def count_pending_new_pages(repository_uid: str) -> int:
     surfaced as their own count."""
     return sum(
         1
-        for e in await DocEdit.nodes.all()
-        if e.repository_uid == repository_uid
-        and e.status == "pending"
-        and not e.doc_uid
+        for e in await DocEdit.nodes.filter(
+            repository_uid=repository_uid, status="pending"
+        )
+        if not e.doc_uid
     )
 
 
@@ -113,10 +115,8 @@ async def get_doc(uid: str) -> Doc:
 
 
 async def get_doc_by_slug(repository_uid: str, slug: str) -> Doc | None:
-    for d in await Doc.nodes.all():
-        if d.repository_uid == repository_uid and d.slug == slug:
-            return d
-    return None
+    results = list(await Doc.nodes.filter(repository_uid=repository_uid, slug=slug))
+    return results[0] if results else None
 
 
 async def create_doc(
@@ -192,12 +192,11 @@ async def update_doc(
 async def delete_doc(uid: str, *, actor: str = "human") -> None:
     d = await get_doc(uid)
     # Pending edits against a deleted page are moot.
-    for e in await DocEdit.nodes.all():
-        if e.doc_uid == uid and e.status == "pending":
-            e.status = "rejected"
-            e.resolved_by = actor
-            e.resolved_at = datetime.now(UTC)
-            await e.save()
+    for e in await DocEdit.nodes.filter(doc_uid=uid, status="pending"):
+        e.status = "rejected"
+        e.resolved_by = actor
+        e.resolved_at = datetime.now(UTC)
+        await e.save()
     # Detach memories anchored to this page: keep their content but clear the
     # dangling freshness anchor so it can't point at a deleted Doc.
     from domains.memory.models import Memory
@@ -213,6 +212,38 @@ async def delete_doc(uid: str, *, actor: str = "human") -> None:
         payload={"slug": d.slug, "repository_uid": d.repository_uid},
     )
     await d.delete()
+
+
+async def reset_docs(repository_uid: str, *, actor: str = "human") -> dict:
+    """Destructive: delete EVERY Doc and DocEdit for the repository.
+
+    A clean regenerate beats hand-pruning a wrong tree. Memories anchored
+    to deleted pages keep their content but lose the freshness anchor
+    (same as single-page delete); Checked stamps stay as history. One
+    audit event with counts; irreversible."""
+    from domains.memory.models import Memory
+
+    docs = list(await Doc.nodes.filter(repository_uid=repository_uid))
+    edits = list(await DocEdit.nodes.filter(repository_uid=repository_uid))
+    doc_uids = {d.uid for d in docs}
+    # anchor_uid is indexed; __in pushes the "anchored to one of these deleted
+    # docs" membership test down to Neo4j (empty doc_uids => empty result).
+    for m in await Memory.nodes.filter(anchor_uid__in=list(doc_uids)) if doc_uids else []:
+        m.anchor_uid = ""
+        await m.save()
+    for e in edits:
+        await e.delete()
+    for d in docs:
+        await d.delete()
+    await write_audit(
+        kind="docs.reset",
+        subject_uid=repository_uid,
+        subject_type="Repository",
+        actor_uid=actor,
+        repository_uid=repository_uid,
+        payload={"docs_deleted": len(docs), "edits_deleted": len(edits)},
+    )
+    return {"docs_deleted": len(docs), "edits_deleted": len(edits)}
 
 
 async def set_pinned(uid: str, *, pinned: bool, actor: str = "human") -> Doc:
@@ -245,11 +276,11 @@ async def seed_conventions_doc(repository_uid: str) -> Doc | None:
 async def list_doc_edits(
     repository_uid: str, *, status: str = "pending"
 ) -> list[DocEditDTO]:
-    edits = [
-        e
-        for e in await DocEdit.nodes.all()
-        if e.repository_uid == repository_uid and (not status or e.status == status)
-    ]
+    edits = list(
+        await DocEdit.nodes.filter(repository_uid=repository_uid, status=status)
+        if status
+        else await DocEdit.nodes.filter(repository_uid=repository_uid)
+    )
     edits.sort(key=lambda e: e.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
     out: list[DocEditDTO] = []
     for e in edits:
@@ -270,24 +301,24 @@ async def propose_doc_edit(
     title: str = "",
     summary: str = "",
     watch_paths: list[str] | None = None,
+    archived: bool = False,
     source_run_uid: str = "",
 ) -> DocEdit:
     """Agent-facing: propose a full replacement body for an existing page
     (matched by slug) or a new page (unknown slug). One pending edit per
-    (doc, run) — a second proposal from the same run replaces the first."""
+    (doc, run) — a second proposal from the same run replaces the first.
+    Pass archived=True to propose RETIRING the page (applied on accept)."""
     slug = normalize_slug(slug)
     target = await get_doc_by_slug(repository_uid, slug) if slug else None
     doc_uid = target.uid if target else ""
 
     if source_run_uid:
-        for e in await DocEdit.nodes.all():
-            if (
-                e.repository_uid == repository_uid
-                and e.status == "pending"
-                and e.source_run_uid == source_run_uid
-                and (e.doc_uid or "") == doc_uid
-                and (doc_uid or e.slug == slug)
-            ):
+        for e in await DocEdit.nodes.filter(
+            repository_uid=repository_uid,
+            status="pending",
+            source_run_uid=source_run_uid,
+        ):
+            if (e.doc_uid or "") == doc_uid and (doc_uid or e.slug == slug):
                 await e.delete()
 
     e = DocEdit(
@@ -300,6 +331,7 @@ async def propose_doc_edit(
         watch_paths=list(watch_paths or []),
         proposed_body=proposed_body,
         rationale=rationale,
+        proposed_archived=archived,
         source_run_uid=source_run_uid,
         status="pending",
     )
@@ -337,6 +369,7 @@ async def accept_doc_edit(uid: str, *, actor: str = "human") -> DocDTO:
             d.summary = e.summary
         if e.watch_paths:
             d.watch_paths = list(e.watch_paths)
+        d.archived = bool(getattr(e, "proposed_archived", False))
         d.updated_at = now
         _mark_reviewed(d, now)  # an accepted edit counts as a review
         await d.save()

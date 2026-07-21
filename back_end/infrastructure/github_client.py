@@ -134,6 +134,29 @@ class GitHubClient:
             url = f"{url}?ref={quote(ref, safe='')}"
         return await self._get(url)
 
+    async def get_tree(
+        self, owner: str, repo: str, tree_sha: str, *, recursive: bool = True
+    ) -> dict[str, Any]:
+        """GET /repos/{o}/{r}/git/trees/{sha} — blob paths of the whole tree.
+
+        `recursive=1` flattens the tree in one call; GitHub truncates
+        pathological trees (~100k entries) and flags it via `truncated`,
+        surfaced verbatim so callers can fall back to a clone-side listing.
+        Only blob (file) paths are returned — tree/submodule entries are not
+        auditable scope."""
+        url = f"/repos/{owner}/{repo}/git/trees/{quote(tree_sha, safe='')}"
+        if recursive:
+            url = f"{url}?recursive=1"
+        payload = await self._get(url)
+        entries = payload.get("tree") if isinstance(payload, dict) else None
+        paths = [
+            str(e.get("path"))
+            for e in (entries or [])
+            if isinstance(e, dict) and e.get("type") == "blob" and e.get("path")
+        ]
+        truncated = bool(payload.get("truncated")) if isinstance(payload, dict) else False
+        return {"paths": paths, "truncated": truncated}
+
     async def get_branch_head_sha(self, owner: str, repo: str, branch: str) -> str:
         """Head commit sha of a branch (GET /repos/{o}/{r}/commits/{branch})."""
         body = await self._get(f"/repos/{owner}/{repo}/commits/{branch}")

@@ -25,7 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import CommentThread from '@/components/comments/CommentThread.vue'
 import ProducesBadge from '@/components/agents/ProducesBadge.vue'
 import ScheduleEditor from '@/components/agents/ScheduleEditor.vue'
-import type { AgentDTO, ComputeDial, RunDTO, ScheduledAgentDTO } from '@/types/api'
+import type { AgentDTO, Autonomy, RunDTO, ScheduledAgentDTO } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,7 +65,7 @@ async function load() {
   }
 }
 
-async function saveSchedule(payload: { trigger: string; compute_dial: ComputeDial }) {
+async function saveSchedule(payload: { trigger: string; autonomy: Autonomy }) {
   if (!sa.value || savingSchedule.value) return
   savingSchedule.value = true
   try {
@@ -163,7 +163,7 @@ async function remove() {
 
       <ScheduleEditor
         :trigger="sa.trigger"
-        :compute-dial="sa.compute_dial"
+        :autonomy-level="sa.autonomy"
         :saving="savingSchedule"
         :hint="scheduleHint"
         @save="saveSchedule"

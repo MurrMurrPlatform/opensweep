@@ -14,7 +14,6 @@ from api.dependencies import get_current_user, require_platform_admin
 from domains.run_policies.models import RunPolicy
 from domains.run_policies.schemas import (
     CreateRunPolicyRequest,
-    OnExceed,
     RunPolicyDTO,
     UpdateRunPolicyRequest,
 )
@@ -29,18 +28,15 @@ def _to_dto(p: RunPolicy) -> RunPolicyDTO:
         uid=p.uid,
         name=p.name or "",
         description=p.description or "",
-        max_tokens=p.max_tokens,
-        max_dollars=p.max_dollars,
         max_wall_seconds=p.max_wall_seconds,
         max_tool_turns=p.max_tool_turns,
         max_files_touched=p.max_files_touched,
-        max_test_seconds=p.max_test_seconds,
+        max_continuation_passes=p.max_continuation_passes,
         cloud_allowed=bool(p.cloud_allowed),
         local_only=bool(p.local_only),
         allowed_executors=list(p.allowed_executors or []),
         dry_run=bool(p.dry_run),
         warn_at_pct=int(p.warn_at_pct or 80),
-        on_exceed=OnExceed(p.on_exceed or "abort"),
         daily_repo_run_count=p.daily_repo_run_count,
         daily_repo_wall_seconds=p.daily_repo_wall_seconds,
         daily_repo_dollars=p.daily_repo_dollars,
@@ -84,18 +80,15 @@ async def create_run_policy(
         uid=uuid4().hex,
         name=req.name,
         description=req.description,
-        max_tokens=req.max_tokens,
-        max_dollars=req.max_dollars,
         max_wall_seconds=req.max_wall_seconds,
         max_tool_turns=req.max_tool_turns,
         max_files_touched=req.max_files_touched,
-        max_test_seconds=req.max_test_seconds,
+        max_continuation_passes=req.max_continuation_passes,
         cloud_allowed=req.cloud_allowed,
         local_only=req.local_only,
         allowed_executors=req.allowed_executors,
         dry_run=req.dry_run,
         warn_at_pct=req.warn_at_pct,
-        on_exceed=req.on_exceed.value,
         daily_repo_run_count=req.daily_repo_run_count,
         daily_repo_wall_seconds=req.daily_repo_wall_seconds,
         daily_repo_dollars=req.daily_repo_dollars,
@@ -141,8 +134,6 @@ async def update_run_policy(
         )
 
     for key, value in fields.items():
-        if key == "on_exceed" and value is not None:
-            value = value.value if isinstance(value, OnExceed) else value
         setattr(p, key, value)
     p.updated_at = datetime.now(timezone.utc)
     await p.save()

@@ -6,7 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from domains.findings.schemas import Effort, FindingKind, Severity
+from domains.findings.schemas import FindingKind, FindingSize, Severity
 
 
 class NewsCategory(StrEnum):
@@ -91,7 +91,7 @@ class ConvertNewsRequest(BaseModel):
 
     kind: FindingKind = FindingKind.FEATURE_IDEA
     severity: Severity = Severity.LOW
-    effort: Effort = Effort.MEDIUM
+    size: FindingSize = FindingSize.MEDIUM
     extra_tags: list[str] = Field(default_factory=list)
 
 

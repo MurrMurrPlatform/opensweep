@@ -81,8 +81,9 @@ def playbook_for_produces(produces: str) -> str:
 
 
 # The overridable system-agent keys, in deterministic listing order — the
-# former AGENT_PLAYBOOKS plus audit-stale. deep-scan and generate-docs run
-# under the "ask" playbook but carry their own instruction bases.
+# former AGENT_PLAYBOOKS plus audit-stale. deep-scan, generate-docs, and
+# map-areas run under the "ask" playbook but carry their own instruction
+# bases.
 AGENT_KEYS = (
     "chat",
     "ask",
@@ -95,7 +96,10 @@ AGENT_KEYS = (
     "thread",
     "deep-scan",
     "generate-docs",
+    "generate-specs",
     "audit-stale",
+    "run-campaign",
+    "map-areas",
 )
 
 
@@ -108,11 +112,11 @@ def stage_for_agent_key(key: str, playbook: str) -> str:
     from domains.repositories.services.workflow import STAGES
 
     k = (key or "").strip()
-    if k == "generate-docs":
+    if k in {"generate-docs", "generate-specs", "map-areas"}:
         return "discover"
     if k == "deep-scan":
         return "analysis"
-    if k in {"audit-stale"}:
+    if k in {"audit-stale", "run-campaign"}:
         return "ask"
     if k in STAGES:
         return k

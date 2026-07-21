@@ -24,6 +24,7 @@ from domains.agents.models import (
     AGENT_PROMPT_MAX_BYTES,
     OVERRIDE_MODES,
     PRODUCES,
+    REASONING_LEVELS,
     Agent,
     AgentRevision,
 )
@@ -41,7 +42,9 @@ from domains.agents.services.registry import (
 from infrastructure.audit import write_audit
 from logging_config import logger
 
-_EFFORTS = {"quick", "normal", "deep"}
+_EFFORTS = {"short", "normal", "deep", "unlimited"}
+# Pre-rename values still sent by old clients/seeds; normalized on write.
+_EFFORT_ALIASES = {"quick": "short", "light": "short"}
 
 # Per-process, per-(agent, org) revision locks — same pattern as the
 # absorbed overlay service. Entries are never evicted; the population under
@@ -80,13 +83,24 @@ def validate_produces(produces: str, *, allow_write: bool = False) -> str:
 
 
 def validate_effort(effort: str) -> str:
-    e = (effort or "normal").strip()
+    e = (effort or "normal").strip().lower()
+    e = _EFFORT_ALIASES.get(e, e)
     if e not in _EFFORTS:
         raise HTTPException(
             status_code=422,
             detail=f"invalid effort {effort!r}; valid: {sorted(_EFFORTS)}",
         )
     return e
+
+
+def validate_reasoning(reasoning: str) -> str:
+    r = (reasoning or "").strip()
+    if r not in REASONING_LEVELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid reasoning {reasoning!r}; valid: {sorted(REASONING_LEVELS)}",
+        )
+    return r
 
 
 def _validate_body(body: str, *, field: str = "prompt") -> str:
@@ -120,7 +134,7 @@ def to_dto(a: Agent, *, has_org_override: bool = False) -> AgentDTO:
         prompt=a.prompt or "",
         produces=a.produces or "findings",
         default_effort=a.default_effort or "normal",
-        default_executor=a.default_executor or "",
+        reasoning=a.reasoning or "",
         tags=list(a.tags or []),
         provenance=a.provenance or "user",
         key=agent_key(a.source_url or ""),
@@ -227,7 +241,7 @@ async def create_agent(
         prompt=_validate_body(req.prompt),
         produces=validate_produces(req.produces, allow_write=allow_write_produces),
         default_effort=validate_effort(req.default_effort),
-        default_executor=req.default_executor or "",
+        reasoning=validate_reasoning(req.reasoning),
         tags=list(req.tags or []),
         provenance=provenance,
         enabled=bool(req.enabled),
@@ -272,6 +286,8 @@ async def update_agent(
         data["prompt"] = _validate_body(data["prompt"])
     if "default_effort" in data:
         data["default_effort"] = validate_effort(data["default_effort"])
+    if "reasoning" in data:
+        data["reasoning"] = validate_reasoning(data["reasoning"])
     content_fields = {"title", "description", "prompt", "produces", "tags"}
     content_changed = any(k in data for k in content_fields)
     if content_changed and (a.provenance or "") == "imported":

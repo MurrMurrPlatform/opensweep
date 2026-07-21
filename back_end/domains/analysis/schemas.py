@@ -15,6 +15,10 @@ from pydantic import BaseModel, Field
 class AnalysisStatus(StrEnum):
     IN_PROGRESS = "in_progress"
     COMPLETE = "complete"
+    # A run that ended (killed / out of budget / forgetful) before the agent
+    # authored a verdict. Carries no health_grade — it must never surface as a
+    # current grade. See finalize_analysis_for_run.
+    INCOMPLETE = "incomplete"
     SUPERSEDED = "superseded"
     ARCHIVED = "archived"
 

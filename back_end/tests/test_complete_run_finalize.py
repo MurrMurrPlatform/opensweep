@@ -99,3 +99,121 @@ async def test_refinalize_does_not_duplicate_the_audit(finalize):
     await cr.complete_run(run_uid="run-1", summary="agent report", final_status="completed")
     await cr.complete_run(run_uid="run-1", summary="lifecycle finalize", final_status="awaiting_input")
     assert len(audits) == 1
+
+
+# ── Coverage contract (covered/skipped paths + per-lens verdicts) ────────────
+
+
+async def test_build_coverage_normalizes_and_drops_empties():
+    coverage = cr.build_coverage(
+        covered_paths=["  src/a.py ", "", "src/b.py"],
+        skipped_paths="docs/",  # bare string coerces like build_outcome's lists
+        lens_verdicts=[
+            {"lens": "bugs", "verdict": "checked-clean", "note": "  all good "},
+            {"lens": "security", "verdict": "checked-findings"},
+        ],
+    )
+    assert coverage == {
+        "covered_paths": ["src/a.py", "src/b.py"],
+        "skipped_paths": ["docs/"],
+        "lens_verdicts": [
+            {"lens": "bugs", "verdict": "checked-clean", "note": "all good"},
+            {"lens": "security", "verdict": "checked-findings"},
+        ],
+    }
+    assert cr.build_coverage() == {}
+    assert cr.build_coverage(covered_paths=[], lens_verdicts="not-a-list") == {}
+
+
+async def test_build_coverage_drops_invalid_verdict_entries_without_raising():
+    coverage = cr.build_coverage(
+        lens_verdicts=[
+            {"lens": "bugs", "verdict": "looks-fine"},  # unknown verdict
+            {"lens": "", "verdict": "checked-clean"},  # no lens name
+            "not-a-dict",
+            {"lens": "tests", "verdict": "skipped"},  # the one valid entry
+        ]
+    )
+    assert coverage == {"lens_verdicts": [{"lens": "tests", "verdict": "skipped"}]}
+
+
+async def test_complete_run_stores_coverage_in_usage_and_summary(finalize):
+    run, _ = finalize
+    verdicts = [{"lens": "bugs", "verdict": "checked-clean"}]
+    await cr.complete_run(
+        run_uid="run-1",
+        summary="done",
+        covered_paths=["src/a.py"],
+        skipped_paths=["src/legacy/"],
+        lens_verdicts=verdicts,
+        final_status="completed",
+    )
+    assert run.usage["coverage"] == {
+        "covered_paths": ["src/a.py"],
+        "skipped_paths": ["src/legacy/"],
+        "lens_verdicts": verdicts,
+    }
+    # The verdicts also land in the human-facing summary.
+    assert run.summary["lens_verdicts"] == verdicts
+
+
+async def test_lifecycle_refinalize_does_not_erase_agent_coverage(finalize):
+    # MCP self-completion reports coverage; the lifecycle's second, coverage-
+    # less complete_run call must not wipe usage["coverage"].
+    run, _ = finalize
+    await cr.complete_run(
+        run_uid="run-1",
+        covered_paths=["src/a.py"],
+        lens_verdicts=[{"lens": "bugs", "verdict": "checked-findings"}],
+        final_status="completed",
+    )
+    await cr.complete_run(run_uid="run-1", summary="lifecycle finalize", final_status="awaiting_input")
+    assert run.usage["coverage"]["covered_paths"] == ["src/a.py"]
+    assert run.usage["coverage"]["lens_verdicts"] == [
+        {"lens": "bugs", "verdict": "checked-findings"}
+    ]
+
+
+async def test_extract_coverage_reads_trailer_complete_run_args():
+    coverage = cr.extract_coverage(
+        {
+            "summary": "irrelevant here",
+            "covered_paths": ["a.py"],
+            "lens_verdicts": [{"lens": "bugs", "verdict": "skipped", "note": "ran out"}],
+        }
+    )
+    assert coverage["covered_paths"] == ["a.py"]
+    assert coverage["lens_verdicts"] == [
+        {"lens": "bugs", "verdict": "skipped", "note": "ran out"}
+    ]
+
+
+async def test_envelope_harvest_carries_coverage_to_the_finalizer():
+    # CLI executors: the trailer complete_run entry is harvested, not
+    # dispatched — its coverage must ride the outcome dict into the lifecycle
+    # finalize (which passes covered_paths/skipped_paths/lens_verdicts back to
+    # complete_run). Without this, envelope-path lens_verdicts vanish.
+    from domains.executors._shared import execute_envelope_tool_calls
+
+    verdicts = [{"lens": "security", "verdict": "checked-clean"}]
+    results, refs, outcome = await execute_envelope_tool_calls(
+        calls=[
+            {
+                "tool": "complete_run",
+                "args": {
+                    "summary": "swept the area",
+                    "did": ["checked auth"],
+                    "covered_paths": ["src/auth.py"],
+                    "skipped_paths": ["src/vendored/"],
+                    "lens_verdicts": verdicts,
+                },
+            }
+        ],
+        req=SimpleNamespace(run_uid="run-1", repository_uid="repo-1"),
+        executor_value="codex",
+    )
+    assert results == [] and refs == []
+    assert outcome["did"] == ["checked auth"]
+    assert outcome["covered_paths"] == ["src/auth.py"]
+    assert outcome["skipped_paths"] == ["src/vendored/"]
+    assert outcome["lens_verdicts"] == verdicts

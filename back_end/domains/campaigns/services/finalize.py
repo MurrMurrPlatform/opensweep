@@ -1,0 +1,213 @@
+"""Campaign finalize: fold the parts' outcomes into one digest.
+
+`build_summary` is pure (counts + coverage + holes); `finalize_campaign`
+loads each part's findings (source_run_uid / source_run_uids match) and
+Checked coverage stamps, saves the summary, and closes the campaign —
+done, or failed when EVERY part failed. Idempotent: the tick re-runs it
+for rows stranded in finalizing by a crash.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from datetime import UTC, datetime
+
+from infrastructure.audit import write_audit
+from logging_config import logger
+
+
+def _feature_rollup(parts: list[dict]) -> list[dict]:
+    """Aggregate feature-leaf parts up to their parent feature grouping.
+
+    Feature parts are always LEAVES (the planner never emits a part for a
+    parent feature grouping). This rolls each leaf's coverage/state up to
+    its parent key (the key minus its last "/" segment; a top-level feature
+    leaf rolls up under itself) so the digest can render the parent →
+    sub-feature tree with aggregated coverage. Pure.
+    """
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+    for p in parts:
+        if (p.get("kind") or "area") != "feature":
+            continue
+        keys = [str(k) for k in (p.get("area_keys") or []) if k]
+        leaf_key = keys[0] if keys else ""
+        parent = leaf_key.rsplit("/", 1)[0] if "/" in leaf_key else leaf_key
+        g = groups.get(parent)
+        if g is None:
+            g = {
+                "feature_key": parent,
+                "covered": 0,
+                "skipped": 0,
+                "findings": 0,
+                "leaves": [],
+                "done": 0,
+            }
+            groups[parent] = g
+            order.append(parent)
+        g["covered"] += int(p.get("covered") or 0)
+        g["skipped"] += int(p.get("skipped") or 0)
+        g["leaves"].append(
+            {
+                "area_key": leaf_key,
+                "idx": int(p["idx"]),
+                "title": p.get("title") or "",
+                "covered": int(p.get("covered") or 0),
+                "skipped": int(p.get("skipped") or 0),
+                "state": p.get("state") or "pending",
+            }
+        )
+        if (p.get("state") or "") == "done":
+            g["done"] += 1
+    out: list[dict] = []
+    for parent in order:
+        g = groups[parent]
+        total = len(g["leaves"])
+        g["leaf_count"] = total
+        # Parent coverage state: covered when every sub-feature leaf ran,
+        # partial when some did, none when none did.
+        g["state"] = (
+            "covered" if g["done"] == total else "partial" if g["done"] else "uncovered"
+        )
+        g.pop("done", None)
+        out.append(g)
+    return out
+
+
+def build_summary(
+    parts: list[dict],
+    findings_by_part: dict[int, list[dict]],
+    holes: list[str],
+) -> dict:
+    """The campaign digest. Pure.
+
+    `findings_by_part` maps part idx → [{severity, tags, title}]; parts may
+    carry `covered`/`skipped` counts (from their Checked stamps). `holes`
+    are the scope paths of failed/never-run parts — the coverage debt this
+    campaign leaves behind. `coverage.feature_rollup` aggregates feature-leaf
+    parts up to their parent feature grouping (parent-feature health).
+    """
+    by_severity: Counter[str] = Counter()
+    by_part: dict[int, int] = {}
+    for idx, findings in findings_by_part.items():
+        by_part[int(idx)] = len(findings)
+        for f in findings:
+            by_severity[str(f.get("severity") or "medium")] += 1
+    # Fold each feature part's finding count into its rollup group.
+    rollup = _feature_rollup(parts)
+    by_leaf_idx = {int(p["idx"]): p for p in parts}
+    for g in rollup:
+        g["findings"] = sum(
+            by_part.get(leaf["idx"], 0) for leaf in g["leaves"] if leaf["idx"] in by_leaf_idx
+        )
+    return {
+        "counts": {
+            "by_severity": dict(by_severity),
+            "by_part": {str(k): v for k, v in sorted(by_part.items())},
+            "total": sum(by_part.values()),
+        },
+        "coverage": {
+            "parts": [
+                {
+                    "idx": int(p["idx"]),
+                    "title": p.get("title") or "",
+                    "covered": int(p.get("covered") or 0),
+                    "skipped": int(p.get("skipped") or 0),
+                    "state": p.get("state") or "pending",
+                }
+                for p in sorted(parts, key=lambda p: int(p["idx"]))
+            ],
+            "holes": list(holes),
+            "feature_rollup": rollup,
+        },
+        "failed_parts": sorted(
+            int(p["idx"]) for p in parts if p.get("state") == "failed"
+        ),
+    }
+
+
+async def finalize_campaign(campaign) -> None:
+    """finalizing → done|failed, with the digest saved and audited."""
+    from domains.campaigns.models import Campaign, is_legal_status_transition
+    from domains.checked.models import Checked
+    from domains.findings.models import Finding
+
+    parts = [dict(p) for p in (campaign.parts or [])]
+    run_by_idx = {int(p["idx"]): p.get("run_uid") or "" for p in parts}
+
+    findings = list(await Finding.nodes.filter(repository_uid=campaign.repository_uid))
+    findings_by_part: dict[int, list[dict]] = {}
+    for idx, run_uid in run_by_idx.items():
+        if not run_uid:
+            continue
+        matched = [
+            f
+            for f in findings
+            if (f.source_run_uid or "") == run_uid or run_uid in (f.source_run_uids or [])
+        ]
+        if matched:
+            findings_by_part[idx] = [
+                {"severity": f.severity or "medium", "tags": list(f.tags or []), "title": f.title}
+                for f in matched
+            ]
+
+    # Coverage counts from the runs' Checked stamps (complete_run contract).
+    coverage_by_run: dict[str, tuple[int, int]] = {}
+    try:
+        for c in await Checked.nodes.filter(repository_uid=campaign.repository_uid):
+            if c.run_uid in run_by_idx.values():
+                coverage_by_run[c.run_uid] = (
+                    len(c.covered_paths or []),
+                    len(c.skipped_paths or []),
+                )
+    except Exception as exc:  # noqa: BLE001 — coverage counts are best-effort
+        logger.warning(
+            f"campaign {campaign.uid}: coverage stamps unavailable: {exc}",
+            extra={"tag": "campaigns"},
+        )
+    for p in parts:
+        covered, skipped = coverage_by_run.get(p.get("run_uid") or "", (0, 0))
+        p["covered"] = covered
+        p["skipped"] = skipped
+
+    holes = [
+        path
+        for p in parts
+        if p.get("state") != "done"
+        for path in (p.get("scope_paths") or [])
+    ]
+    summary = build_summary(parts, findings_by_part, holes)
+
+    all_failed = bool(parts) and all(p.get("state") == "failed" for p in parts)
+    to_status = "failed" if all_failed else "done"
+
+    fresh = await Campaign.nodes.get_or_none(uid=campaign.uid) or campaign
+    if not is_legal_status_transition(fresh.status or "", to_status):
+        return  # already finalized by a concurrent tick
+
+    # Audit BEFORE the status save: the notification feed derives from the
+    # audit stream, and a crash between save and audit would be unrecoverable
+    # (done→done is illegal, so re-entry returns above without ever
+    # auditing). The reverse crash merely re-audits once — the lesser evil.
+    await write_audit(
+        kind="campaign.failed" if all_failed else "campaign.completed",
+        subject_uid=fresh.uid,
+        subject_type="Campaign",
+        repository_uid=fresh.repository_uid,
+        actor_uid=fresh.created_by or "campaign",
+        payload={
+            "title": fresh.title or "",
+            "counts": summary["counts"],
+            "failed_parts": summary["failed_parts"],
+        },
+    )
+
+    now = datetime.now(UTC)
+    fresh.summary = summary
+    fresh.status = to_status
+    fresh.events = [
+        *(fresh.events or []),
+        {"ts": now.isoformat(), "type": "finalized", "status": to_status},
+    ]
+    fresh.updated_at = now
+    await fresh.save()

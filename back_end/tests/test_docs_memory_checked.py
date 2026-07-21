@@ -8,7 +8,12 @@ inputs, staleness comparison, and checked outcome mapping.
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from domains.checked.services.checked_service import _outcome_for_run
+import domains.checked.services.checked_service as checked_service
+from domains.checked.services.checked_service import (
+    _coverage_fields,
+    _outcome_for_run,
+    stamps_for_paths,
+)
 from domains.docs.services.doc_service import normalize_slug
 from domains.memory.services.memory_service import _fingerprint, _possibly_stale
 
@@ -57,3 +62,92 @@ def test_checked_outcome_awaiting_input_counts_as_success():
     # written by the per-turn hook, so treat it like completion.
     assert _outcome_for_run(status="awaiting_input", findings_count=0) == "clean"
     assert _outcome_for_run(status="awaiting_input", findings_count=2) == "findings"
+
+
+def test_checked_stamp_carries_agent_reported_coverage():
+    # complete_run stored the coverage contract on usage["coverage"]; the
+    # stamp must carry it so freshness reflects what was ACTUALLY examined.
+    verdicts = [{"lens": "bugs", "verdict": "checked-clean"}]
+    covered, skipped, lenses = _coverage_fields(
+        usage={
+            "coverage": {
+                "covered_paths": ["src/a.py"],
+                "skipped_paths": ["src/vendored/"],
+                "lens_verdicts": verdicts,
+            }
+        },
+        target={"paths": ["src/"]},
+    )
+    assert covered == ["src/a.py"]  # agent's report wins over the target
+    assert skipped == ["src/vendored/"]
+    assert lenses == verdicts
+
+
+def _stamp(uid, covered, *, repo="r1", days_ago=0):
+    return SimpleNamespace(
+        uid=uid,
+        repository_uid=repo,
+        run_uid=f"run-{uid}",
+        outcome="clean",
+        checked_at=datetime.now(UTC) - timedelta(days=days_ago),
+        covered_paths=covered,
+    )
+
+
+class _Nodes:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def all(self):
+        return list(self._rows)
+
+    async def filter(self, **kwargs):
+        return [
+            r
+            for r in self._rows
+            if all(getattr(r, k, None) == v for k, v in kwargs.items())
+        ]
+
+
+async def test_stamps_for_paths_matches_on_slash_boundaries(monkeypatch):
+    stamps = [
+        _stamp("under", ["src/api/a.py"], days_ago=2),  # under the scope
+        _stamp("above", ["src"], days_ago=1),  # scope under the covered path
+        _stamp("exact", ["src/api"], days_ago=3),
+        _stamp("sibling", ["src/api-v2/b.py"]),  # "/"-boundary: no match
+        _stamp("other-repo", ["src/api/a.py"], repo="r2"),
+    ]
+    monkeypatch.setattr(
+        checked_service, "Checked", SimpleNamespace(nodes=_Nodes(stamps))
+    )
+    out = await stamps_for_paths("r1", ["src/api"])
+    # Newest first; the boundary rule keeps src/api-v2 (and r2) out.
+    assert [c.uid for c in out] == ["above", "under", "exact"]
+
+
+async def test_stamps_for_paths_limits_and_handles_empty_inputs(monkeypatch):
+    stamps = [_stamp(f"s{i}", ["src/x.py"], days_ago=i) for i in range(15)]
+    monkeypatch.setattr(
+        checked_service, "Checked", SimpleNamespace(nodes=_Nodes(stamps))
+    )
+    out = await stamps_for_paths("r1", ["src"], limit=10)
+    assert len(out) == 10
+    assert [c.uid for c in out] == [f"s{i}" for i in range(10)]  # newest first
+    assert await stamps_for_paths("r1", []) == []
+
+
+def test_checked_stamp_falls_back_to_target_paths_without_a_report():
+    # Agent didn't report coverage — the dispatched scope is the best
+    # available claim of what it looked at; lens_verdicts default empty.
+    covered, skipped, lenses = _coverage_fields(
+        usage={}, target={"paths": ["src/", "tests/"]}
+    )
+    assert covered == ["src/", "tests/"]
+    assert skipped == []
+    assert lenses == []
+    # Malformed inputs degrade to empty, never raise.
+    covered, _, lenses = _coverage_fields(
+        usage={"coverage": {"lens_verdicts": ["not-a-dict"]}},
+        target={"paths": "not-a-list"},
+    )
+    assert covered == [] and lenses == []

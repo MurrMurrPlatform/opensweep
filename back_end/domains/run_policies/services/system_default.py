@@ -29,7 +29,6 @@ LEGACY_DEFAULT_MAX_WALL_SECONDS = (300, 600, 3600)
 # upsert migrates it forward to the current _DEFAULTS; any other value is
 # preserved. Keyed by field name → the exact legacy values to migrate off.
 LEGACY_DEFAULT_CEILINGS = {
-    "max_dollars": (1.0, 3.0, 20.0),
     "max_tool_turns": (40, 200),
     "max_files_touched": (50, 100),
 }
@@ -37,19 +36,16 @@ LEGACY_DEFAULT_CEILINGS = {
 
 _DEFAULTS = {
     "description": "OpenSweep default -- unlimited; stop runs from the UI, or pick a bounded policy.",
-    "max_tokens": None,
-    "max_dollars": None,
     # 0 = explicitly no wall guard (None would fall back to DEFAULT_MAX_WALL_SECONDS).
     "max_wall_seconds": 0,
     "max_tool_turns": None,
     "max_files_touched": None,
-    "max_test_seconds": None,
+    "max_continuation_passes": None,
     "cloud_allowed": True,
     "local_only": False,
     "allowed_executors": [],
     "dry_run": False,
     "warn_at_pct": 80,
-    "on_exceed": "abort",
     "daily_repo_run_count": None,
     "daily_repo_wall_seconds": None,
     "daily_repo_dollars": None,

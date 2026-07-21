@@ -110,9 +110,8 @@ const policyLimits = computed(() => {
   if (!p) return ''
   const bits: string[] = []
   if (p.max_wall_seconds) bits.push(`${p.max_wall_seconds}s wall`)
-  if (p.max_tokens) bits.push(`${p.max_tokens.toLocaleString()} tokens`)
-  if (p.max_dollars) bits.push(`$${p.max_dollars}`)
   if (p.max_tool_turns) bits.push(`${p.max_tool_turns} tool turns`)
+  if (p.max_continuation_passes != null) bits.push(`${p.max_continuation_passes} passes`)
   if (p.local_only) bits.push('local-only')
   if (p.dry_run) bits.push('dry-run')
   return bits.join(' · ')

@@ -3,10 +3,10 @@
 Bounds every tracking Run. Versioned so runs can explain which
 policy was in force when they were dispatched.
 
-Cost ceilings (max_tokens, max_dollars) only apply where the executor
-exposes exact pricing -- primarily internal_llm with an API provider. For
-subscription executors (claude_code / codex) the operational ceilings
-(wall-time, tool turns, files touched) are the safety net.
+Per-run money ceilings are gone: they were unmeasurable on subscription and
+local executors and were never enforced. Money safety lives in the daily
+aggregates (daily_repo_dollars et al.); per-run bounding is operational —
+wall-time, tool turns, continuation passes, files touched.
 """
 
 from neomodel import (
@@ -25,18 +25,13 @@ class RunPolicy(AsyncStructuredNode):
     name = StringProperty(default="")
     description = StringProperty(default="")
 
-    # Cost ceilings — apply where measurable.
-    max_tokens = IntegerProperty()
-    max_dollars = FloatProperty()
-
     # Operational ceilings — apply to every executor.
     max_wall_seconds = IntegerProperty()
     max_tool_turns = IntegerProperty()
     max_files_touched = IntegerProperty()
-    # Dormant storage from pre-v1 source-change experiments. Kept only so old
-    # databases continue to load; it is not exposed by v1 APIs.
-    max_patch_lines = IntegerProperty()
-    max_test_seconds = IntegerProperty()
+    # Extra continuation passes per run. None = unbounded — the continuation
+    # loop is then wall-limited only.
+    max_continuation_passes = IntegerProperty()
 
     # Routing constraints
     cloud_allowed = BooleanProperty(default=False)
@@ -46,7 +41,6 @@ class RunPolicy(AsyncStructuredNode):
     # Behavior
     dry_run = BooleanProperty(default=False)
     warn_at_pct = IntegerProperty(default=80)  # warn at 80% of any ceiling
-    on_exceed = StringProperty(default="abort")  # abort | pause_for_approval
 
     # Aggregate budgets (per repo, rolling daily)
     daily_repo_run_count = IntegerProperty()
@@ -59,6 +53,3 @@ class RunPolicy(AsyncStructuredNode):
 
     created_at = DateTimeProperty(default_now=True)
     updated_at = DateTimeProperty(default_now=True)
-
-
-ON_EXCEED_VALUES = {"abort", "pause_for_approval"}

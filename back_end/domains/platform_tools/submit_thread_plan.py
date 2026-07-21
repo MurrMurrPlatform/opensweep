@@ -4,6 +4,11 @@ The thread session agent persists its implementation plan here. Sets the
 thread's plan to `drafted` (idempotent re-submits allowed while the thread is
 still refining) and records a timeline event. Approval stays human-only —
 this tool can never set `approved`.
+
+`run_uid` (the calling run) drives self-healing thread resolution; `executor`
+is the actor identity stamped on the timeline/audit. They used to be conflated
+onto the single `executor` kwarg — the envelope dispatch loop injects the
+executor KIND there, not a run uid, so the two are now separate.
 """
 
 from __future__ import annotations
@@ -27,7 +32,18 @@ async def submit_thread_plan(
     *,
     thread_uid: str,
     plan_markdown: str,
+    # The calling run — used to self-heal thread resolution (a run knows its
+    # own thread_uid even when the agent passes the wrong candidate). Distinct
+    # from `executor`, the actor identity recorded on the timeline/audit.
+    run_uid: str = "",
+    # The envelope dispatch loop forces `source_run_uid` (never run_uid) onto
+    # every tool call — accept it as the run_uid fallback so envelope-dispatched
+    # calls still self-heal thread resolution.
+    source_run_uid: str = "",
     executor: str = "manual",
+    # Envelope/dispatcher inject scope keys uniformly on every tool call —
+    # absorb the ones this tool doesn't name.
+    **_: Any,
 ) -> dict[str, Any]:
     from domains.threads.models import Thread
 
@@ -37,7 +53,8 @@ async def submit_thread_plan(
         resolve_thread,
     )
 
-    thread = await resolve_thread(thread_uid, run_uid=executor)
+    run_uid = run_uid or source_run_uid
+    thread = await resolve_thread(thread_uid, run_uid=run_uid)
     if thread is None:
         raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_DETAIL)
     thread_uid = thread.uid  # the candidate may have been the ticket uid

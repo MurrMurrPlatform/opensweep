@@ -9,6 +9,7 @@ time from these stamps vs Doc.code_changed_at.
 from neomodel import (
     AsyncStructuredNode,
     DateTimeProperty,
+    JSONProperty,
     StringProperty,
 )
 
@@ -29,6 +30,15 @@ class Checked(AsyncStructuredNode):
     outcome = StringProperty(default="clean", index=True)
 
     checked_at = DateTimeProperty(default_now=True, index=True)
+
+    # Coverage contract (complete_run → Run.usage["coverage"]): what this look
+    # ACTUALLY examined, not just what it was dispatched at. Falls back to the
+    # run's target paths when the agent didn't report covered_paths.
+    covered_paths = JSONProperty(default=[])  # repo-relative paths examined
+    skipped_paths = JSONProperty(default=[])  # in-scope paths not examined
+    # [{lens, verdict: checked-clean|checked-findings|skipped, note?}] — one
+    # entry per audit lens the run was assigned.
+    lens_verdicts = JSONProperty(default=[])
 
 
 CHECKED_OUTCOMES = {"clean", "findings", "failed"}
