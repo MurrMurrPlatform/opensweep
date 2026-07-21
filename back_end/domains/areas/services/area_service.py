@@ -291,16 +291,18 @@ def _scopes_overlap(a: list[str], b: list[str]) -> bool:
     return any(_paths_overlap(x, y) for x in a for y in b)
 
 
-async def area_detail(uid: str) -> AreaDetailDTO:
+async def area_detail(a: Area) -> AreaDetailDTO:
     """Everything the area detail page renders in one load: the scope sized
     against the live tree, linked + suggested docs, related areas across
-    the subsystem/feature axis, recent coverage stamps, and pending edits."""
+    the subsystem/feature axis, recent coverage stamps, and pending edits.
+
+    Takes the pre-loaded Area (the endpoint already fetched it for the
+    tenancy check) — no second lookup."""
     from domains.checked.services import checked_service
     from domains.docs.services import doc_service
     from domains.repositories.models import Repository
     from domains.repositories.services.file_tree import file_tree_paths
 
-    a = await get_area(uid)
     scope_paths = [str(p) for p in (a.scope_paths or []) if p]
 
     repo = await Repository.nodes.get_or_none(uid=a.repository_uid)

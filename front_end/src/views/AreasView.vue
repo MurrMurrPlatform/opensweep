@@ -501,8 +501,8 @@ async function confirmResolveAll() {
                       type="button"
                       class="mt-0.5 rounded-sm p-1 text-muted-foreground hover:text-foreground"
                       :title="row.area.spec ? 'Toggle spec preview' : 'No spec yet'"
-                      :disabled="!row.area.spec"
-                      @click.stop.prevent="toggleSpec(row.area.uid)"
+                      :class="!row.area.spec && 'opacity-40'"
+                      @click.stop.prevent="row.area.spec && toggleSpec(row.area.uid)"
                     >
                       <component :is="expandedSpecs.has(row.area.uid) ? ChevronDown : ChevronRight" class="h-3.5 w-3.5" />
                     </button>
@@ -575,8 +575,8 @@ async function confirmResolveAll() {
                     type="button"
                     class="mt-0.5 rounded-sm p-1 text-muted-foreground hover:text-foreground"
                     :title="a.spec ? 'Toggle spec preview' : 'No spec yet'"
-                    :disabled="!a.spec"
-                    @click.stop.prevent="toggleSpec(a.uid)"
+                    :class="!a.spec && 'opacity-40'"
+                    @click.stop.prevent="a.spec && toggleSpec(a.uid)"
                   >
                     <component :is="expandedSpecs.has(a.uid) ? ChevronDown : ChevronRight" class="h-3.5 w-3.5" />
                   </button>

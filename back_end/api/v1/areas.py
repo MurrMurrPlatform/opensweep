@@ -55,7 +55,7 @@ async def area_detail(
     coverage, pending edits."""
     a = await area_service.get_area(uid)
     await require_repo_in_org(a.repository_uid, user.org_uid)
-    return await area_service.area_detail(uid)
+    return await area_service.area_detail(a)
 
 
 @router.patch("/areas/{uid}", operation_id="opensweep_update_area")

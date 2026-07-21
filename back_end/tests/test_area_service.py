@@ -492,7 +492,7 @@ async def test_area_detail_sizes_scope_against_the_tree(stores, detail_seams):
     )
     detail_seams.tree = (["src/api/a.py", "src/api/b.py", "other.md"], "")
 
-    out = await area_service.area_detail(a.uid)
+    out = await area_service.area_detail(a)
 
     assert out.area.uid == a.uid
     assert out.tree_degraded == ""
@@ -510,7 +510,7 @@ async def test_area_detail_scope_files_cap_at_50(stores, detail_seams):
         repository_uid="r1", key="backend", scope_paths=["src"]
     )
     detail_seams.tree = ([f"src/f{i:03}.py" for i in range(80)], "")
-    out = await area_service.area_detail(a.uid)
+    out = await area_service.area_detail(a)
     (entry,) = out.scope
     assert entry.file_count == 80
     assert len(entry.files) == 50
@@ -523,7 +523,7 @@ async def test_area_detail_degraded_tree_never_declares_scopes_dead(
         repository_uid="r1", key="backend", scope_paths=["src/api"]
     )
     detail_seams.tree = ([], "no active git provider connection")
-    out = await area_service.area_detail(a.uid)
+    out = await area_service.area_detail(a)
     assert out.tree_degraded == "no active git provider connection"
     (entry,) = out.scope
     assert entry.file_count is None
@@ -544,7 +544,7 @@ async def test_area_detail_links_and_suggests_docs(stores, detail_seams):
         ),
         SimpleNamespace(uid="d3", slug="fe", title="FE", watch_paths=["front_end"]),
     ]
-    out = await area_service.area_detail(a.uid)
+    out = await area_service.area_detail(a)
     # Linked: best-effort — the deleted uid is skipped, not an error.
     assert [d.uid for d in out.linked_docs] == ["d1"]
     assert out.linked_docs[0].slug == "api"
@@ -572,11 +572,11 @@ async def test_area_detail_relates_features_and_subsystem_leaves(
         repository_uid="r1", key="frontend", scope_paths=["front_end"]
     )
 
-    sub_out = await area_service.area_detail(sub.uid)
+    sub_out = await area_service.area_detail(sub)
     assert [r.uid for r in sub_out.related_areas] == [feat.uid]
     assert sub_out.related_areas[0].kind == "feature"
 
-    feat_out = await area_service.area_detail(feat.uid)
+    feat_out = await area_service.area_detail(feat)
     related_keys = {r.key for r in feat_out.related_areas}
     assert related_keys == {"backend/api", "frontend"}
 
@@ -600,7 +600,7 @@ async def test_area_detail_coverage_and_pending_edits(stores, detail_seams):
         repository_uid="r1", proposed_spec="s", key="unrelated", source_run_uid="run-1"
     )
 
-    out = await area_service.area_detail(a.uid)
+    out = await area_service.area_detail(a)
 
     assert detail_seams.stamp_calls == [("r1", ["src"], 10)]
     (cov,) = out.coverage

@@ -149,8 +149,8 @@ async def stamps_for_paths(
 
     rows = [
         c
-        for c in await Checked.nodes.all()
-        if c.repository_uid == repository_uid and _overlaps(c)
+        for c in await Checked.nodes.filter(repository_uid=repository_uid)
+        if _overlaps(c)
     ]
     rows.sort(key=lambda c: _dt(c.checked_at), reverse=True)
     return rows[: max(limit, 0)]
