@@ -1345,6 +1345,7 @@ export type CommentSubjectType =
   | 'run'
   | 'scheduled_agent'
   | 'doc'
+  | 'area'
 
 export type CommentAuthorKind = 'user' | 'opensweep'
 
