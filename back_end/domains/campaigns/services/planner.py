@@ -670,3 +670,63 @@ def build_plan(
     for idx, part in enumerate(parts):
         part["idx"] = idx
     return parts
+
+
+def build_plan_by_kind(
+    kind: str,
+    areas: list[dict],
+    lenses: list[dict],
+    *,
+    selection: str = "all",
+    k: int = 3,
+    path_recency: dict | None = None,
+    feature_areas: list[dict] | None = None,
+) -> list[dict]:
+    """Kind-dispatched plan builder. Additive alongside the existing build_plan.
+
+    kind="subsystem": one kind="area" part per area, lens_keys = all enabled
+        lenses. selection filters: all=every area; stale=areas where
+        area.get("stale"); rotation=k least-recently-covered via _area_recency.
+    kind="feature": one kind="feature" part per leaf in feature_areas, lens_keys
+        = all enabled lenses. selection: all=every leaf; stale/rotation=stale
+        leaves only.
+    kind="global": one kind="global" part per enabled lens (each expected to
+        carry a global_agent_key).
+    kind="batch": returns [] (handled by batch.py).
+    """
+    enabled = [lens for lens in lenses if lens.get("enabled", True)]
+    enabled_keys = [str(lens["key"]) for lens in enabled]
+
+    def _global_part_bk(lens: dict) -> dict:
+        return _part(0, "global", f"Global sweep — {lens['key']}", None, [str(lens["key"])])
+
+    parts: list[dict]
+
+    if kind == "subsystem":
+        if selection == "stale":
+            candidate_areas = [a for a in areas if a.get("stale")]
+        elif selection == "rotation":
+            recency = path_recency or {}
+            scored = [(i, _area_recency(a, recency)) for i, a in enumerate(areas)]
+            _EPOCH = datetime.min
+            scored.sort(key=lambda pair: (pair[1] is not None, pair[1] or _EPOCH, pair[0]))
+            candidate_areas = [areas[i] for i, _ in scored[: max(k, 0)]]
+        else:  # all
+            candidate_areas = list(areas)
+        parts = [_part(0, "area", a["title"], a, enabled_keys) for a in candidate_areas]
+
+    elif kind == "feature":
+        leaves = list(feature_areas or [])
+        if selection in ("stale", "rotation"):
+            leaves = [fa for fa in leaves if fa.get("stale")]
+        parts = [_part(0, "feature", fa["title"], fa, enabled_keys) for fa in leaves]
+
+    elif kind == "global":
+        parts = [_global_part_bk(lens) for lens in enabled]
+
+    else:  # batch (and any unknown kind)
+        return []
+
+    for idx, part in enumerate(parts):
+        part["idx"] = idx
+    return parts
