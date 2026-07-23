@@ -145,3 +145,50 @@ async def test_launch_batch_launches_each_child_and_runs_the_parent(
 
     assert sorted(launched) == sorted(parent.child_uids)
     assert store.rows[parent.uid].status == "running"
+
+
+async def test_batch_parent_finalizes_when_one_child_fails_to_launch(
+    store, create_seam, monkeypatch
+):
+    """Regression: a child whose launch() raises must be cancelled (not left in
+    planning) so aggregate_batch can see all children as terminal and the parent
+    can reach done rather than hanging in running forever."""
+    parent = await batch.create_batch("repo1", CreateCampaignRequest(kind="batch"))
+
+    # Pick the first child uid — its launch will raise; the others succeed.
+    failing_uid = parent.child_uids[0]
+
+    async def fake_launch(uid, **_kw):
+        if uid == failing_uid:
+            raise RuntimeError("simulated dispatch error")
+        return SimpleNamespace(uid=uid)
+
+    monkeypatch.setattr(campaign_service, "launch", fake_launch)
+
+    await batch.launch_batch(parent)
+
+    # Parent must be running after launch_batch.
+    assert store.rows[parent.uid].status == "running"
+
+    # The failed child must be in a terminal state (cancelled), not stuck in
+    # planning — that was the bug.
+    failed_child = store.rows[failing_uid]
+    assert failed_child.status in {"cancelled", "failed", "done"}, (
+        f"expected terminal status for failed child, got {failed_child.status!r}"
+    )
+
+    # Drive the surviving children to done so aggregate_batch can finalize.
+    for uid in parent.child_uids:
+        if uid != failing_uid:
+            child = store.rows[uid]
+            child.status = "done"
+            child.summary = {"counts": {"total": 2}}
+            await child.save()
+
+    # aggregate_batch must now return True (parent reaches done).
+    fresh_parent = store.rows[parent.uid]
+    result = await batch.aggregate_batch(fresh_parent)
+    assert result is True, "aggregate_batch should have finalized the parent"
+    assert store.rows[parent.uid].status == "done", (
+        "parent must reach done — it was hanging in running (the original bug)"
+    )

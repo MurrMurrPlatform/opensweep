@@ -104,8 +104,9 @@ async def launch_batch(parent: Campaign) -> None:
 
     Each child launches through campaign_service.launch (its own replan +
     dispatch); the parent just tracks the fleet. A child that fails to launch
-    does not stop the others — the roll-up treats a never-launched child as a
-    terminal (failed) member once the tick sees it."""
+    is immediately cancelled (planning → cancelled, a legal transition) so
+    aggregate_batch sees it as terminal and the parent can finalize rather
+    than hanging in running forever."""
     from domains.campaigns.models import is_legal_status_transition
     from domains.campaigns.services import campaign_service
 
@@ -115,9 +116,23 @@ async def launch_batch(parent: Campaign) -> None:
             await campaign_service.launch(uid, actor_uid=parent.created_by or "")
             launched += 1
         except Exception as exc:  # noqa: BLE001 — one bad child never stalls the batch
+            err_msg = f"{type(exc).__name__}: {exc}"
             await campaign_service.record_event(
-                parent, "batch_child_launch_failed", child=uid, error=f"{type(exc).__name__}: {exc}"
+                parent, "batch_child_launch_failed", child=uid, error=err_msg
             )
+            # Transition the failed child to cancelled so aggregate_batch treats
+            # it as terminal.  We use cancel() which performs the legal
+            # planning → cancelled move; if that itself raises (e.g. the child
+            # was already terminal) we swallow the error so the other children
+            # still get launched.
+            try:
+                await campaign_service.cancel(
+                    uid,
+                    reason=f"batch child failed to launch: {err_msg}",
+                    actor_uid=parent.created_by or "",
+                )
+            except Exception:  # noqa: BLE001 — best-effort; must not stall the loop
+                pass
 
     fresh = await Campaign.nodes.get_or_none(uid=parent.uid) or parent
     if is_legal_status_transition(fresh.status or "planning", "running"):
