@@ -5,7 +5,7 @@ migration derives the new fields so all existing rows render correctly after
 the schema upgrade.
 """
 
-VERSION = 13
+VERSION = 14
 NAME = "campaign-kind-fields"
 
 SCHEMA_UP = ["CREATE INDEX campaign_kind IF NOT EXISTS FOR (c:Campaign) ON (c.kind)"]

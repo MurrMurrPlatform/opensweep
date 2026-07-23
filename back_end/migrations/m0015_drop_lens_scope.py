@@ -1,4 +1,4 @@
-VERSION = 14
+VERSION = 15
 NAME = "drop-lens-scope"
 SCHEMA_UP: list[str] = []
 SCHEMA_DOWN: list[str] = []
