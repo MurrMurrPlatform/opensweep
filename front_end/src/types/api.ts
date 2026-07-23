@@ -1650,17 +1650,49 @@ export interface CampaignDTO {
   updated_at?: string | null
 }
 
+export type CampaignSelection = 'all' | 'stale' | 'rotation'
+
 export interface CreateCampaignRequest {
-  template: CampaignTemplate
-  /** Empty = every enabled lens; 'focused' reads its focus lens from [0]. */
+  /** Kind-based model (new): kind + coverage_keys + selection. */
+  kind?: CampaignKind
+  /** Area-map keys to scope the plan to (empty = whole tree for the kind). */
+  coverage_keys?: string[]
+  /** Which areas to include: all | stale | rotation-k. */
+  selection?: CampaignSelection
+  /** Empty = every enabled lens. */
   lens_keys?: string[]
   effort?: AgentEffort | ''
   /** Rotation only: how many areas this pass covers. */
   k?: number
   max_parallel?: number
   title?: string
-  /** Scope the sweep to areas under this key prefix ('' = the whole map). */
+  /** Legacy: kept optional for back-compat; prefer kind-based model. */
+  template?: CampaignTemplate
+  /** Legacy: kept optional for back-compat; prefer coverage_keys. */
   area_prefix?: string
+}
+
+/** Live plan preview — what would be dispatched if a campaign were launched
+ *  right now. Returned by POST /repositories/{uid}/campaign-plan-preview. */
+export interface CampaignPlanPreview {
+  total_runs: number
+  by_kind: { area?: number; feature?: number; global?: number }
+  areas: Array<{
+    title: string
+    kind: string
+    scope_paths: string[]
+    area_keys: string[]
+    file_count: number | null
+  }>
+  uncovered_files: number
+  oversized: string[]
+  degraded: string
+  source: string
+}
+
+/** Response of POST /areas/{uid}/revise-spec. */
+export interface ReviseSpecResponse {
+  run_uid: string
 }
 
 /** One area of the would-be partition (campaign-areas preview). */
@@ -1777,17 +1809,14 @@ export interface RefineAnalysisResponse {
 
 // ── Lenses (audit checklist prompts — platform rows, org-tunable) ───────────
 
-export type LensScope = 'local' | 'global'
-
 export interface LensDTO {
   uid: string
   key: string
   title: string
-  scope: LensScope
   body: string
   tags: string[]
   wants: string[]
-  /** Global lenses only: the sweep agent this lens backs. */
+  /** Global lenses only: the sweep agent this lens backs. Non-empty iff global. */
   global_agent_key: string
   enabled: boolean
   provenance: string

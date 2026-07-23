@@ -13,6 +13,7 @@ import {
   Pencil,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-vue-next'
 import { useAreaStore } from '@/stores/areaStore'
 import { useRepositoryStore } from '@/stores/repositoryStore'
@@ -28,9 +29,11 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/ui/error-state'
+import { Textarea } from '@/components/ui/textarea'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -258,6 +261,64 @@ async function generateSpecs() {
   }
 }
 
+// ── Inline spec editor ───────────────────────────────────────────────────────
+
+const specEditing = ref(false)
+const specDraft = ref('')
+const specSaving = ref(false)
+
+function startSpecEdit() {
+  specDraft.value = area.value?.spec ?? ''
+  specEditing.value = true
+}
+
+function cancelSpecEdit() {
+  specEditing.value = false
+  specDraft.value = ''
+}
+
+async function saveSpec() {
+  const a = area.value
+  if (!a || specSaving.value) return
+  specSaving.value = true
+  try {
+    const { area: saved, warnings } = await areaStore.patchArea(a.uid, { spec: specDraft.value })
+    toastPatch('Spec saved', saved.key, warnings)
+    specEditing.value = false
+    specDraft.value = ''
+    await refresh()
+  } catch (e: unknown) {
+    toast.error("Couldn't save spec", e instanceof Error ? e.message : String(e))
+  } finally {
+    specSaving.value = false
+  }
+}
+
+// ── Revise with AI ────────────────────────────────────────────────────────────
+
+const reviseInstruction = ref('')
+const revising = ref(false)
+
+async function reviseSpec() {
+  const a = area.value
+  const instruction = reviseInstruction.value.trim()
+  if (!a || !instruction || revising.value) return
+  revising.value = true
+  try {
+    const result = await areaStore.reviseSpec(a.uid, instruction)
+    reviseInstruction.value = ''
+    toast.success(
+      'AI revision dispatched',
+      `Run ${result.run_uid.slice(0, 8)} — a pending edit will appear in the review queue when it finishes.`,
+    )
+  } catch (e: unknown) {
+    const msg = e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)
+    toast.error("Couldn't dispatch revision", msg)
+  } finally {
+    revising.value = false
+  }
+}
+
 // ── Danger row: edit + delete ────────────────────────────────────────────────
 
 const editOpen = ref(false)
@@ -333,16 +394,62 @@ async function confirmDelete() {
 
       <!-- ── Spec ────────────────────────────────────────────────────────── -->
       <Card>
-        <CardHeader class="pb-2">
+        <CardHeader class="flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
           <CardTitle class="text-base">{{ detail.is_feature_parent ? 'Charter (optional)' : 'Spec' }}</CardTitle>
+          <Button v-if="!specEditing" variant="ghost" size="sm" @click="startSpecEdit">
+            <Pencil class="h-3.5 w-3.5" /> Edit
+          </Button>
         </CardHeader>
-        <CardContent>
-          <MarkdownView v-if="area.spec" :model-value="area.spec" preview-only />
-          <p v-else class="text-sm text-muted-foreground">
-            {{ detail.is_feature_parent
-              ? 'No charter — a parent feature groups its sub-features; each sub-feature carries its own spec below.'
-              : 'No spec yet — edit the area to record what to check here.' }}
-          </p>
+        <CardContent class="space-y-3">
+          <!-- Inline editor -->
+          <template v-if="specEditing">
+            <Textarea
+              v-model="specDraft"
+              class="min-h-40 font-mono text-xs"
+              placeholder="Spec markdown…"
+            />
+            <div class="flex items-center gap-2">
+              <Button size="sm" :loading="specSaving" @click="saveSpec">Save</Button>
+              <Button variant="ghost" size="sm" :disabled="specSaving" @click="cancelSpecEdit">
+                <X class="h-3.5 w-3.5" /> Cancel
+              </Button>
+            </div>
+          </template>
+          <template v-else>
+            <MarkdownView v-if="area.spec" :model-value="area.spec" preview-only />
+            <p v-else class="text-sm text-muted-foreground">
+              {{ detail.is_feature_parent
+                ? 'No charter — a parent feature groups its sub-features; each sub-feature carries its own spec below.'
+                : 'No spec yet — click Edit to add one, or use Revise with AI below.' }}
+            </p>
+          </template>
+
+          <!-- Revise with AI -->
+          <div v-if="!specEditing" class="border-t border-border pt-3">
+            <p class="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Sparkles class="h-3.5 w-3.5" /> Revise with AI
+            </p>
+            <div class="flex gap-2">
+              <Input
+                v-model="reviseInstruction"
+                placeholder="e.g. make criterion 2 more concrete"
+                class="text-sm"
+                @keydown.enter.prevent="reviseSpec"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                :disabled="!reviseInstruction.trim() || revising"
+                :loading="revising"
+                @click="reviseSpec"
+              >
+                Revise
+              </Button>
+            </div>
+            <p class="mt-1.5 text-xs text-muted-foreground">
+              Dispatches an AI run that proposes a revised spec as a pending edit for your review.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
