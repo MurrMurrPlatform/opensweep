@@ -1607,6 +1607,10 @@ export interface CampaignPlanSummary {
   degraded?: string
   /** '' = the whole map; else the plan was sliced to this key prefix. */
   area_prefix?: string
+  /** Total number of runs (parts) in this plan — from Task 5 planner. */
+  total_runs?: number
+  /** Part counts broken down by kind (area, feature, global). */
+  by_kind?: { area?: number; feature?: number; global?: number }
 }
 
 /** Append-only lifecycle log entry (created/launched/part_done/finalized/…). */
@@ -1615,6 +1619,8 @@ export interface CampaignEvent {
   type: string
   [key: string]: unknown
 }
+
+export type CampaignKind = 'subsystem' | 'feature' | 'global' | 'batch'
 
 export interface CampaignDTO {
   uid: string
@@ -1629,6 +1635,10 @@ export interface CampaignDTO {
   k: number
   /** '' = the whole map; else the sweep is scoped to areas under this key prefix. */
   area_prefix: string
+  /** Campaign kind: subsystem | feature | global | batch. */
+  kind?: CampaignKind
+  /** Batch parents: UIDs of child campaigns (present when kind === 'batch'). */
+  child_uids?: string[]
   parts: CampaignPart[]
   max_parallel: number
   created_by: string
