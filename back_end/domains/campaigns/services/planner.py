@@ -4,8 +4,8 @@
 docs' watch scopes under one invariant — EVERY FILE IS OWNED BY EXACTLY
 ONE AREA, the doc page with the most specific matching watch prefix —
 then right-sizes the result (split oversized, merge tiny same-branch,
-sweep uncovered paths into a remainder area). `build_plan` turns areas +
-lenses into the campaign's part list per template. Both are pure so the
+sweep uncovered paths into a remainder area). `build_plan_by_kind` turns
+areas + lenses into the campaign's part list per kind. Both are pure so the
 whole planning surface is unit-testable; campaign_service supplies the
 loaded docs/tree/lenses.
 """
@@ -594,82 +594,6 @@ def _part(idx: int, kind: str, title: str, area: dict | None, lens_keys: list[st
     if a.get("degraded"):
         part["degraded"] = True
     return part
-
-
-def build_plan(
-    template: str,
-    areas: list[dict],
-    lenses: list[dict],
-    *,
-    k: int = 3,
-    path_recency: dict[str, datetime | None] | None = None,
-    focus_lens: str | None = None,
-    feature_areas: list[dict] | None = None,
-) -> list[dict]:
-    """Areas + lenses → the campaign's ordered part list.
-
-    - full:     every area (all enabled local lenses) + one feature part per
-                `feature_areas` LEAF (implementation-gaps lens) + one global
-                part per enabled global lens.
-    - rotation: the k least-recently-covered areas (never-covered first,
-                scored by `path_recency` over their scope paths) + one feature
-                part per STALE feature leaf (implementation-gaps); no globals.
-    - focused:  every area with just `focus_lens`, plus one feature part per
-                STALE feature leaf (implementation-gaps), plus that lens's
-                global sweep when it names a global agent.
-
-    Feature leaves join every scope now — full audits all of them; rotation
-    and focused audit the ones the unified staleness axis flags (`stale` on
-    the feature dict, set from area_is_stale). Parts get idx assigned
-    sequentially, areas before features before globals.
-    """
-    enabled = [dict(lens) for lens in lenses if lens.get("enabled", True)]
-    local = [lens for lens in enabled if (lens.get("scope") or "local") == "local"]
-    global_ = [lens for lens in enabled if lens.get("scope") == "global"]
-    local_keys = [str(lens["key"]) for lens in local]
-    features = list(feature_areas or [])
-    stale_features = [fa for fa in features if fa.get("stale")]
-
-    def _global_part(lens: dict) -> dict:
-        return _part(0, "global", f"Global sweep — {lens['key']}", None, [str(lens["key"])])
-
-    def _feature_parts(feats: list[dict]) -> list[dict]:
-        return [
-            _part(0, "feature", fa["title"], fa, ["implementation-gaps"])
-            for fa in feats
-        ]
-
-    picked: list[dict]
-    feature_parts: list[dict]
-    globals_out: list[dict]
-    if template == "rotation":
-        recency = path_recency or {}
-        scored = [(i, _area_recency(a, recency)) for i, a in enumerate(areas)]
-        _EPOCH = datetime.min
-        scored.sort(key=lambda pair: (pair[1] is not None, pair[1] or _EPOCH, pair[0]))
-        picked = [
-            _part(0, "area", areas[i]["title"], areas[i], local_keys)
-            for i, _ in scored[: max(k, 0)]
-        ]
-        feature_parts = _feature_parts(stale_features)
-        globals_out = []
-    elif template == "focused":
-        focus = str(focus_lens or "")
-        picked = [_part(0, "area", a["title"], a, [focus]) for a in areas]
-        feature_parts = _feature_parts(stale_features)
-        lens = next((lens for lens in enabled if str(lens.get("key")) == focus), None)
-        globals_out = (
-            [_global_part(lens)] if lens is not None and lens.get("global_agent_key") else []
-        )
-    else:  # full
-        picked = [_part(0, "area", a["title"], a, local_keys) for a in areas]
-        feature_parts = _feature_parts(features)
-        globals_out = [_global_part(lens) for lens in global_]
-
-    parts = picked + feature_parts + globals_out
-    for idx, part in enumerate(parts):
-        part["idx"] = idx
-    return parts
 
 
 def build_plan_by_kind(
