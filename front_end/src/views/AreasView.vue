@@ -225,6 +225,15 @@ function toggleCollapse(key: string) {
   collapsedKeys.value = next
 }
 
+const collapsedFeatureKeys = ref<Set<string>>(new Set())
+
+function toggleFeatureCollapse(key: string) {
+  const next = new Set(collapsedFeatureKeys.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedFeatureKeys.value = next
+}
+
 /** A row (group or area) has children when any subsystem key nests under it. */
 function hasChildren(key: string): boolean {
   return subsystems.value.some((a) => a.key.startsWith(key + '/'))
@@ -251,7 +260,7 @@ const visibleFeatureTreeRows = computed(() =>
   featureTreeRows.value.filter((row) => {
     const segments = row.key.split('/')
     for (let i = 1; i < segments.length; i++) {
-      if (collapsedKeys.value.has(segments.slice(0, i).join('/'))) return false
+      if (collapsedFeatureKeys.value.has(segments.slice(0, i).join('/'))) return false
     }
     return true
   }),
@@ -669,10 +678,10 @@ async function confirmResolveAll() {
                   type="button"
                   class="flex w-full items-center gap-1.5 bg-muted/40 py-1.5 pr-3 text-left text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                   :style="indent(row.depth)"
-                  :title="collapsedKeys.has(row.key) ? 'Expand' : 'Collapse'"
-                  @click="toggleCollapse(row.key)"
+                  :title="collapsedFeatureKeys.has(row.key) ? 'Expand' : 'Collapse'"
+                  @click="toggleFeatureCollapse(row.key)"
                 >
-                  <component :is="collapsedKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5 shrink-0" />
+                  <component :is="collapsedFeatureKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5 shrink-0" />
                   <FolderTree class="h-3.5 w-3.5 shrink-0" />
                   <span class="truncate font-mono">{{ row.name }}/</span>
                 </button>
@@ -688,10 +697,10 @@ async function confirmResolveAll() {
                       v-if="hasFeatureChildren(row.key)"
                       type="button"
                       class="mt-0.5 rounded-sm p-1 text-muted-foreground hover:text-foreground"
-                      :title="collapsedKeys.has(row.key) ? 'Expand children' : 'Collapse children'"
-                      @click.stop.prevent="toggleCollapse(row.key)"
+                      :title="collapsedFeatureKeys.has(row.key) ? 'Expand children' : 'Collapse children'"
+                      @click.stop.prevent="toggleFeatureCollapse(row.key)"
                     >
-                      <component :is="collapsedKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
+                      <component :is="collapsedFeatureKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
                     </button>
                     <button
                       v-else
