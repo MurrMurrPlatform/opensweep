@@ -297,3 +297,20 @@ def test_focused_on_a_global_lens_adds_its_sweep():
     assert len(globals_) == 1
     assert globals_[0]["lens_keys"] == ["architecture-review"]
     assert globals_[0]["idx"] == 2  # after the areas
+
+
+# ── filter_by_keys ──────────────────────────────────────────────────────────
+
+
+def test_filter_by_keys_multi_select():
+    areas = [
+        {"area_key": "backend/delivery/convergence", "title": "a"},
+        {"area_key": "backend/runs", "title": "b"},
+        {"area_key": "frontend/views", "title": "c"},
+        {"area_key": "", "title": "remainder"},
+    ]
+    from domains.campaigns.services import planner
+
+    got = {a["title"] for a in planner.filter_by_keys(areas, ["backend/delivery", "frontend/views"])}
+    assert got == {"a", "c"}
+    assert len(planner.filter_by_keys(areas, [])) == 4  # empty = all

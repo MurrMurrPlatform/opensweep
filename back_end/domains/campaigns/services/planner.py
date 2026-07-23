@@ -529,6 +529,26 @@ def filter_by_prefix(areas: list[dict], area_prefix: str) -> list[dict]:
     ]
 
 
+def filter_by_keys(areas: list[dict], keys: list[str]) -> list[dict]:
+    """The areas at or under ANY key in `keys` in the key hierarchy. Pure.
+
+    Empty `keys` keeps everything. Areas with an empty area_key
+    (docs-derived, remainder) have no place in the hierarchy, so they only
+    survive an empty keys list. Boundary via child_key_prefix_of — "backend"
+    never captures "backend-jobs".
+    """
+    ks = [k for k in (str(k or "").strip() for k in keys) if k]
+    if not ks:
+        return list(areas)
+
+    def _match(key: str) -> bool:
+        return bool(key) and any(
+            key == k or child_key_prefix_of(k, key) for k in ks
+        )
+
+    return [a for a in areas if _match(str(a.get("area_key") or ""))]
+
+
 def _area_recency(
     area: dict, path_recency: dict[str, datetime | None]
 ) -> datetime | None:
