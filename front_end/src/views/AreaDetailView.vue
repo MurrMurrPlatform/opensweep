@@ -8,6 +8,7 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  FolderTree,
   Layers,
   Pencil,
   Sparkles,
@@ -18,6 +19,7 @@ import { useRepositoryStore } from '@/stores/repositoryStore'
 import { useToast } from '@/composables/useToast'
 import { ApiError } from '@/services/api'
 import { areaKindHelp, areaKindVariant, areaStaleTitle } from '@/lib/areas'
+import { buildTreeRows } from '@/lib/treeRows'
 import { formatRelativeTime } from '@/lib/utils'
 import AreaEditDialog from '@/components/areas/AreaEditDialog.vue'
 import AreaEditReviewCard from '@/components/areas/AreaEditReviewCard.vue'
@@ -193,6 +195,11 @@ const featureRollup = computed(() => {
   }
 })
 
+/** Sub-feature list rendered as a hierarchy. */
+const subFeatureTreeRows = computed(() =>
+  buildTreeRows(detail.value?.sub_features ?? [], (f) => f.key),
+)
+
 const expandedSpecs = ref<Set<string>>(new Set())
 function toggleSpec(key: string) {
   const next = new Set(expandedSpecs.value)
@@ -200,6 +207,34 @@ function toggleSpec(key: string) {
   else next.add(key)
   expandedSpecs.value = next
 }
+
+/** Depth-based left padding for sub-feature tree rows (matches AreasView). */
+function indentSubFeature(depth: number) {
+  return { paddingLeft: `${12 + depth * 20}px` }
+}
+
+/** Whether any other sub-feature is nested under this key. */
+function hasSubFeatureChildren(key: string): boolean {
+  return (detail.value?.sub_features ?? []).some((f) => f.key.startsWith(key + '/'))
+}
+
+const collapsedSubFeatureKeys = ref<Set<string>>(new Set())
+function toggleSubFeatureCollapse(key: string) {
+  const next = new Set(collapsedSubFeatureKeys.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedSubFeatureKeys.value = next
+}
+
+const visibleSubFeatureRows = computed(() =>
+  subFeatureTreeRows.value.filter((row) => {
+    const segments = row.key.split('/')
+    for (let i = 1; i < segments.length; i++) {
+      if (collapsedSubFeatureKeys.value.has(segments.slice(0, i).join('/'))) return false
+    }
+    return true
+  }),
+)
 
 const generatingSpecs = ref(false)
 async function generateSpecs() {
@@ -351,41 +386,68 @@ async function confirmDelete() {
             No sub-features under this feature yet.
           </p>
           <ul v-else class="divide-y divide-border">
-            <li v-for="leaf in detail.sub_features" :key="leaf.uid" class="px-4 py-2">
-              <div class="flex flex-wrap items-center gap-2">
-                <RouterLink
-                  :to="{ name: 'area-detail', params: { uid: leaf.uid } }"
-                  class="min-w-0 truncate text-sm font-medium hover:underline"
-                >
-                  {{ leaf.title || leaf.key }}
-                </RouterLink>
-                <span class="truncate font-mono text-[10px] text-muted-foreground">{{ leaf.key }}</span>
-                <span
-                  v-if="leaf.stale"
-                  class="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-                  title="Code changed under this sub-feature's scope since its last review"
-                />
-                <Badge v-if="!leaf.has_spec" variant="warn" class="px-1.5 text-[10px]" title="No spec — audit skipped until one exists">no spec</Badge>
-                <Badge
-                  :variant="leaf.coverage_count > 0 ? 'success' : 'secondary'"
-                  class="ml-auto px-1.5 text-[10px]"
-                  :title="`${leaf.coverage_count} coverage stamp${leaf.coverage_count === 1 ? '' : 's'}`"
-                >
-                  {{ leaf.coverage_count > 0 ? `covered ×${leaf.coverage_count}` : 'not covered' }}
-                </Badge>
-                <button
-                  v-if="leaf.spec"
-                  type="button"
-                  class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                  @click="toggleSpec(leaf.key)"
-                >
-                  <component :is="expandedSpecs.has(leaf.key) ? ChevronDown : ChevronRight" class="h-3.5 w-3.5" />
-                  spec
-                </button>
-              </div>
-              <div v-if="leaf.spec && expandedSpecs.has(leaf.key)" class="mt-2 rounded-md border border-border p-3">
-                <MarkdownView :model-value="leaf.spec" preview-only />
-              </div>
+            <li v-for="row in visibleSubFeatureRows" :key="`${row.type}:${row.key}`">
+              <!-- Implicit group header derived from key segments -->
+              <button
+                v-if="row.type === 'group'"
+                type="button"
+                class="flex w-full items-center gap-1.5 bg-muted/40 py-1.5 pr-3 text-left text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                :style="indentSubFeature(row.depth)"
+                :title="collapsedSubFeatureKeys.has(row.key) ? 'Expand' : 'Collapse'"
+                @click="toggleSubFeatureCollapse(row.key)"
+              >
+                <component :is="collapsedSubFeatureKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5 shrink-0" />
+                <FolderTree class="h-3.5 w-3.5 shrink-0" />
+                <span class="truncate font-mono">{{ row.name }}/</span>
+              </button>
+
+              <template v-else-if="row.type === 'leaf'">
+                <div class="py-2 pr-4" :style="indentSubFeature(row.depth)">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      v-if="hasSubFeatureChildren(row.key)"
+                      type="button"
+                      class="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground"
+                      :title="collapsedSubFeatureKeys.has(row.key) ? 'Expand children' : 'Collapse children'"
+                      @click="toggleSubFeatureCollapse(row.key)"
+                    >
+                      <component :is="collapsedSubFeatureKeys.has(row.key) ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
+                    </button>
+                    <RouterLink
+                      :to="{ name: 'area-detail', params: { uid: row.item.uid } }"
+                      class="min-w-0 truncate text-sm font-medium hover:underline"
+                    >
+                      {{ row.item.title || row.item.key }}
+                    </RouterLink>
+                    <span class="truncate font-mono text-[10px] text-muted-foreground">{{ row.item.key }}</span>
+                    <span
+                      v-if="row.item.stale"
+                      class="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                      title="Code changed under this sub-feature's scope since its last review"
+                    />
+                    <Badge v-if="!row.item.has_spec" variant="warn" class="px-1.5 text-[10px]" title="No spec — audit skipped until one exists">no spec</Badge>
+                    <Badge
+                      :variant="row.item.coverage_count > 0 ? 'success' : 'secondary'"
+                      class="ml-auto px-1.5 text-[10px]"
+                      :title="`${row.item.coverage_count} coverage stamp${row.item.coverage_count === 1 ? '' : 's'}`"
+                    >
+                      {{ row.item.coverage_count > 0 ? `covered ×${row.item.coverage_count}` : 'not covered' }}
+                    </Badge>
+                    <button
+                      v-if="row.item.spec"
+                      type="button"
+                      class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      @click="toggleSpec(row.item.key)"
+                    >
+                      <component :is="expandedSpecs.has(row.item.key) ? ChevronDown : ChevronRight" class="h-3.5 w-3.5" />
+                      spec
+                    </button>
+                  </div>
+                  <div v-if="row.item.spec && expandedSpecs.has(row.item.key)" class="mt-2 rounded-md border border-border p-3">
+                    <MarkdownView :model-value="row.item.spec" preview-only />
+                  </div>
+                </div>
+              </template>
             </li>
           </ul>
         </CardContent>
