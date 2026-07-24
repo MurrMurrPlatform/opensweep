@@ -1,5 +1,5 @@
-"""Regression: cross-org reads must return 404 (never data) for org-a
-resources when the caller belongs to org-b.
+"""Regression: cross-org reads must return 404 (never data) when a caller in
+org-a requests a resource whose repository is in org-b.
 
 DB-free — Run.nodes.get_or_none and require_repo_in_org are both faked.
 Each test pins that the tenancy guard fires BEFORE the downstream data read."""
@@ -24,10 +24,11 @@ def _fake_run(repo_uid: str = "repo-in-org-b"):
     """Minimal fake Run node — only the fields the handlers inspect."""
 
     class _FakeRun:
-        uid = "run-1"
-        status = "ended"
+        pass
 
     run = _FakeRun()
+    run.uid = "run-1"
+    run.status = "ended"
     run.repository_uid = repo_uid
     return run
 
