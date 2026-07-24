@@ -24,6 +24,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from domains.llm_providers.services import codex_cli
+
 CODEX_CONTEXT_CAP = 8_000  # chars of transcript tail per codex turn
 
 # Interrupt: SIGTERM first, SIGKILL after this grace period.
@@ -104,16 +106,15 @@ def build_codex_turn_argv(
     *, prompt: str, model: str = "", config_overrides: list[str] | None = None
 ) -> list[str]:
     """`config_overrides` are `-c key=value` TOML overrides — how per-run MCP
-    servers (the code graph) reach codex, which has no --mcp-config flag."""
-    from domains.llm_providers.services.llm_executor import with_codex_sandbox_bypass
+    servers (the code graph) reach codex, which has no --mcp-config flag.
 
-    # Bypass codex's OS sandbox + approval prompts — OpenSweep already isolates
-    # the turn (same flag/rationale as the run path).
-    argv = with_codex_sandbox_bypass(["codex", "exec", "--skip-git-repo-check", "--json"])
+    Argv is assembled through the shared codex adapter (codex_cli), so the turn
+    and run paths build codex the same way — including the sandbox/approval
+    bypass OpenSweep needs (its own isolation replaces codex's OS sandbox)."""
+    argv = codex_cli.with_sandbox_bypass(codex_cli.base_exec_argv())
     for override in config_overrides or []:
         argv += ["-c", override]
-    if model:
-        argv += ["--model", model]
+    argv = codex_cli.with_model(argv, model=model)
     argv.append(prompt)
     return argv
 
@@ -153,34 +154,9 @@ def extract_claude_meta(line: str) -> StreamMeta:
     return meta
 
 
-def parse_codex_deltas(line: str) -> list[str]:
-    """Agent-message text from one `codex exec --json` stdout line
-    (best-effort across the two known event shapes)."""
-    s = (line or "").strip()
-    if not s:
-        return []
-    try:
-        obj = json.loads(s)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(obj, dict):
-        return []
-    deltas: list[str] = []
-    msg = obj.get("msg")
-    if isinstance(msg, dict) and msg.get("type") == "agent_message":
-        text = msg.get("message")
-        if isinstance(text, str) and text:
-            deltas.append(text)
-    item = obj.get("item")
-    if (
-        obj.get("type") == "item.completed"
-        and isinstance(item, dict)
-        and item.get("type") == "agent_message"
-    ):
-        text = item.get("text")
-        if isinstance(text, str) and text:
-            deltas.append(text)
-    return deltas
+# Codex `exec --json` agent-message parsing lives in the shared codex adapter;
+# re-exported here under its historical name for existing import sites.
+parse_codex_deltas = codex_cli.parse_deltas
 
 
 # ── Env composition ──────────────────────────────────────────────────────────

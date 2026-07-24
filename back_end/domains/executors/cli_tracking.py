@@ -33,7 +33,7 @@ from domains.executors.quota import detect_quota_exhaustion
 from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
-from domains.runs.services.turn_cli import parse_codex_deltas
+from domains.llm_providers.services import codex_cli
 from domains.llm_providers.models import LLMProvider
 from domains.llm_providers.services import codex_credential
 from domains.llm_providers.services.llm_executor import (
@@ -92,33 +92,9 @@ def codex_continuation_prompt(nudge: str, transcript_tail: str) -> str:
     )
 
 
-def _codex_delta_feeder():
-    """Stateful reducer over the running-total stdout of `codex exec --json`.
-
-    on_chunk delivers the cumulative stdout each tick; codex emits JSONL events
-    (thread.started, item.completed/agent_message, reasoning, …). Only
-    agent_message text belongs in the transcript — the raw events are noise, and
-    dumping them verbatim is what surfaced `{"type":"thread.started"}` lines in
-    the run view. Feed the running total; get back the agent-message deltas from
-    lines that completed since the last call. A partial trailing line is buffered
-    until its newline arrives. Mirrors the turn path (turn_service +
-    parse_codex_deltas), which reads codex line-by-line.
-    """
-    state = {"consumed": 0, "buf": ""}
-
-    def feed(total: str) -> list[str]:
-        delta = total[state["consumed"]:]
-        if not delta:
-            return []
-        state["consumed"] = len(total)
-        state["buf"] += delta
-        *lines, state["buf"] = state["buf"].split("\n")
-        out: list[str] = []
-        for line in lines:
-            out.extend(parse_codex_deltas(line))
-        return out
-
-    return feed
+# The codex `exec --json` stream reducer lives in the shared codex adapter;
+# re-exported here under its historical name for existing call sites/tests.
+_codex_delta_feeder = codex_cli.delta_feeder
 
 
 class _CLITrackingAdapter(ExecutorAdapter):

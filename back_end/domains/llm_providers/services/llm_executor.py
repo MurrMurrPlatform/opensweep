@@ -31,6 +31,7 @@ import httpx
 
 from domains.llm_providers.models import LLMProvider
 from domains.llm_providers.schemas import default_cli_template
+from domains.llm_providers.services import codex_cli
 from domains.llm_providers.services.credentials import provider_secret
 from infrastructure.process_tree import kill_tree, process_group_kwargs
 from logging_config import logger
@@ -42,7 +43,7 @@ _CLI_KINDS = {"claude_subscription", "codex_subscription", "opencode", "aider"}
 # `claude_subscription` belongs here because Claude Code's headless mode
 # defaults to its full tool suite (Read/Glob/Grep/Bash/Edit + any --mcp-config
 # servers). codex_subscription gets MCP servers too (opensweep + code-graph, via
-# `-c` overrides in _with_codex_mcp_overrides) but `exec --json` is one-shot.
+# `-c` overrides in codex_cli.with_mcp_overrides) but `exec --json` is one-shot.
 _TOOL_AGENT_KINDS = {"opencode", "aider", "claude_subscription"}
 # Provider kinds that run free, on the user's own machine. Wall-time ceilings
 # do not apply to these — a slow local model is fine, the user is paying with
@@ -205,13 +206,12 @@ async def _run_cli(
 
     if (provider.kind or "").strip() == "codex_subscription":
         # codex has no config-file flag, so the per-run MCP servers (opensweep
-        # platform tools + code graph) are injected as `-c` overrides into
-        # the operator's template-rendered argv.
-        argv = _with_codex_mcp_overrides(argv, run_uid=run_uid, working_dir=working_dir or "")
-        # Bypass codex's own OS sandbox + approval prompts — OpenSweep already
-        # isolates the run (see with_codex_sandbox_bypass). Injected at runtime so
-        # providers seeded before this flag existed are fixed without a re-seed.
-        argv = with_codex_sandbox_bypass(argv)
+        # platform tools + code graph) ride in as `-c` overrides; and codex's own
+        # OS sandbox + approval prompts are bypassed because OpenSweep already
+        # isolates the run. Both injected at runtime (see codex_cli) so providers
+        # seeded before these flags existed are fixed without a re-seed.
+        argv = codex_cli.with_mcp_overrides(argv, run_uid=run_uid, working_dir=working_dir or "")
+        argv = codex_cli.with_sandbox_bypass(argv)
 
     argv = with_model_flag(
         argv, kind=(provider.kind or "").strip(), model=provider.model or "", template=template
@@ -325,67 +325,14 @@ def with_model_flag(argv: list[str], *, kind: str, model: str, template: str) ->
         return argv
     if kind == "claude_subscription" and "--model" not in argv:
         return [*argv, "--model", model]
-    if kind == "codex_subscription" and "--model" not in argv and "-m" not in argv:
-        try:
-            at = argv.index("exec") + 1
-        except ValueError:
-            at = len(argv)
-        return argv[:at] + ["--model", model] + argv[at:]
+    if kind == "codex_subscription":
+        return codex_cli.with_model(argv, model=model)
     return argv
 
 
-_CODEX_SANDBOX_BYPASS = "--dangerously-bypass-approvals-and-sandbox"
-
-# Any of these in the argv means the operator already chose a sandbox/approval
-# policy — don't override it.
-_CODEX_SANDBOX_FLAGS = (_CODEX_SANDBOX_BYPASS, "--sandbox", "-s", "--ask-for-approval", "-a", "--full-auto")
-
-
-def with_codex_sandbox_bypass(argv: list[str]) -> list[str]:
-    """Insert codex's external-sandbox bypass right after `exec`.
-
-    OpenSweep runs every agent inside a disposable workspace clone in a
-    locked-down worker container — the same rationale as claude's
-    `--permission-mode bypassPermissions`. Codex otherwise spins up its OWN OS
-    sandbox (landlock/seccomp/bwrap), which cannot create a user namespace in the
-    worker ("No permissions to create a new namespace"), so every shell command
-    dies; and its non-interactive approval policy has no one to approve, so MCP
-    tool calls come back as "user cancelled MCP tool call". This one flag fixes
-    both.
-
-    Idempotent, and inert if the argv isn't `codex … exec …` or already carries a
-    sandbox/approval flag (an operator template wins).
-    """
-    if any(flag in argv for flag in _CODEX_SANDBOX_FLAGS):
-        return argv
-    try:
-        at = argv.index("exec") + 1
-    except ValueError:
-        return argv
-    return argv[:at] + [_CODEX_SANDBOX_BYPASS] + argv[at:]
-
-
-def _with_codex_mcp_overrides(argv: list[str], *, run_uid: str, working_dir: str) -> list[str]:
-    """Insert `-c key=value` MCP overrides after codex's `exec` subcommand.
-
-    The template is operator-authored free text, so this only fires when the
-    argv is recognizably `codex … exec …`; anything else passes through
-    untouched (a run without MCP beats a run that can't start).
-    """
-    from domains.executors.mcp_bridge import codex_mcp_overrides
-
-    overrides = codex_mcp_overrides(run_uid=run_uid, workspace_path=working_dir)
-    if not overrides:
-        return argv
-    try:
-        at = argv.index("exec") + 1
-    except ValueError:
-        logger.warning("codex template has no `exec` subcommand — skipping MCP overrides")
-        return argv
-    flags: list[str] = []
-    for override in overrides:
-        flags += ["-c", override]
-    return argv[:at] + flags + argv[at:]
+# codex argv/parse helpers live in codex_cli (shared with the interactive turn
+# path). Re-exported under its historical name for existing import sites/tests.
+with_codex_sandbox_bypass = codex_cli.with_sandbox_bypass
 
 
 def _prepare_claude_mcp_config(provider: "LLMProvider", *, run_uid: str) -> str:

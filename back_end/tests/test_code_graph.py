@@ -167,18 +167,18 @@ def test_codex_mcp_overrides_register_opensweep_and_graph():
 
 
 def test_codex_dispatch_argv_gains_mcp_overrides_after_exec():
-    from domains.llm_providers.services.llm_executor import _with_codex_mcp_overrides
+    from domains.llm_providers.services.codex_cli import with_mcp_overrides
 
     with patch(
         "domains.executors.mcp_bridge.codex_mcp_overrides",
         return_value=["a=1", "b=2"],
     ):
-        argv = _with_codex_mcp_overrides(
+        argv = with_mcp_overrides(
             ["codex", "exec", "--json", "prompt"], run_uid="r1", working_dir="/w"
         )
         assert argv == ["codex", "exec", "-c", "a=1", "-c", "b=2", "--json", "prompt"]
         # Unrecognized template shape passes through untouched.
-        assert _with_codex_mcp_overrides(["codex", "--json"], run_uid="r1", working_dir="/w") == [
+        assert with_mcp_overrides(["codex", "--json"], run_uid="r1", working_dir="/w") == [
             "codex",
             "--json",
         ]
