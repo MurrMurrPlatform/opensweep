@@ -27,9 +27,8 @@
 | GET /api/v1/artifacts | artifacts.py:18 | `require_repo_in_org` | line 23: guard via `artifact_store.repository_uid_of(uri)` |
 | GET /api/v1/audit | audit.py:44 | `org_repo_uids`-filter | line 58: `allowed = await org_repo_uids(user.org_uid)` applied to all event filters |
 | GET /api/v1/audit/{uid} | audit.py:85 | `org_repo_uids`-filter | line 90: checks event.repository_uid in allowed set |
-| GET /api/v1/campaigns (list) | campaigns.py:42 | `require_repo_in_org` | line 50: guard on `repository_uid` param |
-| GET /api/v1/campaigns/active | campaigns.py:64 | `require_repo_in_org` | line 69: guard on `repository_uid` |
-| GET /api/v1/campaigns/active-for-finding | campaigns.py:73 | `require_repo_in_org` | line 86: guard on `repository_uid` |
+| GET /api/v1/repositories/{repository_uid}/campaigns | campaigns.py:42 | `require_repo_in_org` | line 50: guard on `repository_uid` param |
+| GET /api/v1/repositories/{repository_uid}/campaign-areas | campaigns.py:73 | `require_repo_in_org` | line 86: guard on `repository_uid` param |
 | GET /api/v1/campaigns/{uid} | campaigns.py:92 | `require_repo_in_org` | line 99: guard on `c.repository_uid` |
 | GET /api/v1/comments | comments.py:33 | `require_repo_in_org` | line 41: guard on resolved `repo_uid` |
 | GET /api/v1/comments (thread) | comments.py:45 | `require_repo_in_org` | line 59: guard on resolved `repo_uid` |
@@ -64,6 +63,7 @@
 | GET /api/v1/me/profile | organizations.py:112 | n/a – not repo-scoped | Returns caller's own profile + org; no cross-org data possible |
 | GET /api/v1/org | organizations.py:222 | n/a – org-scoped in handler | `_org_dto(await _get_org(user.org_uid), user)` — only the caller's own org |
 | GET /api/v1/org/members | organizations.py:252 | n/a – org-scoped in handler | `_org_members(user.org_uid)` — only the caller's own org members |
+| GET /api/v1/org/invitations | organizations.py:341 | n/a — org-scoped in handler | `require_org_owner` Depends (line 347); query filters `OrgInvitation {org_uid: $org}` — only the caller's org invitations |
 | GET /api/v1/platform-config | platform_config.py:23 | n/a – not repo-scoped | `require_platform_admin` gate; returns singleton PlatformConfig |
 | GET /api/v1/platform-read/docs | platform_read.py:37 | `require_tool_repo_access` | line 46: delegates to `require_tool_repo_access` → `require_repo_in_org` for human callers, run-token binding for executors |
 | GET /api/v1/platform-read/docs/{slug} | platform_read.py:50 | `require_tool_repo_access` | line 60: same pattern |
