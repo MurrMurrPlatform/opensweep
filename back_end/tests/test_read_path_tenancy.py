@@ -176,6 +176,7 @@ async def test_run_ws_foreign_org_closes_4404(monkeypatch):
     import api.v1.runs as runs
 
     calls: list[tuple[str, str]] = []
+    reached = []
 
     class _FakeWS:
         def __init__(self):
@@ -208,13 +209,13 @@ async def test_run_ws_foreign_org_closes_4404(monkeypatch):
 
             return _R()
 
-    async def boom_tail(*args, **kwargs):
-        raise AssertionError("tail reached despite cross-org")
+    async def stub_tail(*args, **kwargs):
+        reached.append(True)
 
     monkeypatch.setattr(runs, "get_current_user", fake_get_current_user)
     monkeypatch.setattr(runs, "require_repo_in_org", fake_require)
     monkeypatch.setattr(runs, "TurnService", _FakeTurnService)
-    monkeypatch.setattr(runs, "_tail_run_events", boom_tail)
+    monkeypatch.setattr(runs, "_tail_run_events", stub_tail)
 
     fake_ws = _FakeWS()
     await runs.run_ws(fake_ws, uid="r1", after_seq=0)
@@ -222,3 +223,4 @@ async def test_run_ws_foreign_org_closes_4404(monkeypatch):
     assert calls == [("repo-in-org-b", "org-a")]
     assert fake_ws.closed_code == 4404
     assert any(f.get("type") == "error" for f in fake_ws.sent)
+    assert reached == []
