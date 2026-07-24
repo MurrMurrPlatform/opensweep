@@ -51,7 +51,7 @@ async def visible_providers(org_uid: str) -> list[LLMProvider]:
     none — legacy-unowned rows (org_uid == "") are invisible to everyone."""
     if not org_uid:
         return []
-    return [n for n in await LLMProvider.nodes.all() if _scope(n) == org_uid]
+    return list(await LLMProvider.nodes.filter(org_uid=org_uid))
 
 
 def _can_manage(n, user: UserDTO) -> bool:
@@ -270,7 +270,9 @@ def provider_to_dto(n: LLMProvider) -> LLMProviderDTO:
 async def _scope_active(scope: str) -> LLMProvider | None:
     """The usable active provider WITHIN one org scope, healing old data
     with multiple actives in that scope."""
-    nodes = [n for n in await LLMProvider.nodes.all() if _scope(n) == scope]
+    if not scope:
+        return None
+    nodes = list(await LLMProvider.nodes.filter(org_uid=scope))
     enabled = [p for p in nodes if bool(getattr(p, "enabled", True))]
     active = [p for p in enabled if bool(getattr(p, "active", False))]
     if not active:

@@ -51,6 +51,10 @@ class _Nodes:
     async def all(self):
         return list(_STORE)
 
+    async def filter(self, **kw):
+        """Filter by keyword arguments — supports org_uid."""
+        return [n for n in _STORE if all(getattr(n, k, None) == v for k, v in kw.items())]
+
     async def get_or_none(self, **kw):
         for n in _STORE:
             if all(getattr(n, k, None) == v for k, v in kw.items()):
@@ -297,3 +301,26 @@ def test_choose_provider_still_prefers_first_active():
     a = _Node(uid="a", active=True)
     b = _Node(uid="b", active=True)
     assert choose_provider([a, b]).uid == "a"
+
+
+# ── Indexed filter optimization ──────────────────────────────────────────────
+
+
+async def test_visible_providers_queries_by_org_not_fetch_all(monkeypatch):
+    import domains.llm_providers.services.llm_provider_service as svc
+
+    called = {"all": 0, "filter_org": None}
+
+    class _FakeNodes:
+        async def all(self):
+            called["all"] += 1
+            return []
+
+        async def filter(self, **kw):
+            called["filter_org"] = kw.get("org_uid")
+            return []
+
+    monkeypatch.setattr(svc.LLMProvider, "nodes", _FakeNodes())
+    await svc.visible_providers("org-a")
+    assert called["all"] == 0, "must not fetch all orgs' providers"
+    assert called["filter_org"] == "org-a"
