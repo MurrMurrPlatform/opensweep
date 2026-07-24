@@ -165,3 +165,60 @@ async def test_get_artifact_foreign_org_raises_404(monkeypatch):
     # artifact_store.repository_uid_of applies _safe normalization, but for a
     # simple alphanumeric repo uid the result is identical.
     assert calls == [("repo-in-org-b", "org-a")]
+
+
+# ---------------------------------------------------------------------------
+# test_run_ws: WS /api/v1/runs/{uid}/ws
+# ---------------------------------------------------------------------------
+
+
+async def test_run_ws_foreign_org_closes_4404(monkeypatch):
+    import api.v1.runs as runs
+
+    calls: list[tuple[str, str]] = []
+
+    class _FakeWS:
+        def __init__(self):
+            self.sent = []
+            self.closed_code = None
+
+        async def accept(self):
+            pass
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+        async def close(self, code=1000):
+            self.closed_code = code
+
+    async def fake_get_current_user(_ws):
+        from domains.users.schemas import UserDTO
+
+        return UserDTO(uid="u", email="e@x.y", display_name="U", role="maintainer", org_uid="org-a")
+
+    async def fake_require(repo, org):
+        calls.append((repo, org))
+        raise HTTPException(status_code=404, detail="not found")
+
+    class _FakeTurnService:
+        async def get_run(self, uid):
+            class _R:
+                repository_uid = "repo-in-org-b"
+                status = "running"
+
+            return _R()
+
+    async def boom_tail(*args, **kwargs):
+        raise AssertionError("tail reached despite cross-org")
+
+    monkeypatch.setattr(runs, "get_current_user", fake_get_current_user)
+    monkeypatch.setattr(runs, "require_repo_in_org", fake_require)
+    monkeypatch.setattr(runs, "TurnService", _FakeTurnService)
+    monkeypatch.setattr(runs, "_tail_run_events", boom_tail)
+
+    fake_ws = _FakeWS()
+    await runs.run_ws(fake_ws, uid="r1", after_seq=0)
+
+    assert calls == [("repo-in-org-b", "org-a")]
+    assert fake_ws.closed_code == 4404
+    assert any(f.get("type") == "error" for f in fake_ws.sent)
