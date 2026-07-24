@@ -18,10 +18,8 @@
 | GET /api/v1/agents/{uid} | agents.py:52 | n/a – org-scoped via service | `agent_service.get_agent(uid, org_uid=user.org_uid)` → `_visible_to_org`; raises 404 for foreign orgs |
 | GET /api/v1/agents/{uid}/revisions | agents.py:117 | n/a – org-scoped via service | `agent_service.list_revisions(uid, org_uid=user.org_uid)` — revisions filtered by org |
 | GET /api/v1/analysis | analysis.py:32 | `require_repo_in_org` OR `org_repo_uids`-filter | repository_uid param → `require_repo_in_org`; no param → `org_repo_uids` list filter |
-| GET /api/v1/analysis/current | analysis.py:54 | `require_repo_in_org` | line 62: `await require_repo_in_org(repository_uid, user.org_uid)` |
+| GET /api/v1/analysis/latest | analysis.py:54 | `require_repo_in_org` | line 62: `await require_repo_in_org(repository_uid, user.org_uid)` |
 | GET /api/v1/analysis/{uid} | analysis.py:66 | `require_repo_in_org` | line 71: guard on `dto.repository_uid` |
-| GET /api/v1/repositories/{uid}/analyzers | analysis.py:84 | `require_repo_in_org` | line 88: guard on fetched `node.repository_uid` |
-| GET /api/v1/analysis/{uid}/questions/{qid} | analysis.py:98 | `require_repo_in_org` | line 102: guard on `node.repository_uid` |
 | GET /api/v1/areas (list areas) | areas.py:34 | `require_repo_in_org` | line 39: guard on `repository_uid` param |
 | GET /api/v1/areas/{uid} | areas.py:43 | `require_repo_in_org` | line 46: guard on `a.repository_uid` |
 | GET /api/v1/areas/{uid}/detail | areas.py:50 | `require_repo_in_org` | line 58: guard on `a.repository_uid` |
@@ -45,7 +43,7 @@
 | GET /api/v1/docs/docs/{uid} | docs.py:42 | `require_repo_in_org` | line 45: guard on `d.repository_uid` |
 | GET /api/v1/docs/doc-edits | docs.py:160 | `require_repo_in_org` | line 166: guard on `repository_uid` param |
 | GET /api/v1/findings | findings.py:42 | `require_repo_in_org` OR `org_repo_uids`-filter | repository_uid → require; no param → org_repo_uids filter |
-| GET /api/v1/findings/ratchet | findings.py:83 | `require_repo_in_org` | line 94: guard on `repository_uid` param |
+| GET /api/v1/findings/find-similar | findings.py:83 | `require_repo_in_org` | line 94: guard on `repository_uid` param |
 | GET /api/v1/findings/{uid} | findings.py:197 | `require_repo_in_org` | line 200: guard on `dto.repository_uid` |
 | GET /api/v1/findings/{uid}/verifications | findings.py:483 | `require_repo_in_org` | line 490: guard on `f.repository_uid` |
 | GET /api/v1/repositories/{uid}/freshness | freshness.py:21 | `require_repo_in_org` | line 26: guard on `repository_uid` param |
@@ -90,7 +88,7 @@
 | GET /api/v1/run-policies/{uid} | run_policies.py:61 | n/a – not repo-scoped | Same; platform-level config visible to all authenticated users |
 | GET /api/v1/runs | runs.py:275 | `org_repo_uids`-filter | line 300: `allowed = await org_repo_uids(user.org_uid)`; DB filter on line 304: `Run.nodes.filter(repository_uid__in=list(allowed))` |
 | GET /api/v1/runs/active | runs.py:357 | `org_repo_uids`-filter | line 374: `allowed = await org_repo_uids(user.org_uid)` |
-| GET /api/v1/runs/{uid}/steps | runs.py:413 | `require_repo_in_org` | line 429: guard on `r.repository_uid` |
+| GET /api/v1/runs/{uid}/transcript | runs.py:413 | `require_repo_in_org` | line 429: guard on `r.repository_uid` |
 | GET /api/v1/runs/{uid}/changes | runs.py:449 | `require_repo_in_org` | line 461: guard on `r.repository_uid` |
 | GET /api/v1/runs/{uid} | runs.py:465 | `require_repo_in_org` | line 471: guard on `r.repository_uid` |
 | WS  /api/v1/runs/{uid}/ws | runs.py:726 | `require_repo_in_org` | line 757: guard on `run.repository_uid`; `get_current_user` at line 752 authenticates first |
