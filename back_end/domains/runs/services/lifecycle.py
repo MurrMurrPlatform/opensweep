@@ -936,21 +936,22 @@ async def redispatch_run(
 
     chosen_mode = ExecutionMode(run.execution_mode or ExecutionMode.ANALYZE_ONLY.value)
     exclude = set(exclude_provider_uids)
+    run_org = await repository_org_uid(run.repository_uid)
     if chosen_mode == ExecutionMode.IMPLEMENT:
         # Write runs (fix/implement) work in a write sandbox and go through
         # the write gate — only executors with a write surface may resume
         # them. A read-only fallback (internal_llm/opencode/codex tracking)
         # would waste the round; leave the run paused (raise → the resume
         # task records the error and retries a later tick) instead.
+        # Only the run's org's providers can ever be selected below, so build the
+        # write-support exclusion from that org (not every org's rows).
         exclude |= {
             (p.uid or "").strip()
-            for p in await LLMProvider.nodes.all()
+            for p in await LLMProvider.nodes.filter(org_uid=run_org)
             if not _provider_supports_write(p)
         }
     # Tenancy: restricted to the run's org's own providers.
-    provider = await select_provider(
-        org_uid=await repository_org_uid(run.repository_uid), exclude_uids=exclude
-    )
+    provider = await select_provider(org_uid=run_org, exclude_uids=exclude)
     if provider is None:
         if chosen_mode == ExecutionMode.IMPLEMENT:
             raise LifecycleError(
