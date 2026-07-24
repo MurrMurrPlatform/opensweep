@@ -344,3 +344,17 @@ async def test_scope_active_queries_by_org_not_fetch_all(monkeypatch):
     assert await svc._scope_active("org-a") is None  # no providers → None
     assert called["all"] == 0, "must not fetch all orgs' providers"
     assert called["filter_org"] == "org-a"
+
+
+# ── Guard: architectural invariant ──────────────────────────────────────────
+
+
+def test_provider_scoping_never_fetches_all_orgs():
+    """Scoped reads must query by org_uid, not load every org's providers.
+    The ONE deliberate all-orgs pass is the credential re-seal (guarded by name)."""
+    from pathlib import Path
+    src = Path("domains/llm_providers/services/llm_provider_service.py").read_text()
+    assert "LLMProvider.nodes.all()" not in src, (
+        "provider scoping must use .nodes.filter(org_uid=...); the only allowed "
+        ".nodes.all() is credentials.encrypt_plaintext_provider_secrets"
+    )
