@@ -353,7 +353,10 @@ def test_provider_scoping_never_fetches_all_orgs():
     """Scoped reads must query by org_uid, not load every org's providers.
     The ONE deliberate all-orgs pass is the credential re-seal (guarded by name)."""
     from pathlib import Path
-    src = Path("domains/llm_providers/services/llm_provider_service.py").read_text()
+    src = (
+        Path(__file__).parent.parent
+        / "domains/llm_providers/services/llm_provider_service.py"
+    ).read_text()
     assert "LLMProvider.nodes.all()" not in src, (
         "provider scoping must use .nodes.filter(org_uid=...); the only allowed "
         ".nodes.all() is credentials.encrypt_plaintext_provider_secrets"
