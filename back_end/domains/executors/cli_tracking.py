@@ -33,6 +33,7 @@ from domains.executors.quota import detect_quota_exhaustion
 from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
+from domains.runs.services.turn_cli import parse_codex_deltas
 from domains.llm_providers.models import LLMProvider
 from domains.llm_providers.services import codex_credential
 from domains.llm_providers.services.llm_executor import (
@@ -89,6 +90,35 @@ def codex_continuation_prompt(nudge: str, transcript_tail: str) -> str:
         "this CLI has no session resume):\n"
         f"{tail}\n\n{nudge}"
     )
+
+
+def _codex_delta_feeder():
+    """Stateful reducer over the running-total stdout of `codex exec --json`.
+
+    on_chunk delivers the cumulative stdout each tick; codex emits JSONL events
+    (thread.started, item.completed/agent_message, reasoning, …). Only
+    agent_message text belongs in the transcript — the raw events are noise, and
+    dumping them verbatim is what surfaced `{"type":"thread.started"}` lines in
+    the run view. Feed the running total; get back the agent-message deltas from
+    lines that completed since the last call. A partial trailing line is buffered
+    until its newline arrives. Mirrors the turn path (turn_service +
+    parse_codex_deltas), which reads codex line-by-line.
+    """
+    state = {"consumed": 0, "buf": ""}
+
+    def feed(total: str) -> list[str]:
+        delta = total[state["consumed"]:]
+        if not delta:
+            return []
+        state["consumed"] = len(total)
+        state["buf"] += delta
+        *lines, state["buf"] = state["buf"].split("\n")
+        out: list[str] = []
+        for line in lines:
+            out.extend(parse_codex_deltas(line))
+        return out
+
+    return feed
 
 
 class _CLITrackingAdapter(ExecutorAdapter):
@@ -158,7 +188,11 @@ class _CLITrackingAdapter(ExecutorAdapter):
 
         # on_chunk delivers the running TOTAL per stream; the transcript wants
         # only the new tail, as assistant_text chunks (consecutive chunks merge
-        # in the UI — codex/opencode CLIs have no structured event stream here).
+        # in the UI). codex streams JSONL events (`exec --json`) — surface only
+        # agent_message text, not the raw envelope/reasoning noise. opencode
+        # streams plain text, which passes through as the raw tail.
+        is_codex = self.provider_kind == "codex_subscription"
+        codex_feed = _codex_delta_feeder() if is_codex else None
         streamed_len = {"stdout": 0}
         recorder = StreamRecorder(
             run_uid=req.run_uid,
@@ -168,10 +202,14 @@ class _CLITrackingAdapter(ExecutorAdapter):
 
         async def _on_chunk(stream: str, text: str) -> None:
             if stream == "stdout":
-                delta = text[streamed_len["stdout"]:]
-                if delta:
-                    streamed_len["stdout"] = len(text)
-                    append_event(req.run_uid, "assistant_text", text=delta)
+                if codex_feed is not None:
+                    for delta in codex_feed(text):
+                        append_event(req.run_uid, "assistant_text", text=delta)
+                else:
+                    delta = text[streamed_len["stdout"]:]
+                    if delta:
+                        streamed_len["stdout"] = len(text)
+                        append_event(req.run_uid, "assistant_text", text=delta)
             await recorder.record_total(stream, text)
 
         # Reasoning level → codex `-c model_reasoning_effort=…` argv override
@@ -264,13 +302,12 @@ class _CLITrackingAdapter(ExecutorAdapter):
                     repository_uid=req.repository_uid,
                     label=f"live {self.name.value} continuation transcript",
                 )
-                cont_streamed_len = {"stdout": 0}
+                # Continuation only runs for codex — parse its JSONL the same way.
+                cont_feed = _codex_delta_feeder()
 
                 async def _on_cont_chunk(stream: str, text: str) -> None:
                     if stream == "stdout":
-                        delta = text[cont_streamed_len["stdout"]:]
-                        if delta:
-                            cont_streamed_len["stdout"] = len(text)
+                        for delta in cont_feed(text):
                             append_event(req.run_uid, "assistant_text", text=delta)
                     await cont_recorder.record_total(stream, text)
 
