@@ -102,3 +102,50 @@ def test_api_key_env_is_a_named_passthrough(poisoned_environ, monkeypatch):
     )
     assert env["MY_PROVIDER_KEY"] == "operator-set"
     _assert_no_platform_secrets(env)
+
+
+# ── codex-subscription credential seeding (run/workflow path parity) ──────────
+# Regression: runs launched from Ask / Area Map / actions go through the run
+# executor (_build_cli_env), NOT the interactive turn path (codex_turn_env).
+# Before this branch existed the run path seeded no credential and codex fell
+# back to the worker's stale ~/.codex, failing "access token could not be
+# refreshed". _build_cli_env must seed the private CODEX_HOME exactly as the
+# turn path does.
+
+_AUTH_JSON = '{"tokens": {"access_token": "a1", "refresh_token": "r1"}}'
+
+
+def test_codex_subscription_seeds_private_home_and_authjson(
+    poisoned_environ, tmp_path, monkeypatch
+):
+    from domains.llm_providers.services import runtime_env
+
+    home = str(tmp_path / "codexhome")
+    monkeypatch.setattr(runtime_env, "_codex_home", lambda provider: home)
+    monkeypatch.setattr(runtime_env, "provider_secret", lambda provider: _AUTH_JSON)
+
+    env = _build_cli_env(
+        _provider("codex_subscription", credential_secret="sealed-x"), run_uid="run-1"
+    )
+
+    # codex is pointed at the worker-private home, not the worker's ~/.codex.
+    assert env["HOME"] == home
+    assert env["CODEX_HOME"] == f"{home}/.codex"
+    # …and the UI-stored auth.json is actually written there for codex to read.
+    with open(f"{home}/.codex/auth.json", encoding="utf-8") as f:
+        assert f.read() == _AUTH_JSON
+    _assert_no_platform_secrets(env)
+
+
+def test_codex_subscription_without_secret_keeps_default_home(poisoned_environ, monkeypatch):
+    # Bind-mount codex (no UI-stored secret): leave HOME alone so codex uses the
+    # host-mounted ~/.codex — no private CODEX_HOME override.
+    from domains.llm_providers.services import runtime_env
+
+    monkeypatch.setattr(runtime_env, "provider_secret", lambda provider: "")
+
+    env = _build_cli_env(_provider("codex_subscription"), run_uid="run-1")
+
+    assert env["HOME"] == "/root"
+    assert "CODEX_HOME" not in env
+    _assert_no_platform_secrets(env)

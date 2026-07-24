@@ -69,6 +69,34 @@ def _codex_home(provider: LLMProvider) -> str:
     return os.path.join(tempfile.gettempdir(), f"{_CODEX_HOME_PREFIX}{uid}")
 
 
+def apply_runtime_to_env(runtime: ProviderRuntime, env: dict[str, str]) -> dict[str, str]:
+    """Write a provider's runtime files to disk and point the CLI at them.
+
+    Shared by the interactive turn path (`turn_cli.codex_turn_env`) and the
+    run/workflow path (`llm_executor._build_cli_env`) so codex-subscription
+    credentials are seeded identically no matter how the run was launched.
+
+    File writes never raise — a missing auth.json surfaces as codex's own auth
+    error, not an opaque crash — and HOME/CODEX_HOME are only set when a
+    worker-private home was actually provisioned (a UI-stored auth.json exists;
+    bind-mount providers keep the worker's default ~/.codex).
+    """
+    for path, content, mode in runtime.extra_files:
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.chmod(path, mode)
+        except OSError:
+            pass
+    if runtime.home_override:
+        env["HOME"] = runtime.home_override
+        env["CODEX_HOME"] = f"{runtime.home_override}/.codex"
+    return env
+
+
 def build_runtime(provider: LLMProvider) -> ProviderRuntime:
     rt = ProviderRuntime()
     secret = provider_secret(provider)

@@ -541,6 +541,21 @@ def _build_cli_env(provider: LLMProvider, *, run_uid: str = "", working_dir: str
         if value:
             extra[name] = value
 
+    if kind == "codex_subscription":
+        # Seed the UI-stored auth.json into a worker-private CODEX_HOME and point
+        # codex at it (HOME/CODEX_HOME), exactly as the interactive turn path does
+        # via turn_cli.codex_turn_env. Without this, a run launched from Ask / Area
+        # Map / actions gets no seeded credential and codex falls back to the
+        # worker's stale ~/.codex, failing with "access token could not be
+        # refreshed". The per-credential lease + rotation write-back is applied by
+        # the executor around the whole run (codex_credential.codex_credential_txn).
+        from domains.llm_providers.services.runtime_env import apply_runtime_to_env, build_runtime
+
+        runtime = build_runtime(provider)
+        extra.update(runtime.env_vars)
+        env = build_agent_env(run_uid=run_uid, extra=extra)
+        return apply_runtime_to_env(runtime, env)
+
     return build_agent_env(run_uid=run_uid, extra=extra)
 
 

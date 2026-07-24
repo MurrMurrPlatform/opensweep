@@ -22,7 +22,6 @@ turn_service.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 
 CODEX_CONTEXT_CAP = 8_000  # chars of transcript tail per codex turn
@@ -190,21 +189,8 @@ def codex_turn_env(provider, *, run_uid: str = "") -> dict[str, str]:
     provider's runtime credential plumbing (worker-private CODEX_HOME when a
     UI-stored auth.json exists)."""
     from domains.executors.agent_env import build_agent_env
-    from domains.llm_providers.services.runtime_env import build_runtime
+    from domains.llm_providers.services.runtime_env import apply_runtime_to_env, build_runtime
 
     runtime = build_runtime(provider)
     env = build_agent_env(run_uid=run_uid, extra=runtime.env_vars)
-    for path, content, mode in runtime.extra_files:
-        try:
-            directory = os.path.dirname(path)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.chmod(path, mode)
-        except OSError:
-            pass
-    if runtime.home_override:
-        env["HOME"] = runtime.home_override
-        env["CODEX_HOME"] = f"{runtime.home_override}/.codex"
-    return env
+    return apply_runtime_to_env(runtime, env)

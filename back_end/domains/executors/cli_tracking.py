@@ -15,6 +15,8 @@ import logging
 import time
 from typing import Any
 
+from fastapi import HTTPException
+
 from domains.executors._shared import (
     StreamRecorder,
     _completed_via_mcp,
@@ -31,6 +33,8 @@ from domains.executors.quota import detect_quota_exhaustion
 from domains.executors.reasoning import reasoning_args
 from domains.runs.schemas import Executor, RunStatus
 from domains.runs.services.run_events import append_event
+from domains.llm_providers.models import LLMProvider
+from domains.llm_providers.services import codex_credential
 from domains.llm_providers.services.llm_executor import (
     invoke as invoke_provider,
 )
@@ -107,6 +111,36 @@ class _CLITrackingAdapter(ExecutorAdapter):
             # In-memory only — per-stage workflow override, never saved.
             provider.model = req.model_override
 
+        # Codex subscriptions serialize per credential and durably persist any
+        # rotation codex performs across the run's passes (inert for opencode and
+        # for bind-mount codex — see codex_credential.codex_credential_txn). Held
+        # across ALL passes so the lease covers the continuation and the rotated
+        # auth.json is written back once, on exit. Without it a run seeds the
+        # sealed auth.json, lets codex rotate the refresh token, then discards it,
+        # so the next run reuses a consumed refresh token and codex fails with
+        # "access token could not be refreshed".
+        try:
+            async with codex_credential.codex_credential_txn(provider):
+                return await self._run_passes(req, provider, started)
+        except HTTPException as exc:
+            # Another codex run holds this subscription's exclusive lease past the
+            # wait budget. Treat it like a quota pause (a state, not a failure):
+            # PAUSED_QUOTA is resumable, so the run is re-dispatched later instead
+            # of failing hard — mirrors the turn path returning a retryable 503.
+            logger.info(
+                f"{self.name.value} run {req.run_uid}: codex subscription busy "
+                f"({getattr(exc, 'detail', exc)}) — pausing for retry",
+                extra={"tag": "codex"},
+            )
+            return DispatchResult(
+                status=RunStatus.PAUSED_QUOTA,
+                error="codex subscription busy — another run holds the credential lease",
+                summary=f"{self.name.value} paused: codex subscription busy — will retry",
+            )
+
+    async def _run_passes(
+        self, req: DispatchRequest, provider: LLMProvider, started: float
+    ) -> DispatchResult:
         timeout = resolve_wall_ceiling(req, provider.kind)
         instruction = _instruction(req, timeout)
         # Both CLIs get the code-graph MCP server over the workspace clone —
