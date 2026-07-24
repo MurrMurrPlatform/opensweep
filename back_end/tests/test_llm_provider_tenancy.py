@@ -324,3 +324,23 @@ async def test_visible_providers_queries_by_org_not_fetch_all(monkeypatch):
     await svc.visible_providers("org-a")
     assert called["all"] == 0, "must not fetch all orgs' providers"
     assert called["filter_org"] == "org-a"
+
+
+async def test_scope_active_queries_by_org_not_fetch_all(monkeypatch):
+    import domains.llm_providers.services.llm_provider_service as svc
+
+    called = {"all": 0, "filter_org": None}
+
+    class _FakeNodes:
+        async def all(self):
+            called["all"] += 1
+            return []
+
+        async def filter(self, **kw):
+            called["filter_org"] = kw.get("org_uid")
+            return []
+
+    monkeypatch.setattr(svc.LLMProvider, "nodes", _FakeNodes())
+    assert await svc._scope_active("org-a") is None  # no providers → None
+    assert called["all"] == 0, "must not fetch all orgs' providers"
+    assert called["filter_org"] == "org-a"
